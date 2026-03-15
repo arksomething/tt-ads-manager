@@ -1,0 +1,15 @@
+{
+  "name": "billionviews",
+  "private": true,
+  "scripts": {
+    "dev": "cd web && npm run dev",
+    "build": "cd web && npm run build",
+    "start": "cd web && npm run start",
+    "lint": "cd web && npm run lint",
+    "typecheck": "cd web && npm run typecheck",
+    "db:generate": "cd web && npm run db:generate",
+    "db:push": "cd web && npm run db:push",
+    "db:migrate": "cd web && npm run db:migrate",
+    "db:studio": "cd web && npm run db:studio"
+  }
+}

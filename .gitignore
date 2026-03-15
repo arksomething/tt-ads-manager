@@ -1,0 +1,14 @@
+.DS_Store
+.env
+.env.local
+.env.*.local
+OAuth Client ID - Billion Views.json
+
+node_modules
+
+web/.next
+web/node_modules
+web/.env
+web/.env.local
+web/.env.*.local
+web/.vercel

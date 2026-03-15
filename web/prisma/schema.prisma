@@ -1,0 +1,488 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrganizationRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum Platform {
+  TIKTOK
+  INSTAGRAM_REELS
+  YOUTUBE_SHORTS
+}
+
+enum CreatorStatus {
+  NEW
+  QUALIFIED
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum OutreachStatus {
+  NOT_STARTED
+  CONTACTED
+  RESPONDED
+  NO_RESPONSE
+}
+
+enum DealStatus {
+  LEAD
+  NEGOTIATING
+  AGREED
+  DECLINED
+  CLOSED
+}
+
+enum DeliverableStatus {
+  NOT_BRIEFED
+  CONTENT_DUE
+  CONTENT_RECEIVED
+  APPROVED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  CHANGES_REQUESTED
+}
+
+enum PostingStatus {
+  NOT_SCHEDULED
+  READY_TO_POST
+  POSTED
+  ARCHIVED
+}
+
+enum PayoutStatus {
+  PENDING
+  APPROVED
+  SCHEDULED
+  PAID
+  FAILED
+  CANCELLED
+}
+
+enum NoteEntityType {
+  ORGANIZATION
+  CAMPAIGN
+  CREATOR
+  VIDEO
+  CAMPAIGN_CREATOR
+  PAYOUT
+}
+
+enum ActivityEntityType {
+  ORGANIZATION
+  CAMPAIGN
+  CREATOR
+  VIDEO
+  CAMPAIGN_CREATOR
+  PAYOUT
+  SYNC_JOB
+}
+
+enum SyncJobType {
+  ORGANIZATION_IMPORT
+  CREATOR_IMPORT
+  CREATOR_REFRESH
+  VIDEO_REFRESH
+  CAMPAIGN_REFRESH
+}
+
+enum SyncJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum ExternalSource {
+  DATA_PROVIDER
+}
+
+enum SourceEntityType {
+  CREATOR
+  PLATFORM_ACCOUNT
+  VIDEO
+  CAMPAIGN
+}
+
+model User {
+  id             String                   @id @default(cuid())
+  name           String?
+  email          String?                  @unique
+  emailVerified  DateTime?
+  image          String?
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  accounts       Account[]
+  sessions       Session[]
+  memberships    OrganizationMembership[]
+  ownedCampaigns Campaign[]               @relation("CampaignOwner")
+  notesAuthored  Note[]
+  activities     Activity[]
+  syncJobs       ExternalSyncJob[]
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([sessionToken])
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+model Organization {
+  id           String                   @id @default(cuid())
+  name         String
+  slug         String                   @unique
+  createdById  String?
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  memberships  OrganizationMembership[]
+  campaigns    Campaign[]
+  creators     Creator[]
+  tags         Tag[]
+  payouts      Payout[]
+  notes        Note[]
+  activities   Activity[]
+  syncJobs     ExternalSyncJob[]
+  sourceMaps   SourceMapping[]
+}
+
+model OrganizationMembership {
+  id             String           @id @default(cuid())
+  organizationId String
+  userId         String
+  role           OrganizationRole @default(MEMBER)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model Campaign {
+  id             String           @id @default(cuid())
+  organizationId String
+  ownerUserId    String?
+  name           String
+  status         CampaignStatus   @default(DRAFT)
+  budget         Decimal?         @db.Decimal(12, 2)
+  currency       String           @default("USD")
+  targetKpis     Json?
+  startDate      DateTime?
+  endDate        DateTime?
+  notesSummary   String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner          User?            @relation("CampaignOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  creators       CampaignCreator[]
+  videos         Video[]
+  payouts        Payout[]
+
+  @@index([organizationId, status])
+}
+
+model Creator {
+  id               String                  @id @default(cuid())
+  organizationId   String
+  displayName      String
+  primaryNiche     String?
+  region           String?
+  language         String?
+  internalStatus   CreatorStatus           @default(NEW)
+  notesSummary     String?
+  contactEmail     String?
+  customTags       String[]
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  organization     Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  platformAccounts CreatorPlatformAccount[]
+  metricsSnapshots CreatorMetricsSnapshot[]
+  campaignLinks    CampaignCreator[]
+  videos           Video[]
+  creatorTags      CreatorTag[]
+  payouts          Payout[]
+
+  @@index([organizationId, internalStatus])
+}
+
+model CreatorPlatformAccount {
+  id                    String                  @id @default(cuid())
+  creatorId             String
+  platform              Platform
+  sourceAccountId       String?
+  handle                String
+  profileUrl            String?
+  followerCount         Int?
+  averageViews          Int?
+  averageEngagementRate Float?
+  contactInfo           Json?
+  lastSyncedAt          DateTime?
+  rawPayload            Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  creator               Creator                 @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  metricsSnapshots      CreatorMetricsSnapshot[]
+  videos                Video[]
+
+  @@unique([platform, sourceAccountId])
+  @@unique([creatorId, platform, handle])
+  @@index([creatorId, platform])
+}
+
+model CreatorMetricsSnapshot {
+  id                    String                  @id @default(cuid())
+  creatorId             String
+  platformAccountId     String?
+  capturedAt            DateTime                @default(now())
+  followerCount         Int?
+  averageViews          Int?
+  averageEngagementRate Float?
+  sourcePayload         Json?
+  creator               Creator                 @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  platformAccount       CreatorPlatformAccount? @relation(fields: [platformAccountId], references: [id], onDelete: SetNull)
+
+  @@index([creatorId, capturedAt])
+}
+
+model CampaignCreator {
+  id                String            @id @default(cuid())
+  campaignId        String
+  creatorId         String
+  outreachStatus    OutreachStatus    @default(NOT_STARTED)
+  dealStatus        DealStatus        @default(LEAD)
+  deliverableStatus DeliverableStatus @default(NOT_BRIEFED)
+  approvalStatus    ApprovalStatus    @default(PENDING)
+  postingStatus     PostingStatus     @default(NOT_SCHEDULED)
+  payoutStatus      PayoutStatus      @default(PENDING)
+  agreedRate        Decimal?          @db.Decimal(12, 2)
+  dueDate           DateTime?
+  deliveredAt       DateTime?
+  postedAt          DateTime?
+  internalNotes     String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  campaign          Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  creator           Creator           @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  payouts           Payout[]
+
+  @@unique([campaignId, creatorId])
+  @@index([campaignId, dealStatus])
+  @@index([creatorId, payoutStatus])
+}
+
+model Video {
+  id                       String                  @id @default(cuid())
+  creatorId                String
+  creatorPlatformAccountId String?
+  campaignId               String?
+  sourceVideoId            String?
+  platform                 Platform
+  videoUrl                 String
+  titleOrCaption           String?
+  publishedAt              DateTime?
+  views                    Int?
+  likes                    Int?
+  comments                 Int?
+  engagementRate           Float?
+  contentTags              String[]
+  hookSummary              String?
+  rawPayload               Json?
+  lastSyncedAt             DateTime?
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+  creator                  Creator                 @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  creatorPlatformAccount   CreatorPlatformAccount? @relation(fields: [creatorPlatformAccountId], references: [id], onDelete: SetNull)
+  campaign                 Campaign?               @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  metricsSnapshots         VideoMetricsSnapshot[]
+
+  @@unique([platform, sourceVideoId])
+  @@index([creatorId, publishedAt])
+  @@index([campaignId, platform])
+}
+
+model VideoMetricsSnapshot {
+  id             String   @id @default(cuid())
+  videoId        String
+  capturedAt     DateTime @default(now())
+  views          Int?
+  likes          Int?
+  comments       Int?
+  engagementRate Float?
+  sourcePayload  Json?
+  video          Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([videoId, capturedAt])
+}
+
+model Note {
+  id             String         @id @default(cuid())
+  organizationId String
+  authorUserId   String?
+  entityType     NoteEntityType
+  entityId       String
+  body           String
+  metadata       Json?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  author         User?          @relation(fields: [authorUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, entityType, entityId])
+}
+
+model Tag {
+  id             String      @id @default(cuid())
+  organizationId String
+  name           String
+  color          String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creatorTags    CreatorTag[]
+
+  @@unique([organizationId, name])
+}
+
+model CreatorTag {
+  id        String   @id @default(cuid())
+  creatorId String
+  tagId     String
+  createdAt DateTime @default(now())
+  creator   Creator  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([creatorId, tagId])
+}
+
+model Payout {
+  id                String         @id @default(cuid())
+  organizationId    String
+  campaignId        String?
+  creatorId         String?
+  campaignCreatorId String?
+  amount            Decimal        @db.Decimal(12, 2)
+  currency          String         @default("USD")
+  status            PayoutStatus   @default(PENDING)
+  payoutDate        DateTime?
+  paymentMethod     String?
+  externalReference String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign          Campaign?      @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  creator           Creator?       @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+  campaignCreator   CampaignCreator? @relation(fields: [campaignCreatorId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+  @@index([campaignId, payoutDate])
+}
+
+model Activity {
+  id             String           @id @default(cuid())
+  organizationId String
+  actorUserId    String?
+  entityType     ActivityEntityType
+  entityId       String
+  action         String
+  summary        String?
+  metadata       Json?
+  createdAt      DateTime         @default(now())
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor          User?            @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId])
+}
+
+model ExternalSyncJob {
+  id                String        @id @default(cuid())
+  organizationId    String
+  initiatedByUserId String?
+  jobType           SyncJobType
+  status            SyncJobStatus @default(QUEUED)
+  resourceType      String
+  resourceId        String?
+  startedAt         DateTime?
+  finishedAt        DateTime?
+  errorMessage      String?
+  requestPayload    Json?
+  resultPayload     Json?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  organization      Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  initiatedBy       User?         @relation(fields: [initiatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status])
+  @@index([jobType, createdAt])
+}
+
+model SourceMapping {
+  id                   String           @id @default(cuid())
+  organizationId       String
+  localEntityType      SourceEntityType
+  localEntityId        String
+  externalSource       ExternalSource   @default(DATA_PROVIDER)
+  externalResourceType String
+  externalId           String
+  lastSyncedAt         DateTime?
+  rawPayload           Json?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  organization         Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([externalSource, externalResourceType, externalId])
+  @@unique([organizationId, localEntityType, localEntityId, externalSource])
+}
