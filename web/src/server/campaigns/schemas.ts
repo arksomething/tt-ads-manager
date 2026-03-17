@@ -1,32 +1,20 @@
-import { CampaignStatus } from "@prisma/client";
+import { CampaignRole } from "@prisma/client";
 import { z } from "zod";
 
 export const createCampaignSchema = z.object({
   organizationId: z.string().cuid(),
   name: z.string().min(2).max(160),
   ownerUserId: z.string().cuid().optional(),
-  status: z.nativeEnum(CampaignStatus).default(CampaignStatus.DRAFT),
-  budget: z.number().nonnegative().optional(),
-  currency: z.string().min(3).max(3).default("USD"),
-  startDate: z.coerce.date().optional(),
-  endDate: z.coerce.date().optional(),
-  targetKpis: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
-  notesSummary: z.string().max(5000).optional(),
 });
 
-export const updateCampaignSchema = createCampaignSchema
-  .omit({ organizationId: true })
-  .partial()
-  .refine(
-    (value) =>
-      !value.startDate ||
-      !value.endDate ||
-      value.endDate.getTime() >= value.startDate.getTime(),
-    {
-      message: "Campaign end date must be on or after the start date.",
-      path: ["endDate"],
-    },
-  );
+export const createOrganizationCampaignSchema = createCampaignSchema.omit({
+  organizationId: true,
+  ownerUserId: true,
+});
+
+export const updateCampaignSchema = z.object({
+  name: z.string().min(2).max(160).optional(),
+});
 
 export const addCreatorToCampaignSchema = z.object({
   campaignId: z.string().cuid(),
@@ -36,8 +24,41 @@ export const addCreatorToCampaignSchema = z.object({
   internalNotes: z.string().max(5000).optional(),
 });
 
+export const inviteCampaignMemberSchema = z.object({
+  email: z.email(),
+  role: z.nativeEnum(CampaignRole).default(CampaignRole.MEMBER),
+});
+
+export const updateCampaignMemberRoleSchema = z.object({
+  membershipId: z.string().cuid(),
+  role: z.enum([CampaignRole.MANAGER, CampaignRole.MEMBER]),
+});
+
+export const removeCampaignMemberSchema = z.object({
+  membershipId: z.string().cuid(),
+});
+
+export const revokeCampaignInvitationSchema = z.object({
+  invitationId: z.string().cuid(),
+});
+
 export type CreateCampaignInput = z.infer<typeof createCampaignSchema>;
+export type CreateOrganizationCampaignInput = z.infer<
+  typeof createOrganizationCampaignSchema
+>;
 export type UpdateCampaignInput = z.infer<typeof updateCampaignSchema>;
 export type AddCreatorToCampaignInput = z.infer<
   typeof addCreatorToCampaignSchema
+>;
+export type InviteCampaignMemberInput = z.infer<
+  typeof inviteCampaignMemberSchema
+>;
+export type UpdateCampaignMemberRoleInput = z.infer<
+  typeof updateCampaignMemberRoleSchema
+>;
+export type RemoveCampaignMemberInput = z.infer<
+  typeof removeCampaignMemberSchema
+>;
+export type RevokeCampaignInvitationInput = z.infer<
+  typeof revokeCampaignInvitationSchema
 >;

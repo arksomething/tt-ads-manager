@@ -13,6 +13,12 @@ enum OrganizationRole {
   MEMBER
 }
 
+enum CampaignRole {
+  OWNER
+  MANAGER
+  MEMBER
+}
+
 enum Platform {
   TIKTOK
   INSTAGRAM_REELS
@@ -24,14 +30,6 @@ enum CreatorStatus {
   QUALIFIED
   ACTIVE
   INACTIVE
-  ARCHIVED
-}
-
-enum CampaignStatus {
-  DRAFT
-  ACTIVE
-  PAUSED
-  COMPLETED
   ARCHIVED
 }
 
@@ -125,20 +123,24 @@ enum SourceEntityType {
 }
 
 model User {
-  id             String                   @id @default(cuid())
-  name           String?
-  email          String?                  @unique
-  emailVerified  DateTime?
-  image          String?
-  createdAt      DateTime                 @default(now())
-  updatedAt      DateTime                 @updatedAt
-  accounts       Account[]
-  sessions       Session[]
-  memberships    OrganizationMembership[]
-  ownedCampaigns Campaign[]               @relation("CampaignOwner")
-  notesAuthored  Note[]
-  activities     Activity[]
-  syncJobs       ExternalSyncJob[]
+  id                          String                   @id @default(cuid())
+  name                        String?
+  email                       String?                  @unique
+  emailVerified               DateTime?
+  image                       String?
+  createdAt                   DateTime                 @default(now())
+  updatedAt                   DateTime                 @updatedAt
+  accounts                    Account[]
+  sessions                    Session[]
+  memberships                 OrganizationMembership[]
+  campaignMemberships         CampaignMembership[]
+  ownedCampaigns              Campaign[]               @relation("CampaignOwner")
+  organizationInvitationsSent OrganizationInvitation[] @relation("OrganizationInvitationInvitedBy")
+  campaignInvitationsSent     CampaignInvitation[]     @relation("CampaignInvitationInvitedBy")
+  notesAuthored               Note[]
+  activities                  Activity[]
+  syncJobs                    ExternalSyncJob[]
+  videoReviews                VideoReview[]
 }
 
 model Account {
@@ -180,21 +182,22 @@ model VerificationToken {
 }
 
 model Organization {
-  id           String                   @id @default(cuid())
-  name         String
-  slug         String                   @unique
-  createdById  String?
-  createdAt    DateTime                 @default(now())
-  updatedAt    DateTime                 @updatedAt
-  memberships  OrganizationMembership[]
-  campaigns    Campaign[]
-  creators     Creator[]
-  tags         Tag[]
-  payouts      Payout[]
-  notes        Note[]
-  activities   Activity[]
-  syncJobs     ExternalSyncJob[]
-  sourceMaps   SourceMapping[]
+  id          String                   @id @default(cuid())
+  name        String
+  slug        String                   @unique
+  createdById String?
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  memberships OrganizationMembership[]
+  invitations OrganizationInvitation[]
+  campaigns   Campaign[]
+  creators    Creator[]
+  tags        Tag[]
+  payouts     Payout[]
+  notes       Note[]
+  activities  Activity[]
+  syncJobs    ExternalSyncJob[]
+  sourceMaps  SourceMapping[]
 }
 
 model OrganizationMembership {
@@ -211,43 +214,88 @@ model OrganizationMembership {
   @@index([userId])
 }
 
+model OrganizationInvitation {
+  id              String           @id @default(cuid())
+  organizationId  String
+  email           String
+  role            OrganizationRole @default(MEMBER)
+  invitedByUserId String?
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy       User?            @relation("OrganizationInvitationInvitedBy", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, email])
+  @@index([email, acceptedAt, revokedAt])
+  @@index([organizationId, acceptedAt, revokedAt])
+}
+
 model Campaign {
-  id             String           @id @default(cuid())
+  id             String               @id @default(cuid())
   organizationId String
   ownerUserId    String?
   name           String
-  status         CampaignStatus   @default(DRAFT)
-  budget         Decimal?         @db.Decimal(12, 2)
-  currency       String           @default("USD")
-  targetKpis     Json?
-  startDate      DateTime?
-  endDate        DateTime?
-  notesSummary   String?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  owner          User?            @relation("CampaignOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner          User?                @relation("CampaignOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  memberships    CampaignMembership[]
+  invitations    CampaignInvitation[]
   creators       CampaignCreator[]
   videos         Video[]
   payouts        Payout[]
 
-  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+}
+
+model CampaignMembership {
+  id         String       @id @default(cuid())
+  campaignId String
+  userId     String
+  role       CampaignRole @default(MEMBER)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  campaign   Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, userId])
+  @@index([userId])
+}
+
+model CampaignInvitation {
+  id              String       @id @default(cuid())
+  campaignId      String
+  email           String
+  role            CampaignRole @default(MEMBER)
+  invitedByUserId String?
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  campaign        Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  invitedBy       User?        @relation("CampaignInvitationInvitedBy", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([campaignId, email])
+  @@index([email, acceptedAt, revokedAt])
+  @@index([campaignId, acceptedAt, revokedAt])
 }
 
 model Creator {
-  id               String                  @id @default(cuid())
+  id               String                   @id @default(cuid())
   organizationId   String
   displayName      String
   primaryNiche     String?
   region           String?
   language         String?
-  internalStatus   CreatorStatus           @default(NEW)
+  internalStatus   CreatorStatus            @default(NEW)
   notesSummary     String?
   contactEmail     String?
   customTags       String[]
-  createdAt        DateTime                @default(now())
-  updatedAt        DateTime                @updatedAt
-  organization     Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  organization     Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   platformAccounts CreatorPlatformAccount[]
   metricsSnapshots CreatorMetricsSnapshot[]
   campaignLinks    CampaignCreator[]
@@ -259,7 +307,7 @@ model Creator {
 }
 
 model CreatorPlatformAccount {
-  id                    String                  @id @default(cuid())
+  id                    String                   @id @default(cuid())
   creatorId             String
   platform              Platform
   sourceAccountId       String?
@@ -271,9 +319,9 @@ model CreatorPlatformAccount {
   contactInfo           Json?
   lastSyncedAt          DateTime?
   rawPayload            Json?
-  createdAt             DateTime                @default(now())
-  updatedAt             DateTime                @updatedAt
-  creator               Creator                 @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+  creator               Creator                  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
   metricsSnapshots      CreatorMetricsSnapshot[]
   videos                Video[]
 
@@ -347,10 +395,25 @@ model Video {
   creatorPlatformAccount   CreatorPlatformAccount? @relation(fields: [creatorPlatformAccountId], references: [id], onDelete: SetNull)
   campaign                 Campaign?               @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   metricsSnapshots         VideoMetricsSnapshot[]
+  reviews                  VideoReview[]
 
   @@unique([platform, sourceVideoId])
   @@index([creatorId, publishedAt])
   @@index([campaignId, platform])
+}
+
+model VideoReview {
+  id             String   @id @default(cuid())
+  videoId         String
+  reviewerUserId  String
+  reviewedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  video           Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  reviewer        User     @relation(fields: [reviewerUserId], references: [id], onDelete: Cascade)
+
+  @@unique([videoId, reviewerUserId])
+  @@index([reviewerUserId, reviewedAt])
 }
 
 model VideoMetricsSnapshot {
@@ -384,12 +447,12 @@ model Note {
 }
 
 model Tag {
-  id             String      @id @default(cuid())
+  id             String       @id @default(cuid())
   organizationId String
   name           String
   color          String?
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   creatorTags    CreatorTag[]
 
@@ -408,22 +471,22 @@ model CreatorTag {
 }
 
 model Payout {
-  id                String         @id @default(cuid())
+  id                String           @id @default(cuid())
   organizationId    String
   campaignId        String?
   creatorId         String?
   campaignCreatorId String?
-  amount            Decimal        @db.Decimal(12, 2)
-  currency          String         @default("USD")
-  status            PayoutStatus   @default(PENDING)
+  amount            Decimal          @db.Decimal(12, 2)
+  currency          String           @default("USD")
+  status            PayoutStatus     @default(PENDING)
   payoutDate        DateTime?
   paymentMethod     String?
   externalReference String?
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  campaign          Campaign?      @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  creator           Creator?       @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign          Campaign?        @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  creator           Creator?         @relation(fields: [creatorId], references: [id], onDelete: SetNull)
   campaignCreator   CampaignCreator? @relation(fields: [campaignCreatorId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, status])
@@ -431,7 +494,7 @@ model Payout {
 }
 
 model Activity {
-  id             String           @id @default(cuid())
+  id             String             @id @default(cuid())
   organizationId String
   actorUserId    String?
   entityType     ActivityEntityType
@@ -439,9 +502,9 @@ model Activity {
   action         String
   summary        String?
   metadata       Json?
-  createdAt      DateTime         @default(now())
-  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  actor          User?            @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  createdAt      DateTime           @default(now())
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor          User?              @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, createdAt])
   @@index([entityType, entityId])

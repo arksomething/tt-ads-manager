@@ -5,7 +5,7 @@ export const createVideoSchema = z.object({
   creatorId: z.string().cuid(),
   creatorPlatformAccountId: z.string().cuid().optional(),
   campaignId: z.string().cuid().optional(),
-  viralVideoId: z.string().max(255).optional(),
+  sourceVideoId: z.string().max(255).optional(),
   platform: z.nativeEnum(Platform),
   videoUrl: z.url(),
   titleOrCaption: z.string().max(5000).optional(),
@@ -27,5 +27,17 @@ export const videoFiltersSchema = z.object({
   publishedBefore: z.coerce.date().optional(),
 });
 
+export const trackVideoSchema = z.object({
+  videoUrl: z.string().trim().max(4096).url(),
+  campaignId: z.string().cuid("Choose a campaign you can access."),
+});
+
+export const setVideoReviewSchema = z.object({
+  videoId: z.string().cuid(),
+  action: z.enum(["mark-reviewed", "clear-reviewed"]),
+});
+
 export type CreateVideoInput = z.infer<typeof createVideoSchema>;
 export type VideoFiltersInput = z.infer<typeof videoFiltersSchema>;
+export type TrackVideoInput = z.infer<typeof trackVideoSchema>;
+export type SetVideoReviewInput = z.infer<typeof setVideoReviewSchema>;

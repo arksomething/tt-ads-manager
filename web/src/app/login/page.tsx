@@ -4,7 +4,22 @@ import { AuthInfoRow, AuthShell } from "@/components/auth/auth-shell";
 
 export const dynamic = "force-dynamic";
 
-export default async function LoginPage() {
+type LoginPageProps = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
+function getSearchParamValue(
+  searchParams: Record<string, string | string[] | undefined>,
+  key: string,
+) {
+  const value = searchParams[key];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function LoginPage({ searchParams }: LoginPageProps) {
+  const resolvedSearchParams = await searchParams;
+  const isSwitchAccountFlow =
+    getSearchParamValue(resolvedSearchParams, "mode") === "switch-account";
   const googleAuthConfigured = Boolean(
     process.env.DATABASE_URL &&
       process.env.AUTH_SECRET &&
@@ -18,7 +33,7 @@ export default async function LoginPage() {
       const { auth } = await import("@/auth");
       const session = await auth();
 
-      if (session?.user?.id) {
+      if (session?.user?.id && !isSwitchAccountFlow) {
         redirect("/app");
       }
     } catch {
@@ -30,12 +45,16 @@ export default async function LoginPage() {
     <AuthShell
       description={
         googleAuthConfigured
-          ? "Begin with one calm step. Continue with Google to enter your workspace."
+          ? isSwitchAccountFlow
+            ? "Choose a different Google account to continue into your workspace."
+            : "Begin with one calm step. Continue with Google to enter your workspace."
           : "The auth surface is ready. Add the required environment variables to enable Google sign-in."
       }
       footer={
         googleAuthConfigured
-          ? "By continuing, you agree to the product terms and privacy expectations for your organization workspace."
+          ? isSwitchAccountFlow
+            ? "You will be prompted to pick another Google account before returning to the app."
+            : "By continuing, you agree to the product terms and privacy expectations for your organization workspace."
           : "Google auth is currently disabled in this environment, so the page stays visible while setup is incomplete."
       }
       title="Welcome to Billion Views"
@@ -70,7 +89,11 @@ export default async function LoginPage() {
             </span>
           }
           label="Next step"
-          value="Create or join your organization"
+          value={
+            isSwitchAccountFlow
+              ? "Pick the Google account you want to use"
+              : "Create or join your organization"
+          }
         />
       </div>
 
@@ -83,16 +106,23 @@ export default async function LoginPage() {
           }
 
           const { signIn } = await import("@/auth");
+          if (isSwitchAccountFlow) {
+            await signIn("google", { redirectTo: "/app" }, { prompt: "select_account" });
+            return;
+          }
+
           await signIn("google", { redirectTo: "/app" });
         }}
         className="mt-10"
       >
         <button
-          className="inline-flex w-full items-center justify-center rounded-full bg-white px-6 py-4 text-sm font-semibold text-black transition hover:bg-white/92 disabled:cursor-not-allowed disabled:bg-white/16 disabled:text-white/55"
+          className="inline-flex w-full items-center justify-center rounded-full border border-[#90FF4D]/24 bg-[#90FF4D]/90 px-6 py-4 text-sm font-semibold text-black transition hover:bg-[#A4FF68] disabled:cursor-not-allowed disabled:border-white/[0.08] disabled:bg-white/16 disabled:text-white/55"
           disabled={!googleAuthConfigured}
           type="submit"
         >
-          Continue with Google
+          {isSwitchAccountFlow
+            ? "Choose a different Google account"
+            : "Continue with Google"}
         </button>
       </form>
     </AuthShell>

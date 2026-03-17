@@ -6,7 +6,6 @@ export async function getOrganizationDashboardSummary(organizationId: string) {
   const [
     creatorCount,
     campaignCount,
-    activeCampaignCount,
     videoCount,
     paidPayoutAggregate,
   ] = await Promise.all([
@@ -18,12 +17,6 @@ export async function getOrganizationDashboardSummary(organizationId: string) {
     prisma.campaign.count({
       where: {
         organizationId,
-      },
-    }),
-    prisma.campaign.count({
-      where: {
-        organizationId,
-        status: "ACTIVE",
       },
     }),
     prisma.video.count({
@@ -47,7 +40,6 @@ export async function getOrganizationDashboardSummary(organizationId: string) {
   return {
     creatorCount,
     campaignCount,
-    activeCampaignCount,
     videoCount,
     paidPayoutTotal: paidPayoutAggregate._sum.amount ?? 0,
   };

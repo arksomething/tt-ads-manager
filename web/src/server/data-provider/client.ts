@@ -44,7 +44,7 @@ export class DataProviderClient {
       signal,
       headers: {
         Accept: "application/json",
-        Authorization: `Bearer ${dataProviderEnv.DATA_PROVIDER_API_KEY}`,
+        "x-api-key": dataProviderEnv.DATA_PROVIDER_API_KEY,
         "Content-Type": "application/json",
         ...headers,
       },
