@@ -1,11 +1,16 @@
 import Link from "next/link";
-import { CreatorStatus } from "@prisma/client";
+import { CreatorStatus, MessagingChannel } from "@prisma/client";
 import { redirect } from "next/navigation";
 
 import { CampaignBadge } from "@/components/org-dashboard/campaign-badge";
 import type { DashboardSearchParams } from "@/server/dashboard/filters";
 import { formatPlatformLabel } from "@/server/dashboard/filters";
-import { trackCreatorAccountForOrganization } from "@/server/creators/mutations";
+import {
+  removeCreatorContactPointForOrganization,
+  requestSparkCodeForCreatorInOrganization,
+  trackCreatorAccountForOrganization,
+  upsertCreatorContactPointForOrganization,
+} from "@/server/creators/mutations";
 import { getCreatorsWorkspace } from "@/server/creators/queries";
 import { trackedAccountMaxVideoOptions } from "@/server/creators/schemas";
 
@@ -126,6 +131,10 @@ function formatStatusLabel(status: CreatorStatus) {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatChannelLabel(channel: MessagingChannel) {
+  return channel === MessagingChannel.WHATSAPP ? "WhatsApp" : "SMS";
 }
 
 function formatCompactNumber(value: number | null | undefined) {
@@ -261,6 +270,12 @@ function getNoticeLabel(value: string | undefined) {
       return "Account added to viral.app and synced locally.";
     case "creator-created":
       return "Creator added to viral.app";
+    case "contact-saved":
+      return "Creator contact point saved.";
+    case "contact-removed":
+      return "Creator contact point removed.";
+    case "spark-request-sent":
+      return "Spark code request sent.";
     default:
       return undefined;
   }
@@ -318,6 +333,113 @@ export default async function CreatorsPage({
           page: workspace.currentPage,
           notice: null,
           error: getActionErrorMessage(createError),
+        }),
+      );
+    }
+  }
+
+  async function upsertContactPointAction(formData: FormData) {
+    "use server";
+
+    try {
+      await upsertCreatorContactPointForOrganization({
+        organizationSlug,
+        input: {
+          creatorId: getTrimmedFormValue(formData, "creatorId"),
+          channel: getTrimmedFormValue(formData, "channel"),
+          phoneE164: getTrimmedFormValue(formData, "phoneE164"),
+          isPrimary:
+            getTrimmedFormValue(formData, "isPrimary") === "on" ||
+            getTrimmedFormValue(formData, "isPrimary") === "true",
+        },
+      });
+
+      redirect(
+        buildCreatorsPageHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          page: workspace.currentPage,
+          notice: "contact-saved",
+          error: null,
+        }),
+      );
+    } catch (contactError) {
+      redirect(
+        buildCreatorsPageHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          page: workspace.currentPage,
+          notice: null,
+          error: getActionErrorMessage(contactError),
+        }),
+      );
+    }
+  }
+
+  async function removeContactPointAction(formData: FormData) {
+    "use server";
+
+    try {
+      await removeCreatorContactPointForOrganization({
+        organizationSlug,
+        input: {
+          contactPointId: getTrimmedFormValue(formData, "contactPointId"),
+        },
+      });
+
+      redirect(
+        buildCreatorsPageHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          page: workspace.currentPage,
+          notice: "contact-removed",
+          error: null,
+        }),
+      );
+    } catch (contactError) {
+      redirect(
+        buildCreatorsPageHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          page: workspace.currentPage,
+          notice: null,
+          error: getActionErrorMessage(contactError),
+        }),
+      );
+    }
+  }
+
+  async function requestSparkCodeAction(formData: FormData) {
+    "use server";
+
+    try {
+      await requestSparkCodeForCreatorInOrganization({
+        organizationSlug,
+        input: {
+          creatorId: getTrimmedFormValue(formData, "creatorId"),
+          channel: getTrimmedFormValue(formData, "channel"),
+          contactPointId: getTrimmedFormValue(formData, "contactPointId"),
+          videoId: getTrimmedFormValue(formData, "videoId"),
+        },
+      });
+
+      redirect(
+        buildCreatorsPageHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          page: workspace.currentPage,
+          notice: "spark-request-sent",
+          error: null,
+        }),
+      );
+    } catch (requestError) {
+      redirect(
+        buildCreatorsPageHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          page: workspace.currentPage,
+          notice: null,
+          error: getActionErrorMessage(requestError),
         }),
       );
     }
@@ -510,6 +632,90 @@ export default async function CreatorsPage({
                           {creator.notesSummary}
                         </p>
                       ) : null}
+                      <div className="mt-3 space-y-2">
+                        <p className="text-[0.58rem] uppercase tracking-[0.18em] text-muted-foreground">
+                          Contact points
+                        </p>
+                        {creator.contactPoints.length > 0 ? (
+                          <div className="space-y-2">
+                            {creator.contactPoints.map((contactPoint) => (
+                              <div
+                                key={contactPoint.id}
+                                className="flex flex-wrap items-center gap-2 rounded-[0.9rem] border border-white/[0.08] bg-white/[0.03] px-2.5 py-2"
+                              >
+                                <span className="rounded-full border border-white/[0.08] bg-black/[0.22] px-2 py-0.5 text-[0.56rem] uppercase tracking-[0.18em] text-muted-foreground">
+                                  {formatChannelLabel(contactPoint.channel)}
+                                </span>
+                                <span className="text-xs text-foreground">
+                                  {contactPoint.phoneE164}
+                                </span>
+                                {contactPoint.isPrimary ? (
+                                  <span className="rounded-full border border-[#90FF4D]/25 bg-[#90FF4D]/10 px-2 py-0.5 text-[0.56rem] uppercase tracking-[0.18em] text-[#B8FF86]">
+                                    Primary
+                                  </span>
+                                ) : null}
+                                {workspace.canManageOrganizationData ? (
+                                  <form action={removeContactPointAction}>
+                                    <input
+                                      name="contactPointId"
+                                      type="hidden"
+                                      value={contactPoint.id}
+                                    />
+                                    <button
+                                      className="inline-flex min-h-7 items-center rounded-full border border-white/[0.08] bg-black/[0.22] px-2.5 text-[0.56rem] uppercase tracking-[0.18em] text-muted-foreground transition hover:border-white/[0.14] hover:text-foreground"
+                                      type="submit"
+                                    >
+                                      Remove
+                                    </button>
+                                  </form>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            No SMS or WhatsApp numbers linked yet.
+                          </p>
+                        )}
+                      </div>
+                      {workspace.canManageOrganizationData ? (
+                        <form action={upsertContactPointAction} className="mt-3 space-y-2">
+                          <input name="creatorId" type="hidden" value={creator.id} />
+                          <div className="grid gap-2 sm:grid-cols-[8.5rem_minmax(0,1fr)]">
+                            <select
+                              className="h-8 rounded-[0.8rem] border border-white/[0.08] bg-black/[0.24] px-2.5 text-xs text-foreground outline-none transition focus:border-white/[0.16]"
+                              defaultValue={MessagingChannel.SMS}
+                              name="channel"
+                            >
+                              <option value={MessagingChannel.SMS}>SMS</option>
+                              <option value={MessagingChannel.WHATSAPP}>WhatsApp</option>
+                            </select>
+                            <input
+                              className="h-8 rounded-[0.8rem] border border-white/[0.08] bg-black/[0.24] px-2.5 text-xs text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-white/[0.16]"
+                              name="phoneE164"
+                              placeholder="+15551234567"
+                              required
+                              type="text"
+                            />
+                          </div>
+                          <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                            <input
+                              className="h-3.5 w-3.5 rounded border border-white/[0.2] bg-black/[0.24]"
+                              defaultChecked
+                              name="isPrimary"
+                              type="checkbox"
+                              value="true"
+                            />
+                            Set as primary
+                          </label>
+                          <button
+                            className="inline-flex min-h-8 items-center rounded-[0.8rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-3 text-xs font-medium text-black transition hover:bg-[#A4FF68]"
+                            type="submit"
+                          >
+                            Save contact
+                          </button>
+                        </form>
+                      ) : null}
                     </td>
                     <td className="px-4 py-4">
                       <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-1 text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
@@ -607,6 +813,58 @@ export default async function CreatorsPage({
                           </span>
                         ))}
                       </div>
+                      {workspace.canManageOrganizationData ? (
+                        <form action={requestSparkCodeAction} className="mt-3 space-y-2">
+                          <input name="creatorId" type="hidden" value={creator.id} />
+                          <div className="grid gap-2 sm:grid-cols-[7.5rem_minmax(0,1fr)]">
+                            <label className="block">
+                              <span className="mb-1 block text-[0.56rem] uppercase tracking-[0.16em] text-muted-foreground">
+                                Channel
+                              </span>
+                              <select
+                                className="h-8 w-full rounded-[0.8rem] border border-white/[0.08] bg-black/[0.24] px-2.5 text-xs text-foreground outline-none transition focus:border-white/[0.16]"
+                                defaultValue={MessagingChannel.SMS}
+                                name="channel"
+                              >
+                                <option value={MessagingChannel.SMS}>SMS</option>
+                                <option value={MessagingChannel.WHATSAPP}>
+                                  WhatsApp
+                                </option>
+                              </select>
+                            </label>
+                            <label className="block">
+                              <span className="mb-1 block text-[0.56rem] uppercase tracking-[0.16em] text-muted-foreground">
+                                Video
+                              </span>
+                              <select
+                                className="h-8 w-full rounded-[0.8rem] border border-white/[0.08] bg-black/[0.24] px-2.5 text-xs text-foreground outline-none transition focus:border-white/[0.16]"
+                                defaultValue=""
+                                name="videoId"
+                              >
+                                <option value="">No specific video</option>
+                                {creator.videos.map((video) => (
+                                  <option key={video.id} value={video.id}>
+                                    {video.sourceVideoId ??
+                                      video.titleOrCaption ??
+                                      "Tracked video"}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                          <button
+                            className="inline-flex min-h-8 items-center rounded-[0.8rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-3 text-xs font-medium text-black transition hover:bg-[#A4FF68] disabled:cursor-not-allowed disabled:border-white/[0.08] disabled:bg-white/[0.08] disabled:text-muted-foreground"
+                            disabled={creator.contactPoints.length === 0}
+                            type="submit"
+                          >
+                            Request Spark code
+                          </button>
+                          <p className="text-[0.68rem] leading-5 text-muted-foreground">
+                            Requires an active contact point plus Twilio and TikTok
+                            integration config.
+                          </p>
+                        </form>
+                      ) : null}
                     </td>
                     <td className="px-4 py-4 text-sm text-muted-foreground">
                       {formatDateLabel(creator.createdAt)}

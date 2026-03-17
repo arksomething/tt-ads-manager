@@ -296,6 +296,7 @@ export async function getCreatorsWorkspace(args: {
   page?: number;
 }) {
   const membership = await requireOrganizationMembership(args.organizationSlug);
+  const canManageOrganizationData = canManageOrganization(membership.role);
   const campaignOptions = (
     await getAccessibleCampaignOptionsForMembership(membership)
   ).map((campaign) => ({
@@ -361,6 +362,34 @@ export async function getCreatorsWorkspace(args: {
               campaignLinks: true,
             },
           },
+          contactPoints: {
+            select: {
+              id: true,
+              channel: true,
+              phoneE164: true,
+              isPrimary: true,
+              optOutAt: true,
+              updatedAt: true,
+            },
+            orderBy: [{ channel: "asc" }, { isPrimary: "desc" }, { updatedAt: "desc" }],
+          },
+          videos: {
+            where: {
+              sourceVideoId: {
+                not: null,
+              },
+            },
+            select: {
+              id: true,
+              titleOrCaption: true,
+              sourceVideoId: true,
+              platform: true,
+              publishedAt: true,
+              createdAt: true,
+            },
+            orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+            take: 5,
+          },
         },
         orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
         skip: (currentPage - 1) * CREATORS_PAGE_SIZE,
@@ -394,6 +423,7 @@ export async function getCreatorsWorkspace(args: {
   return {
     canTrackCreators: campaignOptions.length > 0,
     campaignOptions,
+    canManageOrganizationData,
     currentPage,
     membership,
     pageCount,

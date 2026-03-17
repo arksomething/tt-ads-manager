@@ -14,6 +14,11 @@ import {
   ViralAppApiError,
   viralAppClient,
 } from "@/server/data-provider/viral-app-client";
+import {
+  removeCreatorContactPointForOrganization as removeCreatorContactPointForOrganizationMessaging,
+  sendSparkCodeRequestForOrganization as sendSparkCodeRequestForOrganizationMessaging,
+  upsertCreatorContactPointForOrganization as upsertCreatorContactPointForOrganizationMessaging,
+} from "@/server/messaging/mutations";
 
 import {
   createCreatorSchema,
@@ -545,4 +550,25 @@ export async function trackCreatorAccountForOrganization(
     creator,
     eventIds: trackedAccount.eventIds,
   };
+}
+
+export async function upsertCreatorContactPointForOrganization(args: {
+  organizationSlug: string;
+  input: unknown;
+}) {
+  return upsertCreatorContactPointForOrganizationMessaging(args);
+}
+
+export async function removeCreatorContactPointForOrganization(args: {
+  organizationSlug: string;
+  input: unknown;
+}) {
+  return removeCreatorContactPointForOrganizationMessaging(args);
+}
+
+export async function requestSparkCodeForCreatorInOrganization(args: {
+  organizationSlug: string;
+  input: unknown;
+}) {
+  return sendSparkCodeRequestForOrganizationMessaging(args);
 }

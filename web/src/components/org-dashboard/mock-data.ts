@@ -18,6 +18,7 @@ export type DashboardSectionKey =
   | "projects"
   | "integrations"
   | "api"
+  | "michael"
   | "settings";
 
 export type DashboardNavItem = {
@@ -181,6 +182,12 @@ export const dashboardNavGroups: DashboardNavGroup[] = [
         icon: "arrowUpRight",
       },
       {
+        key: "michael",
+        label: "Michael",
+        segment: "michael",
+        icon: "overview",
+      },
+      {
         key: "settings",
         label: "Settings",
         segment: "settings",
@@ -309,6 +316,13 @@ export const dashboardRouteMeta: Record<DashboardSectionKey, DashboardRouteMeta>
     title: "Expose the same calm dashboard layer to internal tooling and future programmatic access.",
     description:
       "This placeholder keeps an API section in the nav so later docs and tokens can live beside the rest of the workspace.",
+  },
+  michael: {
+    groupLabel: "Organization",
+    navLabel: "Michael",
+    title: "Michael is in the works.",
+    description:
+      "This tab is reserved for Michael and currently uses the shared placeholder dashboard layout.",
   },
   settings: {
     groupLabel: "Organization",
@@ -863,6 +877,23 @@ export const placeholderSectionData: Record<
       { label: "API surface", value: "Reserved in nav", status: "Ready" },
       { label: "Auth tokens", value: "Future", status: "Queued" },
       { label: "Code examples", value: "Planned", status: "Draft" },
+    ],
+  },
+  michael: {
+    eyebrow: "Organization",
+    spotlightTitle: "Michael is in the works.",
+    spotlightDescription:
+      "This placeholder keeps the new Michael route active while we build out the real workspace.",
+    highlights: ["In progress", "Placeholder", "Ready for build"],
+    statCards: [
+      { label: "Status", value: "In progress" },
+      { label: "Scope", value: "TBD" },
+      { label: "Owner", value: "Michael" },
+    ],
+    rows: [
+      { label: "Tab visibility", value: "Live in sidebar", status: "Ready" },
+      { label: "Workspace content", value: "Placeholder scaffold", status: "Draft" },
+      { label: "Feature buildout", value: "Planned", status: "Next" },
     ],
   },
   settings: {

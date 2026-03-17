@@ -19,13 +19,30 @@ const aiEnvSchema = z.object({
   OPENAI_BASE_URL: z.url().optional(),
 });
 
+const twilioEnvSchema = z.object({
+  TWILIO_ACCOUNT_SID: z.string().min(1),
+  TWILIO_AUTH_TOKEN: z.string().min(1),
+  TWILIO_MESSAGING_SERVICE_SID: z.string().min(1).optional(),
+  TWILIO_SMS_FROM: z.string().min(1).optional(),
+  TWILIO_WHATSAPP_FROM: z.string().min(1).optional(),
+  TWILIO_INBOUND_WEBHOOK_URL: z.url().optional(),
+});
+
+const tikTokBusinessEnvSchema = z.object({
+  TIKTOK_BUSINESS_BASE_URL: z.url().default("https://business-api.tiktok.com"),
+});
+
 type AuthEnv = z.infer<typeof authEnvSchema>;
 type DataProviderEnv = z.infer<typeof dataProviderEnvSchema>;
 type AiEnv = z.infer<typeof aiEnvSchema>;
+type TwilioEnv = z.infer<typeof twilioEnvSchema>;
+type TikTokBusinessEnv = z.infer<typeof tikTokBusinessEnvSchema>;
 
 let cachedAuthEnv: AuthEnv | undefined;
 let cachedDataProviderEnv: DataProviderEnv | undefined;
 let cachedAiEnv: AiEnv | undefined;
+let cachedTwilioEnv: TwilioEnv | undefined;
+let cachedTikTokBusinessEnv: TikTokBusinessEnv | undefined;
 
 export function getAuthEnv() {
   if (!cachedAuthEnv) {
@@ -68,4 +85,39 @@ export function getAiEnv() {
   }
 
   return cachedAiEnv;
+}
+
+export function hasTwilioEnv() {
+  return Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
+}
+
+export function getTwilioEnv() {
+  if (!cachedTwilioEnv) {
+    cachedTwilioEnv = twilioEnvSchema.parse({
+      TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
+      TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
+      TWILIO_MESSAGING_SERVICE_SID:
+        process.env.TWILIO_MESSAGING_SERVICE_SID || undefined,
+      TWILIO_SMS_FROM:
+        process.env.TWILIO_SMS_FROM ||
+        process.env.TWILIO_FROM_NUMBER ||
+        process.env.TWILIO_PHONE_NUMBER ||
+        undefined,
+      TWILIO_WHATSAPP_FROM: process.env.TWILIO_WHATSAPP_FROM || undefined,
+      TWILIO_INBOUND_WEBHOOK_URL: process.env.TWILIO_INBOUND_WEBHOOK_URL || undefined,
+    });
+  }
+
+  return cachedTwilioEnv;
+}
+
+export function getTikTokBusinessEnv() {
+  if (!cachedTikTokBusinessEnv) {
+    cachedTikTokBusinessEnv = tikTokBusinessEnvSchema.parse({
+      TIKTOK_BUSINESS_BASE_URL:
+        process.env.TIKTOK_BUSINESS_BASE_URL || "https://business-api.tiktok.com",
+    });
+  }
+
+  return cachedTikTokBusinessEnv;
 }
