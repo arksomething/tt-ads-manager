@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint . && npm run lint:no-solid-white-buttons",
     "lint:no-solid-white-buttons": "node scripts/assert-no-solid-white-buttons.mjs",
