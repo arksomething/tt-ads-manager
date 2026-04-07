@@ -74,6 +74,13 @@ type TikTokAdRecord = {
   raw: Record<string, unknown>;
 };
 
+export type TikTokMatchedAd = {
+  adId: string;
+  adName: string | null;
+  displayName: string | null;
+  itemIds: string[];
+};
+
 export type TikTokPaidViewsRow = {
   adId: string | null;
   itemId: string | null;
@@ -89,6 +96,7 @@ export type TikTokSparkItemPaidViewsResult = {
   startDate: string;
   endDate: string;
   paidViews: number;
+  matchedAds: TikTokMatchedAd[];
   matchedSparkItemIds: string[];
   matchedAdIds: string[];
   resolvedIdentities: string[];
@@ -340,6 +348,72 @@ function normalizeReportRow(row: TikTokIntegratedReportRow, apiMetricName: strin
     metricValue: getFirstNumber([metrics, row], [apiMetricName]),
     raw: row,
   };
+}
+
+function buildMatchedAdSummaries(args: {
+  ads?: readonly TikTokAdRecord[];
+  rows?: readonly TikTokPaidViewsRow[];
+}) {
+  const summaries = new Map<
+    string,
+    {
+      adId: string;
+      adName: string | null;
+      displayName: string | null;
+      itemIds: Set<string>;
+    }
+  >();
+
+  for (const ad of args.ads ?? []) {
+    const existingSummary = summaries.get(ad.adId);
+
+    if (existingSummary) {
+      if (ad.tiktokItemId) {
+        existingSummary.itemIds.add(ad.tiktokItemId);
+      }
+
+      continue;
+    }
+
+    summaries.set(ad.adId, {
+      adId: ad.adId,
+      adName: ad.adName,
+      displayName: ad.displayName,
+      itemIds: new Set(ad.tiktokItemId ? [ad.tiktokItemId] : []),
+    });
+  }
+
+  for (const row of args.rows ?? []) {
+    if (!row.adId) {
+      continue;
+    }
+
+    const existingSummary = summaries.get(row.adId);
+
+    if (existingSummary) {
+      if (row.itemId) {
+        existingSummary.itemIds.add(row.itemId);
+      }
+
+      continue;
+    }
+
+    summaries.set(row.adId, {
+      adId: row.adId,
+      adName: null,
+      displayName: null,
+      itemIds: new Set(row.itemId ? [row.itemId] : []),
+    });
+  }
+
+  return [...summaries.values()]
+    .map((summary) => ({
+      adId: summary.adId,
+      adName: summary.adName,
+      displayName: summary.displayName,
+      itemIds: [...summary.itemIds],
+    }))
+    .sort((left, right) => left.adId.localeCompare(right.adId));
 }
 
 function validateCredentials(args: {
@@ -710,6 +784,9 @@ export async function getPaidViewsForSparkItems(args: {
     startDate: toDateOnlyString(startDate),
     endDate: toDateOnlyString(endDate),
     paidViews,
+    matchedAds: buildMatchedAdSummaries({
+      rows: scopedRows,
+    }),
     matchedSparkItemIds: itemIds,
     matchedAdIds: uniqueNonEmptyStrings(scopedRows.map((row) => row.adId)),
     resolvedIdentities: [],
@@ -780,6 +857,9 @@ export async function getPaidViewsForCreator(args: {
       startDate: toDateOnlyString(startDate),
       endDate: toDateOnlyString(endDate),
       paidViews: 0,
+      matchedAds: buildMatchedAdSummaries({
+        ads: matchedAds.ads,
+      }),
       matchedSparkItemIds: discoveredItemIds,
       matchedAdIds: [],
       resolvedIdentities: identityResolution.identities.map(formatIdentityLabel),
@@ -833,6 +913,10 @@ export async function getPaidViewsForCreator(args: {
     startDate: toDateOnlyString(startDate),
     endDate: toDateOnlyString(endDate),
     paidViews,
+    matchedAds: buildMatchedAdSummaries({
+      ads: matchedAds.ads,
+      rows: scopedRows,
+    }),
     matchedSparkItemIds,
     matchedAdIds: adIds,
     resolvedIdentities: identityResolution.identities.map(formatIdentityLabel),

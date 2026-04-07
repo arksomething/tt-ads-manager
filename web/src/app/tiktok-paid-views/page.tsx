@@ -6,6 +6,7 @@ import { hasTikTokBusinessOauthEnv } from "@/lib/server-env";
 import {
   getPaidViewsForCreator,
   getPaidViewsForSparkItems,
+  type TikTokMatchedAd,
   type TikTokPaidViewMetric,
   type TikTokPaidViewsRow,
 } from "@/server/tiktok-business/public-reporting";
@@ -135,30 +136,70 @@ function getMetricDisplayCopy(metric: TikTokPaidViewMetric) {
   return metricDisplayCopy[metric];
 }
 
-type TikTokAdBreakdown = {
+function getBestAdLabel(ad: TikTokMatchedAd) {
+  const adName = ad.adName?.trim();
+
+  if (adName) {
+    return adName;
+  }
+
+  const displayName = ad.displayName?.trim();
+
+  if (displayName) {
+    return displayName;
+  }
+
+  return `Ad ${ad.adId}`;
+}
+
+type TikTokMatchedGroupAd = {
   adId: string;
+  adLabel: string;
   itemIds: string[];
   totalValue: number;
+};
+
+type TikTokMatchedGroupPoint = {
+  date: string | null;
+  value: number;
+};
+
+type TikTokMatchedGroup = {
+  key: string;
+  kind: "video" | "creative";
+  title: string;
+  subtitle: string;
+  itemIds: string[];
+  totalValue: number;
+  activeDays: number;
   rowCount: number;
   firstDate: string | null;
   lastDate: string | null;
   rows: TikTokPaidViewsRow[];
+  dailyPoints: TikTokMatchedGroupPoint[];
+  ads: TikTokMatchedGroupAd[];
 };
 
-function buildAdBreakdown(rows: TikTokPaidViewsRow[]): TikTokAdBreakdown[] {
-  const groups = new Map<
+function buildMatchedGroups(args: {
+  rows: TikTokPaidViewsRow[];
+  matchedAds: TikTokMatchedAd[];
+}) {
+  const adMetadata = new Map(args.matchedAds.map((ad) => [ad.adId, ad] as const));
+  const perAdGroups = new Map<
     string,
     {
       adId: string;
+      adLabel: string;
       itemIds: Set<string>;
       totalValue: number;
       rows: TikTokPaidViewsRow[];
     }
   >();
 
-  for (const row of rows) {
+  for (const row of args.rows) {
     const adId = row.adId ?? "Unknown";
-    const existingGroup = groups.get(adId);
+    const ad = adMetadata.get(adId);
+    const existingGroup = perAdGroups.get(adId);
 
     if (existingGroup) {
       existingGroup.totalValue += row.metricValue;
@@ -171,29 +212,121 @@ function buildAdBreakdown(rows: TikTokPaidViewsRow[]): TikTokAdBreakdown[] {
       continue;
     }
 
-    groups.set(adId, {
+    perAdGroups.set(adId, {
       adId,
-      itemIds: new Set(row.itemId ? [row.itemId] : []),
+      adLabel: ad ? getBestAdLabel(ad) : `Ad ${adId}`,
+      itemIds: new Set([
+        ...(ad?.itemIds ?? []),
+        ...(row.itemId ? [row.itemId] : []),
+      ]),
       totalValue: row.metricValue,
       rows: [row],
     });
   }
 
-  return [...groups.values()]
+  const groupedMatches = new Map<
+    string,
+    {
+      key: string;
+      kind: "video" | "creative";
+      itemIds: Set<string>;
+      rows: TikTokPaidViewsRow[];
+      ads: TikTokMatchedGroupAd[];
+      totalValue: number;
+    }
+  >();
+
+  for (const adGroup of perAdGroups.values()) {
+    const itemIds = [...adGroup.itemIds].sort();
+    const isVideoGroup = itemIds.length === 1;
+    const key = isVideoGroup ? `video:${itemIds[0]}` : `creative:${adGroup.adId}`;
+    const existingGroup = groupedMatches.get(key);
+    const adSummary = {
+      adId: adGroup.adId,
+      adLabel: adGroup.adLabel,
+      itemIds,
+      totalValue: adGroup.totalValue,
+    };
+
+    if (existingGroup) {
+      existingGroup.totalValue += adGroup.totalValue;
+      existingGroup.rows.push(...adGroup.rows);
+      existingGroup.ads.push(adSummary);
+
+      for (const itemId of itemIds) {
+        existingGroup.itemIds.add(itemId);
+      }
+
+      continue;
+    }
+
+    groupedMatches.set(key, {
+      key,
+      kind: isVideoGroup ? "video" : "creative",
+      itemIds: new Set(itemIds),
+      rows: [...adGroup.rows],
+      ads: [adSummary],
+      totalValue: adGroup.totalValue,
+    });
+  }
+
+  return [...groupedMatches.values()]
     .map((group) => {
       const sortedRows = [...group.rows].sort(
         (left, right) =>
           getReportDateSortValue(left.statDate) - getReportDateSortValue(right.statDate),
       );
+      const itemIds = [...group.itemIds].sort();
+      const dailyPointMap = new Map<string, TikTokMatchedGroupPoint>();
+
+      for (const row of sortedRows) {
+        const key = row.statDate ?? `unknown-${group.key}`;
+        const existingPoint = dailyPointMap.get(key);
+
+        if (existingPoint) {
+          existingPoint.value += row.metricValue;
+          continue;
+        }
+
+        dailyPointMap.set(key, {
+          date: row.statDate,
+          value: row.metricValue,
+        });
+      }
+
+      const dailyPoints = [...dailyPointMap.values()].sort(
+        (left, right) =>
+          getReportDateSortValue(left.date) - getReportDateSortValue(right.date),
+      );
+      const leadAd = group.ads[0];
+      const title =
+        group.kind === "video"
+          ? leadAd && !leadAd.adLabel.startsWith("Ad ")
+            ? leadAd.adLabel
+            : `Video ${itemIds[0]}`
+          : leadAd?.adLabel ?? `Ad ${leadAd?.adId ?? "Unknown"}`;
+      const subtitle =
+        group.kind === "video"
+          ? `Video ID ${itemIds[0]}${group.ads.length > 1 ? ` · ${group.ads.length} ads` : ""}`
+          : `Ad ID ${leadAd?.adId ?? "Unknown"}`;
 
       return {
-        adId: group.adId,
-        itemIds: [...group.itemIds],
+        key: group.key,
+        kind: group.kind,
+        title,
+        subtitle,
+        itemIds,
         totalValue: group.totalValue,
+        activeDays: dailyPoints.length,
         rowCount: sortedRows.length,
         firstDate: sortedRows[0]?.statDate ?? null,
         lastDate: sortedRows[sortedRows.length - 1]?.statDate ?? null,
         rows: sortedRows,
+        dailyPoints,
+        ads: [...group.ads].sort(
+          (left, right) =>
+            right.totalValue - left.totalValue || left.adId.localeCompare(right.adId),
+        ),
       };
     })
     .sort(
@@ -213,6 +346,74 @@ function summarizeItemIds(itemIds: string[]) {
   }
 
   return `${itemIds.slice(0, 3).join(", ")} +${itemIds.length - 3} more`;
+}
+
+function DailyMetricChart(args: {
+  points: TikTokMatchedGroupPoint[];
+  metricLabel: string;
+}) {
+  if (args.points.length === 0) {
+    return null;
+  }
+
+  const chartHeight = 120;
+  const baselineY = 104;
+  const maxValue = Math.max(...args.points.map((point) => point.value), 1);
+  const barWidth = 12;
+  const gap = 6;
+  const chartWidth = Math.max(320, args.points.length * (barWidth + gap));
+  const peakPoint = args.points.reduce((currentPeak, point) =>
+    point.value > currentPeak.value ? point : currentPeak,
+  );
+
+  return (
+    <div className="mt-4 rounded-[1rem] border border-white/[0.08] bg-black/[0.2] p-4">
+      <div className="overflow-x-auto">
+        <svg
+          aria-label={`${args.metricLabel} over time`}
+          className="h-32 w-full min-w-[320px]"
+          preserveAspectRatio="none"
+          viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+        >
+          <line
+            stroke="rgba(255,255,255,0.12)"
+            strokeWidth="1"
+            x1="0"
+            x2={chartWidth}
+            y1={baselineY}
+            y2={baselineY}
+          />
+          {args.points.map((point, index) => {
+            const height = Math.max(3, (point.value / maxValue) * 88);
+            const x = index * (barWidth + gap);
+            const y = baselineY - height;
+
+            return (
+              <rect
+                fill="rgba(144,255,77,0.88)"
+                height={height}
+                key={`${point.date ?? "unknown"}-${index}`}
+                rx="3"
+                width={barWidth}
+                x={x}
+                y={y}
+              />
+            );
+          })}
+        </svg>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span>
+          {formatDate(args.points[0]?.date ?? null)} to{" "}
+          {formatDate(args.points[args.points.length - 1]?.date ?? null)}
+        </span>
+        <span>
+          Peak day: {formatDate(peakPoint.date)} · {numberFormatter.format(peakPoint.value)}{" "}
+          {args.metricLabel.toLowerCase()}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function withFlashPath(args: {
@@ -460,7 +661,12 @@ export default async function TikTokPaidViewsPage({
   const metricCopy = getMetricDisplayCopy(result?.metric ?? metric);
   const visibleRows = result ? result.rows.filter((row) => row.metricValue > 0) : [];
   const hiddenZeroRowCount = result ? Math.max(result.rows.length - visibleRows.length, 0) : 0;
-  const adBreakdown = buildAdBreakdown(visibleRows);
+  const matchedGroups = buildMatchedGroups({
+    rows: visibleRows,
+    matchedAds: result?.matchedAds ?? [],
+  });
+  const knownVideoGroupCount = matchedGroups.filter((group) => group.kind === "video").length;
+  const creativeOnlyGroupCount = matchedGroups.length - knownVideoGroupCount;
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-4 px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
@@ -835,7 +1041,15 @@ export default async function TikTokPaidViewsPage({
               </div>
               <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
                 <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                  Matched ads
+                  Matched groups
+                </p>
+                <p className="mt-2 text-sm font-medium text-foreground">
+                  {numberFormatter.format(matchedGroups.length)}
+                </p>
+              </div>
+              <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Underlying ads
                 </p>
                 <p className="mt-2 text-sm font-medium text-foreground">
                   {numberFormatter.format(result.matchedAdIds.length)}
@@ -843,18 +1057,10 @@ export default async function TikTokPaidViewsPage({
               </div>
               <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
                 <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                  Spark item IDs
+                  Known video IDs
                 </p>
                 <p className="mt-2 text-sm font-medium text-foreground">
                   {numberFormatter.format(result.matchedSparkItemIds.length)}
-                </p>
-              </div>
-              <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                  Active daily rows
-                </p>
-                <p className="mt-2 text-sm font-medium text-foreground">
-                  {numberFormatter.format(visibleRows.length)}
                 </p>
               </div>
               <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
@@ -892,85 +1098,137 @@ export default async function TikTokPaidViewsPage({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
-                  Ad breakdown
+                  Matched results
                 </p>
                 <h3 className="mt-2 text-lg font-medium tracking-[-0.03em] text-foreground">
-                  Daily {metricCopy.shortLabel.toLowerCase()} by matched ad
+                  Grouped videos and creatives
                 </h3>
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  Each card is one matched ad. The table inside each card shows
-                  non-zero days only.
+                  Known Spark video IDs are grouped as videos. If TikTok hides the
+                  video ID, the match falls back to the ad or creative instead.
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {numberFormatter.format(knownVideoGroupCount)} grouped videos ·{" "}
+                  {numberFormatter.format(creativeOnlyGroupCount)} ad-only fallbacks
                 </p>
               </div>
             </div>
 
-            {adBreakdown.length > 0 ? (
+            {matchedGroups.length > 0 ? (
               <div className="mt-5 space-y-4">
-                {adBreakdown.map((ad) => (
-                  <article
-                    className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4"
-                    key={ad.adId}
+                {matchedGroups.map((group) => (
+                  <details
+                    className="group rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4"
+                    key={group.key}
                   >
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                          Matched ad
-                        </p>
-                        <h4 className="mt-2 text-base font-medium text-foreground">
-                          {ad.adId}
-                        </h4>
-                        <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                          {ad.itemIds.length > 0
-                            ? `Spark item IDs: ${summarizeItemIds(ad.itemIds)}`
-                            : "TikTok did not return Spark item IDs for this ad's report rows."}
-                        </p>
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          {formatDate(ad.firstDate)} to {formatDate(ad.lastDate)} ·{" "}
-                          {numberFormatter.format(ad.rowCount)} non-zero day
-                          {ad.rowCount === 1 ? "" : "s"}
-                        </p>
+                    <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                            {group.kind === "video" ? "Matched video" : "Matched creative"}
+                          </p>
+                          <h4 className="mt-2 text-base font-medium text-foreground">
+                            {group.title}
+                          </h4>
+                          <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                            {group.subtitle}
+                          </p>
+                          <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                            {group.kind === "video"
+                              ? `Underlying ads: ${group.ads
+                                  .map((ad) => ad.adLabel)
+                                  .slice(0, 2)
+                                  .join(", ")}${group.ads.length > 2 ? ` +${group.ads.length - 2} more` : ""}`
+                              : group.itemIds.length > 0
+                                ? `Spark item IDs: ${summarizeItemIds(group.itemIds)}`
+                                : "TikTok did not return a Spark video ID for this creative."}
+                          </p>
+                        </div>
+                        <div className="rounded-[1rem] border border-[#90FF4D]/20 bg-[#90FF4D]/[0.08] px-4 py-3 text-right">
+                          <p className="text-xs uppercase tracking-[0.2em] text-[#D7FFBC]">
+                            {metricCopy.shortLabel}
+                          </p>
+                          <p className="mt-2 text-2xl font-medium tracking-[-0.03em] text-[#F3FFE8]">
+                            {numberFormatter.format(group.totalValue)}
+                          </p>
+                        </div>
                       </div>
-                      <div className="rounded-[1rem] border border-[#90FF4D]/20 bg-[#90FF4D]/[0.08] px-4 py-3 text-right">
-                        <p className="text-xs uppercase tracking-[0.2em] text-[#D7FFBC]">
-                          {metricCopy.shortLabel}
-                        </p>
-                        <p className="mt-2 text-2xl font-medium tracking-[-0.03em] text-[#F3FFE8]">
-                          {numberFormatter.format(ad.totalValue)}
-                        </p>
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+                        <span>
+                          {formatDate(group.firstDate)} to {formatDate(group.lastDate)} ·{" "}
+                          {numberFormatter.format(group.activeDays)} active day
+                          {group.activeDays === 1 ? "" : "s"}
+                        </span>
+                        <span className="inline-flex min-h-8 items-center rounded-full border border-white/[0.1] bg-white/[0.04] px-3 text-foreground transition group-open:border-[#90FF4D]/25 group-open:bg-[#90FF4D]/10">
+                          {group.kind === "video" ? "Show video charts" : "Show creative charts"}
+                        </span>
                       </div>
-                    </div>
+                    </summary>
 
-                    <div className="mt-4 overflow-x-auto">
-                      <table className="min-w-full divide-y divide-white/[0.08] text-sm">
-                        <thead>
-                          <tr className="text-left text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                            <th className="py-3 pr-4 font-medium">Date</th>
-                            <th className="py-3 pr-4 font-medium">Item ID</th>
-                            <th className="py-3 font-medium">
-                              {metricCopy.rowValueLabel}
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/[0.05] text-foreground">
-                          {ad.rows.map((row, index) => (
-                            <tr
-                              key={`${ad.adId}-${row.itemId ?? "item"}-${row.statDate ?? index}`}
+                    <div className="mt-4 border-t border-white/[0.08] pt-4">
+                      <DailyMetricChart
+                        metricLabel={metricCopy.rowValueLabel}
+                        points={group.dailyPoints}
+                      />
+
+                      <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                        <div className="rounded-[1rem] border border-white/[0.08] bg-black/[0.2] p-4">
+                          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                            Active days
+                          </p>
+                          <p className="mt-2 text-sm font-medium text-foreground">
+                            {numberFormatter.format(group.activeDays)}
+                          </p>
+                        </div>
+                        <div className="rounded-[1rem] border border-white/[0.08] bg-black/[0.2] p-4">
+                          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                            Rows in group
+                          </p>
+                          <p className="mt-2 text-sm font-medium text-foreground">
+                            {numberFormatter.format(group.rowCount)}
+                          </p>
+                        </div>
+                        <div className="rounded-[1rem] border border-white/[0.08] bg-black/[0.2] p-4">
+                          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                            Underlying ads
+                          </p>
+                          <p className="mt-2 text-sm font-medium text-foreground">
+                            {numberFormatter.format(group.ads.length)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                          Ads in this group
+                        </p>
+                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                          {group.ads.map((ad) => (
+                            <div
+                              className="rounded-[1rem] border border-white/[0.08] bg-black/[0.2] p-4"
+                              key={ad.adId}
                             >
-                              <td className="py-3 pr-4 text-muted-foreground">
-                                {formatDate(row.statDate)}
-                              </td>
-                              <td className="py-3 pr-4">
-                                {row.itemId ?? "Not returned by TikTok"}
-                              </td>
-                              <td className="py-3">
-                                {numberFormatter.format(row.metricValue)}
-                              </td>
-                            </tr>
+                              <p className="text-sm font-medium text-foreground">
+                                {ad.adLabel}
+                              </p>
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                Ad ID {ad.adId}
+                              </p>
+                              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                                {ad.itemIds.length > 0
+                                  ? `Spark item IDs: ${summarizeItemIds(ad.itemIds)}`
+                                  : "TikTok did not return a Spark video ID for this ad."}
+                              </p>
+                              <p className="mt-3 text-sm font-medium text-foreground">
+                                {numberFormatter.format(ad.totalValue)}{" "}
+                                {metricCopy.rowValueLabel.toLowerCase()}
+                              </p>
+                            </div>
                           ))}
-                        </tbody>
-                      </table>
+                        </div>
+                      </div>
                     </div>
-                  </article>
+                  </details>
                 ))}
               </div>
             ) : result.rows.length > 0 ? (
