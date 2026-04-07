@@ -274,6 +274,46 @@ function formatRoas(value: number | null) {
     : "Unavailable";
 }
 
+function getMeaningfulAdLabel(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed && !/^ad\s+\d+$/i.test(trimmed) ? trimmed : null;
+}
+
+function getPrimarySingularRow(rows: readonly TikTokSingularReportRow[]) {
+  return (
+    rows.find((row) =>
+      Boolean(row.creativeName?.trim() || row.campaignName?.trim() || row.subCampaignName?.trim()),
+    ) ??
+    rows[0] ??
+    null
+  );
+}
+
+function getBestSingularCreativeLabel(row: TikTokSingularReportRow | null) {
+  const creativeName = row?.creativeName?.trim();
+
+  if (creativeName && creativeName.toUpperCase() !== "N/A") {
+    return creativeName;
+  }
+
+  return row?.creativeId ? `Creative ${row.creativeId}` : null;
+}
+
+function getSingularCampaignLabel(row: TikTokSingularReportRow | null) {
+  const campaignName = row?.campaignName?.trim() || null;
+  const subCampaignName = row?.subCampaignName?.trim() || null;
+
+  if (
+    campaignName &&
+    subCampaignName &&
+    normalizeMatchText(campaignName) !== normalizeMatchText(subCampaignName)
+  ) {
+    return `${campaignName} · ${subCampaignName}`;
+  }
+
+  return campaignName ?? subCampaignName ?? null;
+}
+
 type TikTokMatchedGroupAd = {
   adId: string;
   adLabel: string;
@@ -328,6 +368,11 @@ type TikTokMatchedGroupBase = {
 
 type TikTokMatchedGroup = TikTokMatchedGroupBase & {
   singular: TikTokSingularGroupMetrics;
+  metadataSourceLabel: string;
+  metadataSourceDescription: string;
+  leadAdLabel: string | null;
+  singularCreativeLabel: string | null;
+  singularCampaignLabel: string | null;
 };
 
 function addSingularRowToLookup(
@@ -389,6 +434,71 @@ function buildSingularMetrics(args: {
     conversions,
     roas: spend > 0 ? revenue / spend : null,
     currency: currencyCodes.length === 1 ? currencyCodes[0].toUpperCase() : null,
+  };
+}
+
+function buildGroupMetadataPresentation(args: {
+  group: TikTokMatchedGroupBase;
+  singular: TikTokSingularGroupMetrics;
+}) {
+  const leadAd = args.group.ads[0] ?? null;
+  const leadAdLabel = getMeaningfulAdLabel(leadAd?.adLabel) ?? leadAd?.adLabel ?? null;
+  const leadSingularRow = getPrimarySingularRow(args.singular.matchedRows);
+  const singularCreativeLabel = getBestSingularCreativeLabel(leadSingularRow);
+  const singularCampaignLabel = getSingularCampaignLabel(leadSingularRow);
+
+  if (args.group.primaryPost) {
+    return {
+      title: args.group.title,
+      subtitle: args.group.subtitle,
+      sourceLabel: "Exact TikTok post",
+      sourceDescription: "Title, thumbnail, and link came directly from TikTok's post metadata.",
+      leadAdLabel,
+      singularCreativeLabel,
+      singularCampaignLabel,
+    };
+  }
+
+  let sourceLabel = "Ad ID only";
+  let sourceDescription = "TikTok only returned ad-level delivery data for this group.";
+
+  if (args.singular.matchedRowCount > 0) {
+    sourceLabel =
+      args.singular.matchLevel === "name_fallback"
+        ? "Ad + Singular fallback"
+        : "Ad + Singular creative";
+    sourceDescription =
+      "TikTok hid the exact post details, so this card uses the TikTok ad label plus Singular creative and campaign metadata.";
+  } else if (getMeaningfulAdLabel(leadAd?.adLabel)) {
+    sourceLabel = "TikTok ad metadata";
+    sourceDescription =
+      "TikTok hid the exact post details, so this card uses the ad name and Spark item IDs only.";
+  } else if (args.group.itemIds.length > 0) {
+    sourceLabel = "Spark ID only";
+    sourceDescription = "TikTok only exposed the Spark item ID for this group.";
+  }
+
+  const title =
+    getMeaningfulAdLabel(leadAd?.adLabel) ??
+    singularCreativeLabel ??
+    args.group.title;
+  const subtitleParts = uniqueNonEmptyStrings([
+    args.group.kind === "video" && args.group.itemIds[0]
+      ? `Video ID ${args.group.itemIds[0]}`
+      : null,
+    args.group.kind !== "video" && leadAd?.adId ? `Ad ID ${leadAd.adId}` : null,
+    singularCampaignLabel,
+    args.group.ads.length > 1 ? `${args.group.ads.length} ads` : null,
+  ]);
+
+  return {
+    title,
+    subtitle: subtitleParts.join(" · ") || args.group.subtitle,
+    sourceLabel,
+    sourceDescription,
+    leadAdLabel,
+    singularCreativeLabel,
+    singularCampaignLabel,
   };
 }
 
@@ -462,13 +572,26 @@ function attachSingularMetricsToGroups(args: {
       }
     }
 
+    const singular = buildSingularMetrics({
+      overlay: args.singular,
+      matchedRows: [...matchedRows.values()],
+      matchLevel,
+    });
+    const metadataPresentation = buildGroupMetadataPresentation({
+      group,
+      singular,
+    });
+
     return {
       ...group,
-      singular: buildSingularMetrics({
-        overlay: args.singular,
-        matchedRows: [...matchedRows.values()],
-        matchLevel,
-      }),
+      title: metadataPresentation.title,
+      subtitle: metadataPresentation.subtitle,
+      singular,
+      metadataSourceLabel: metadataPresentation.sourceLabel,
+      metadataSourceDescription: metadataPresentation.sourceDescription,
+      leadAdLabel: metadataPresentation.leadAdLabel,
+      singularCreativeLabel: metadataPresentation.singularCreativeLabel,
+      singularCampaignLabel: metadataPresentation.singularCampaignLabel,
     };
   });
 }
@@ -1521,8 +1644,9 @@ export default async function TikTokPaidViewsPage({
                   Grouped videos and creatives
                 </h3>
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  Known Spark video IDs are grouped as videos. If TikTok hides the
-                  video ID, the match falls back to the ad or creative instead.
+                  Known Spark video IDs are grouped as videos. When TikTok hides the
+                  exact post details, the card falls back to TikTok ad labels and
+                  Singular creative metadata when available.
                 </p>
                 <p className="mt-2 text-xs text-muted-foreground">
                   {numberFormatter.format(knownVideoGroupCount)} grouped videos ·{" "}
@@ -1555,6 +1679,11 @@ export default async function TikTokPaidViewsPage({
                             <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
                               {group.kind === "video" ? "Matched video" : "Matched creative"}
                             </p>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <span className="inline-flex min-h-7 items-center rounded-full border border-white/[0.1] bg-white/[0.04] px-3 text-[11px] font-medium text-foreground">
+                                {group.metadataSourceLabel}
+                              </span>
+                            </div>
                             <h4 className="mt-2 text-base font-medium text-foreground">
                               {group.title}
                             </h4>
@@ -1573,6 +1702,23 @@ export default async function TikTokPaidViewsPage({
                                     ? `Spark item IDs: ${summarizeItemIds(group.itemIds)}`
                                     : "TikTok did not return a Spark video ID for this creative."}
                             </p>
+                            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                              {group.metadataSourceDescription}
+                            </p>
+                            {group.singularCreativeLabel || group.singularCampaignLabel ? (
+                              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                                {group.singularCreativeLabel
+                                  ? `Creative: ${group.singularCreativeLabel}`
+                                  : "Creative label unavailable"}
+                                {group.singularCampaignLabel
+                                  ? ` · Campaign: ${group.singularCampaignLabel}`
+                                  : ""}
+                              </p>
+                            ) : group.leadAdLabel && !group.primaryPost ? (
+                              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                                Lead ad label: {group.leadAdLabel}
+                              </p>
+                            ) : null}
                             <div className="mt-3 flex flex-wrap items-center gap-2">
                               <span
                                 className={`inline-flex min-h-7 items-center rounded-full border px-3 text-[11px] font-medium ${
@@ -1634,6 +1780,59 @@ export default async function TikTokPaidViewsPage({
                     </summary>
 
                     <div className="mt-4 border-t border-white/[0.08] pt-4">
+                      <div className="mb-4 rounded-[1rem] border border-white/[0.08] bg-black/[0.2] p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                          Available metadata
+                        </p>
+                        <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                          {group.metadataSourceDescription}
+                        </p>
+                        <div className="mt-4 grid gap-3 lg:grid-cols-5">
+                          <div className="rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-4">
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                              Source
+                            </p>
+                            <p className="mt-2 text-sm font-medium text-foreground">
+                              {group.metadataSourceLabel}
+                            </p>
+                          </div>
+                          <div className="rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-4">
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                              Lead ad label
+                            </p>
+                            <p className="mt-2 text-sm font-medium text-foreground">
+                              {group.leadAdLabel ?? "Unavailable"}
+                            </p>
+                          </div>
+                          <div className="rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-4">
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                              Singular creative
+                            </p>
+                            <p className="mt-2 text-sm font-medium text-foreground">
+                              {group.singularCreativeLabel ?? "Unavailable"}
+                            </p>
+                          </div>
+                          <div className="rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-4">
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                              Campaign / ad group
+                            </p>
+                            <p className="mt-2 text-sm font-medium text-foreground">
+                              {group.singularCampaignLabel ?? "Unavailable"}
+                            </p>
+                          </div>
+                          <div className="rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-4">
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                              Spark item IDs
+                            </p>
+                            <p className="mt-2 text-sm font-medium text-foreground">
+                              {group.itemIds.length > 0
+                                ? summarizeItemIds(group.itemIds)
+                                : "Unavailable"}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
                       {group.resolvedPosts.length > 0 ? (
                         <div className="mb-4">
                           <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
@@ -1861,7 +2060,11 @@ export default async function TikTokPaidViewsPage({
                                     <p className="mt-2 text-xs leading-5 text-muted-foreground">
                                       Resolved post: {getBestPostTitle(ad.primaryPost)}
                                     </p>
-                                  ) : null}
+                                  ) : (
+                                    <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                                      Exact TikTok post metadata unavailable for this ad.
+                                    </p>
+                                  )}
                                   <p className="mt-2 text-xs leading-5 text-muted-foreground">
                                     {ad.itemIds.length > 0
                                       ? `Spark item IDs: ${summarizeItemIds(ad.itemIds)}`

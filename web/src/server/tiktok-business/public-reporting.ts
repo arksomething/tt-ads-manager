@@ -1185,11 +1185,11 @@ async function fetchResolvedPostsForAds(args: {
         : []),
       ...(resolvedPostsByItemId.size === 0
         ? [
-            "TikTok exposed Spark item IDs, but the post-info lookup still did not return any underlying post metadata.",
+            "TikTok exposed Spark item IDs, but not the exact underlying post metadata. Those matches use ad-level labels instead.",
           ]
         : resolvedPostsByItemId.size < candidateItemIds.length
           ? [
-              `Resolved exact post info for ${resolvedPostsByItemId.size} of ${candidateItemIds.length} known Spark item IDs. TikTok withheld the rest, so those matches still fall back to ad-level data.`,
+              `Resolved exact post info for ${resolvedPostsByItemId.size} of ${candidateItemIds.length} known Spark item IDs. TikTok hid the rest, so the remaining matches use ad names and Singular creative metadata when available.`,
             ]
           : []),
     ]),
