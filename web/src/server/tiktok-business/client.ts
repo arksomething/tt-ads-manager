@@ -7,11 +7,20 @@ type TikTokEnvelope<TData> = {
   data?: TData;
 };
 
+type QueryPrimitive = string | number | boolean;
+type QueryValue =
+  | QueryPrimitive
+  | readonly QueryPrimitive[]
+  | readonly Record<string, unknown>[]
+  | Record<string, unknown>
+  | null
+  | undefined;
+
 type RequestTikTokBusinessApiArgs = {
-  accessToken: string;
+  accessToken?: string;
   method?: "GET" | "POST";
   path: string;
-  query?: Record<string, string | number | boolean | null | undefined>;
+  query?: Record<string, QueryValue>;
   body?: unknown;
 };
 
@@ -40,7 +49,7 @@ export class TikTokBusinessApiError extends Error {
 function buildUrl(
   baseUrl: string,
   path: string,
-  query: Record<string, string | number | boolean | null | undefined> | undefined,
+  query: Record<string, QueryValue> | undefined,
 ) {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const url = new URL(`${baseUrl}${normalizedPath}`);
@@ -51,7 +60,10 @@ function buildUrl(
         continue;
       }
 
-      url.searchParams.set(key, String(value));
+      url.searchParams.set(
+        key,
+        typeof value === "object" ? JSON.stringify(value) : String(value),
+      );
     }
   }
 
@@ -69,8 +81,12 @@ export async function requestTikTokBusinessApi<TData>(
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
-      Authorization: `Bearer ${args.accessToken}`,
-      "Access-Token": args.accessToken,
+      ...(args.accessToken
+        ? {
+            Authorization: `Bearer ${args.accessToken}`,
+            "Access-Token": args.accessToken,
+          }
+        : {}),
     },
     ...(args.body !== undefined ? { body: JSON.stringify(args.body) } : {}),
     cache: "no-store",

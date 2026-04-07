@@ -225,28 +225,29 @@ model VerificationToken {
 }
 
 model Organization {
-  id                String                   @id @default(cuid())
-  name              String
-  slug              String                   @unique
-  createdById       String?
-  createdAt         DateTime                 @default(now())
-  updatedAt         DateTime                 @updatedAt
-  memberships       OrganizationMembership[]
-  invitations       OrganizationInvitation[]
-  campaigns         Campaign[]
-  creators          Creator[]
-  tags              Tag[]
-  payouts           Payout[]
-  notes             Note[]
-  activities        Activity[]
-  syncJobs          ExternalSyncJob[]
-  sourceMaps        SourceMapping[]
-  twilioConfig      OrganizationTwilioConfig?
-  tiktokAccounts    OrganizationTikTokAccount[]
-  messageThreads    CreatorMessageThread[]
-  sparkCodeRequests SparkCodeRequest[]
-  messageEvents     CreatorMessageEvent[]
-  sparkAuthorizations SparkAuthorization[]
+  id                        String                      @id @default(cuid())
+  name                      String
+  slug                      String                      @unique
+  createdById               String?
+  createdAt                 DateTime                    @default(now())
+  updatedAt                 DateTime                    @updatedAt
+  memberships               OrganizationMembership[]
+  invitations               OrganizationInvitation[]
+  campaigns                 Campaign[]
+  creators                  Creator[]
+  tags                      Tag[]
+  payouts                   Payout[]
+  notes                     Note[]
+  activities                Activity[]
+  syncJobs                  ExternalSyncJob[]
+  sourceMaps                SourceMapping[]
+  twilioConfig              OrganizationTwilioConfig?
+  tiktokAccounts            OrganizationTikTokAccount[]
+  messageThreads            CreatorMessageThread[]
+  sparkCodeRequests         SparkCodeRequest[]
+  messageEvents             CreatorMessageEvent[]
+  sparkAuthorizations       SparkAuthorization[]
+  tiktokPaidMetricSnapshots TikTokPaidMetricSnapshot[]
 }
 
 model OrganizationMembership {
@@ -332,30 +333,31 @@ model CampaignInvitation {
 }
 
 model Creator {
-  id                  String                   @id @default(cuid())
-  organizationId      String
-  displayName         String
-  primaryNiche        String?
-  region              String?
-  language            String?
-  internalStatus      CreatorStatus            @default(NEW)
-  notesSummary        String?
-  contactEmail        String?
-  customTags          String[]
-  createdAt           DateTime                 @default(now())
-  updatedAt           DateTime                 @updatedAt
-  organization        Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  platformAccounts    CreatorPlatformAccount[]
-  metricsSnapshots    CreatorMetricsSnapshot[]
-  campaignLinks       CampaignCreator[]
-  videos              Video[]
-  creatorTags         CreatorTag[]
-  payouts             Payout[]
-  contactPoints       CreatorContactPoint[]
-  messageThreads      CreatorMessageThread[]
-  sparkCodeRequests   SparkCodeRequest[]
-  messageEvents       CreatorMessageEvent[]
-  sparkAuthorizations SparkAuthorization[]
+  id                        String                     @id @default(cuid())
+  organizationId            String
+  displayName               String
+  primaryNiche              String?
+  region                    String?
+  language                  String?
+  internalStatus            CreatorStatus              @default(NEW)
+  notesSummary              String?
+  contactEmail              String?
+  customTags                String[]
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  organization              Organization               @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  platformAccounts          CreatorPlatformAccount[]
+  metricsSnapshots          CreatorMetricsSnapshot[]
+  campaignLinks             CampaignCreator[]
+  videos                    Video[]
+  creatorTags               CreatorTag[]
+  payouts                   Payout[]
+  contactPoints             CreatorContactPoint[]
+  messageThreads            CreatorMessageThread[]
+  sparkCodeRequests         SparkCodeRequest[]
+  messageEvents             CreatorMessageEvent[]
+  sparkAuthorizations       SparkAuthorization[]
+  tiktokPaidMetricSnapshots TikTokPaidMetricSnapshot[]
 
   @@index([organizationId, internalStatus])
 }
@@ -426,32 +428,33 @@ model CampaignCreator {
 }
 
 model Video {
-  id                  String                  @id @default(cuid())
-  creatorId           String
-  creatorPlatformAccountId String?
-  campaignId          String?
-  sourceVideoId       String?
-  platform            Platform
-  videoUrl            String
-  titleOrCaption      String?
-  publishedAt         DateTime?
-  views               Int?
-  likes               Int?
-  comments            Int?
-  engagementRate      Float?
-  contentTags         String[]
-  hookSummary         String?
-  rawPayload          Json?
-  lastSyncedAt        DateTime?
-  createdAt           DateTime                @default(now())
-  updatedAt           DateTime                @updatedAt
-  creator             Creator                 @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-  creatorPlatformAccount   CreatorPlatformAccount? @relation(fields: [creatorPlatformAccountId], references: [id], onDelete: SetNull)
-  campaign            Campaign?               @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  metricsSnapshots    VideoMetricsSnapshot[]
-  reviews             VideoReview[]
-  sparkCodeRequests   SparkCodeRequest[]
-  sparkAuthorizations SparkAuthorization[]
+  id                        String                     @id @default(cuid())
+  creatorId                 String
+  creatorPlatformAccountId  String?
+  campaignId                String?
+  sourceVideoId             String?
+  platform                  Platform
+  videoUrl                  String
+  titleOrCaption            String?
+  publishedAt               DateTime?
+  views                     Int?
+  likes                     Int?
+  comments                  Int?
+  engagementRate            Float?
+  contentTags               String[]
+  hookSummary               String?
+  rawPayload                Json?
+  lastSyncedAt              DateTime?
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  creator                   Creator                    @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  creatorPlatformAccount    CreatorPlatformAccount?    @relation(fields: [creatorPlatformAccountId], references: [id], onDelete: SetNull)
+  campaign                  Campaign?                  @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  metricsSnapshots          VideoMetricsSnapshot[]
+  reviews                   VideoReview[]
+  sparkCodeRequests         SparkCodeRequest[]
+  sparkAuthorizations       SparkAuthorization[]
+  tiktokPaidMetricSnapshots TikTokPaidMetricSnapshot[]
 
   @@unique([platform, sourceVideoId])
   @@index([creatorId, publishedAt])
@@ -460,13 +463,13 @@ model Video {
 
 model VideoReview {
   id             String   @id @default(cuid())
-  videoId         String
-  reviewerUserId  String
-  reviewedAt      DateTime @default(now())
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  video           Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
-  reviewer        User     @relation(fields: [reviewerUserId], references: [id], onDelete: Cascade)
+  videoId        String
+  reviewerUserId String
+  reviewedAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  video          Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  reviewer       User     @relation(fields: [reviewerUserId], references: [id], onDelete: Cascade)
 
   @@unique([videoId, reviewerUserId])
   @@index([reviewerUserId, reviewedAt])
@@ -499,33 +502,38 @@ model OrganizationTwilioConfig {
 }
 
 model OrganizationTikTokAccount {
-  id              String       @id @default(cuid())
-  organizationId  String
-  advertiserId    String
-  accessToken     String
-  scope           Json?
-  status          String       @default("ACTIVE")
-  lastValidatedAt DateTime?
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
-  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id                    String       @id @default(cuid())
+  organizationId        String
+  advertiserId          String
+  advertiserName        String?
+  accessToken           String
+  refreshToken          String?
+  tokenType             String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 Json?
+  status                String       @default("ACTIVE")
+  lastValidatedAt       DateTime?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, advertiserId])
   @@index([organizationId, status])
 }
 
 model CreatorContactPoint {
-  id            String           @id @default(cuid())
+  id            String                 @id @default(cuid())
   creatorId     String
   channel       MessagingChannel
   phoneE164     String
-  isPrimary     Boolean          @default(false)
+  isPrimary     Boolean                @default(false)
   verifiedAt    DateTime?
   optInAt       DateTime?
   optOutAt      DateTime?
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-  creator       Creator          @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  creator       Creator                @relation(fields: [creatorId], references: [id], onDelete: Cascade)
   threads       CreatorMessageThread[]
   requests      SparkCodeRequest[]
   messageEvents CreatorMessageEvent[]
@@ -566,50 +574,50 @@ model SparkCodeRequest {
 }
 
 model CreatorMessageThread {
-  id            String              @id @default(cuid())
+  id             String                @id @default(cuid())
   organizationId String
-  creatorId     String
+  creatorId      String
   contactPointId String?
-  channel       MessagingChannel
-  state         MessageThreadState  @default(IDLE)
-  lastInboundAt DateTime?
+  channel        MessagingChannel
+  state          MessageThreadState    @default(IDLE)
+  lastInboundAt  DateTime?
   lastOutboundAt DateTime?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  organization  Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  creator       Creator             @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-  contactPoint  CreatorContactPoint? @relation(fields: [contactPointId], references: [id], onDelete: SetNull)
-  requests      SparkCodeRequest[]
-  messageEvents CreatorMessageEvent[]
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator        Creator               @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  contactPoint   CreatorContactPoint?  @relation(fields: [contactPointId], references: [id], onDelete: SetNull)
+  requests       SparkCodeRequest[]
+  messageEvents  CreatorMessageEvent[]
 
   @@unique([creatorId, channel])
   @@index([organizationId, state, updatedAt])
 }
 
 model CreatorMessageEvent {
-  id                 String             @id @default(cuid())
+  id                 String                @id @default(cuid())
   organizationId     String
   creatorId          String?
   sparkCodeRequestId String?
   threadId           String?
   contactPointId     String?
   direction          MessageDirection
-  providerMessageSid String             @unique
+  providerMessageSid String                @unique
   channel            MessagingChannel
   fromE164           String
   toE164             String
   body               String
-  parseStatus        MessageParseStatus @default(NOT_ATTEMPTED)
+  parseStatus        MessageParseStatus    @default(NOT_ATTEMPTED)
   parsedCodeHash     String?
   deliveryStatus     String?
   rawPayload         Json?
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
-  organization       Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  creator            Creator?           @relation(fields: [creatorId], references: [id], onDelete: SetNull)
-  sparkCodeRequest   SparkCodeRequest?  @relation(fields: [sparkCodeRequestId], references: [id], onDelete: SetNull)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  organization       Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator            Creator?              @relation(fields: [creatorId], references: [id], onDelete: SetNull)
+  sparkCodeRequest   SparkCodeRequest?     @relation(fields: [sparkCodeRequestId], references: [id], onDelete: SetNull)
   thread             CreatorMessageThread? @relation(fields: [threadId], references: [id], onDelete: SetNull)
-  contactPoint       CreatorContactPoint? @relation(fields: [contactPointId], references: [id], onDelete: SetNull)
+  contactPoint       CreatorContactPoint?  @relation(fields: [contactPointId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, createdAt])
   @@index([creatorId, createdAt])
@@ -618,31 +626,55 @@ model CreatorMessageEvent {
 }
 
 model SparkAuthorization {
-  id                   String                   @id @default(cuid())
-  organizationId       String
-  creatorId            String
-  videoId              String?
-  sparkCodeRequestId   String?
-  advertiserId         String
-  authCodeHash         String
-  identityType         String?
-  identityId           String?
+  id                     String                   @id @default(cuid())
+  organizationId         String
+  creatorId              String
+  videoId                String?
+  sparkCodeRequestId     String?
+  advertiserId           String
+  authCodeHash           String
+  identityType           String?
+  identityId             String?
   identityAuthorizedBcId String?
-  tiktokItemId         String?
-  authStartTime        DateTime?
-  authEndTime          DateTime?
-  status               SparkAuthorizationStatus @default(PENDING)
-  lastError            String?
-  createdAt            DateTime                 @default(now())
-  updatedAt            DateTime                 @updatedAt
-  organization         Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  creator              Creator                  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-  video                Video?                   @relation(fields: [videoId], references: [id], onDelete: SetNull)
-  sparkCodeRequest     SparkCodeRequest?        @relation(fields: [sparkCodeRequestId], references: [id], onDelete: SetNull)
+  tiktokItemId           String?
+  authStartTime          DateTime?
+  authEndTime            DateTime?
+  status                 SparkAuthorizationStatus @default(PENDING)
+  lastError              String?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+  organization           Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator                Creator                  @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  video                  Video?                   @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  sparkCodeRequest       SparkCodeRequest?        @relation(fields: [sparkCodeRequestId], references: [id], onDelete: SetNull)
 
   @@unique([organizationId, advertiserId, authCodeHash])
   @@index([organizationId, status, updatedAt])
   @@index([creatorId, videoId, status])
+}
+
+model TikTokPaidMetricSnapshot {
+  id               String       @id @default(cuid())
+  organizationId   String
+  creatorId        String
+  videoId          String?
+  advertiserId     String
+  tiktokItemId     String?
+  statDate         DateTime?
+  reportStartDate  DateTime
+  reportEndDate    DateTime
+  impressions      Int?
+  videoPlayActions Int?
+  rawPayload       Json?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator          Creator      @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  video            Video?       @relation(fields: [videoId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, creatorId, statDate])
+  @@index([organizationId, advertiserId, tiktokItemId])
+  @@index([videoId, statDate])
 }
 
 model Note {

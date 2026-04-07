@@ -3,7 +3,7 @@ import Google from "next-auth/providers/google";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 
-import { getAuthEnv } from "@/lib/server-env";
+import { getAuthEnv, isGoogleAuthDisabled } from "@/lib/server-env";
 
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const OAUTH_FLOW_COOKIE_MAX_AGE_SECONDS = 60 * 15;
@@ -71,7 +71,8 @@ function getAuthCookieConfig(authUrl: string | undefined) {
 }
 
 export const isAuthConfigured = Boolean(
-  process.env.DATABASE_URL &&
+  !isGoogleAuthDisabled() &&
+    process.env.DATABASE_URL &&
     hasMinLength(process.env.AUTH_SECRET, 32) &&
     process.env.GOOGLE_CLIENT_ID &&
     process.env.GOOGLE_CLIENT_SECRET,

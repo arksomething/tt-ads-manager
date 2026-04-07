@@ -12,6 +12,7 @@ export type DashboardSectionKey =
   | "review"
   | "ai-analytics"
   | "leaderboard"
+  | "tiktok-paid-views"
   | "campaigns"
   | "payouts"
   | "viral-videos"
@@ -182,6 +183,12 @@ export const dashboardNavGroups: DashboardNavGroup[] = [
         icon: "arrowUpRight",
       },
       {
+        key: "tiktok-paid-views",
+        label: "TikTok Paid Views",
+        segment: "tiktok-paid-views",
+        icon: "integrations",
+      },
+      {
         key: "michael",
         label: "Michael",
         segment: "michael",
@@ -253,6 +260,13 @@ export const dashboardRouteMeta: Record<DashboardSectionKey, DashboardRouteMeta>
     title: "Rank creators, videos, and campaigns in one shared performance leaderboard.",
     description:
       "The future view can compare momentum, output, and conversion signals across the organization without leaving the workspace.",
+  },
+  "tiktok-paid-views": {
+    groupLabel: "Analytics",
+    navLabel: "TikTok Paid Views",
+    title: "Look up paid Spark Ads delivery for a creator without leaving the organization workspace.",
+    description:
+      "This route connects TikTok Business advertiser access, Spark item IDs, and live reporting into one simple operator surface.",
   },
   "tracking-options": {
     groupLabel: "Analytics",
@@ -724,6 +738,23 @@ export const placeholderSectionData: Record<
       { label: "Ranking table", value: "Reserved in UI", status: "Ready" },
       { label: "Score weighting", value: "Planned", status: "Draft" },
       { label: "Compare mode", value: "Queued", status: "Next" },
+    ],
+  },
+  "tiktok-paid-views": {
+    eyebrow: "TikTok Spark Ads",
+    spotlightTitle: "Paid Spark delivery can be looked up by creator here.",
+    spotlightDescription:
+      "This route is wired for live TikTok reporting, advertiser access, and Spark item matching instead of placeholder analytics copy.",
+    highlights: ["Creator lookup", "Paid delivery", "Spark item IDs"],
+    statCards: [
+      { label: "Metric", value: "Impressions" },
+      { label: "Data source", value: "TikTok Business API" },
+      { label: "Lookup mode", value: "On demand" },
+    ],
+    rows: [
+      { label: "OAuth connection", value: "Required", status: "Ready" },
+      { label: "Spark authorization", value: "Required", status: "Ready" },
+      { label: "Creator paid lookup", value: "Live page", status: "Ready" },
     ],
   },
   "tracking-options": {

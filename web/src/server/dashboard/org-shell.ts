@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 
+import { isGoogleAuthDisabled } from "@/lib/server-env";
 import {
   getViewerOrganizations,
 } from "@/server/auth/organizations";
@@ -10,8 +11,9 @@ import { getAccessibleCampaignOptionsForMembership } from "@/server/campaigns/qu
 export const getOrganizationDashboardLayoutData = cache(
   async (organizationSlug: string) => {
     const user = await getCurrentUser();
+    const publicAccessEnabled = isGoogleAuthDisabled();
 
-    if (!user?.id) {
+    if (!user?.id && !publicAccessEnabled) {
       redirect("/login");
     }
 
@@ -25,7 +27,12 @@ export const getOrganizationDashboardLayoutData = cache(
     }
 
     return {
-      user,
+      user: user ?? {
+        id: "public-access",
+        name: "Public access",
+        email: null,
+        image: null,
+      },
       membership,
       organizations: organizations.map(({ organization, role }) => ({
         id: organization.id,

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { AppAccountMenu } from "@/components/app-account-menu";
 import { publicEnv } from "@/lib/env";
+import { isGoogleAuthDisabled } from "@/lib/server-env";
 import { getViewerOrganizations } from "@/server/auth/organizations";
 import { getCurrentUser } from "@/server/auth/session";
 import { createOrganizationForCurrentUser } from "@/server/organizations/mutations";
@@ -22,6 +23,10 @@ function getSearchParamValue(value: string | string[] | undefined) {
 export default async function AppHomePage({
   searchParams,
 }: PageProps<"/app">) {
+  if (isGoogleAuthDisabled()) {
+    redirect("/tiktok-paid-views");
+  }
+
   const resolvedSearchParams = await searchParams;
   const manageMode =
     getSearchParamValue(resolvedSearchParams.manage) === "workspaces";
@@ -129,11 +134,13 @@ export default async function AppHomePage({
           {publicEnv.NEXT_PUBLIC_APP_NAME}
         </Link>
 
-        <AppAccountMenu
-          changeAccountAction={handleChangeAccount}
-          signOutAction={handleSignOut}
-          signedInAs={signedInAs}
-        />
+        {user?.id ? (
+          <AppAccountMenu
+            changeAccountAction={handleChangeAccount}
+            signOutAction={handleSignOut}
+            signedInAs={signedInAs}
+          />
+        ) : null}
       </header>
 
       <div className="relative z-10 flex min-h-screen items-center justify-center px-6 py-24 sm:px-8">

@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { isGoogleAuthDisabled } from "@/lib/server-env";
+
 const manifesto = [
   "Short-form moves fast. Your operating layer should feel calm.",
   "Less spreadsheet drag. Less screenshot proof. Less dashboard theater.",
@@ -121,10 +123,16 @@ const compactPrimaryActionClass = `${primaryActionClass} px-5 py-2.5 text-sm`;
 const largePrimaryActionClass = `${primaryActionClass} px-6 py-3 text-sm`;
 
 export default async function Home() {
-  const primaryHref = "/login";
-  const navActionLabel = "Login";
-  const headerPrimaryLabel = "Get access";
-  const heroPrimaryLabel = "Continue with Google";
+  const publicAccessEnabled = isGoogleAuthDisabled();
+  const primaryHref = publicAccessEnabled ? "/tiktok-paid-views" : "/login";
+  const navActionLabel = publicAccessEnabled ? "Paid views" : "Login";
+  const headerPrimaryLabel = publicAccessEnabled ? "Open lookup" : "Get access";
+  const heroPrimaryLabel = publicAccessEnabled
+    ? "Open paid views lookup"
+    : "Continue with Google";
+  const footerCtaDescription = publicAccessEnabled
+    ? "Open the standalone TikTok paid-views lookup, save an advertiser token in this browser, and run reports directly by Spark item ID."
+    : "Continue with Google, create your organization, connect your data source, and land in a workspace that feels calm enough to run at speed.";
 
   return (
     <main className="relative isolate overflow-hidden">
@@ -581,9 +589,7 @@ export default async function Home() {
                 Start with one campaign. See everything more clearly.
               </h2>
               <p className="mt-5 text-sm leading-7 text-muted-foreground sm:text-base">
-                Continue with Google, create your organization, connect your
-                data source, and land in a workspace that feels calm enough to
-                run at speed.
+                {footerCtaDescription}
               </p>
               <div className="mt-8 flex justify-center">
                 <Link className={largePrimaryActionClass} href={primaryHref}>

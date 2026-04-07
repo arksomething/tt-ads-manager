@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { isGoogleAuthDisabled } from "@/lib/server-env";
+
 export function GET() {
   const hasGenericProviderConfig =
     Boolean(process.env.DATA_PROVIDER_BASE_URL) &&
@@ -15,8 +17,10 @@ export function GET() {
     configured: {
       database: Boolean(process.env.DATABASE_URL),
       googleAuth:
+        !isGoogleAuthDisabled() &&
         Boolean(process.env.GOOGLE_CLIENT_ID) &&
         Boolean(process.env.GOOGLE_CLIENT_SECRET),
+      publicAccess: isGoogleAuthDisabled(),
       aiAnalytics: Boolean(process.env.OPENAI_API_KEY),
       dataProvider: hasGenericProviderConfig,
       viralApp: hasViralAppConfig,

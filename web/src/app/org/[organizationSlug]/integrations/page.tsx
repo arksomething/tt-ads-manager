@@ -1,14 +1,23 @@
 import Link from "next/link";
 import { MessagingChannel } from "@prisma/client";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
+import { requireOrganizationMembership } from "@/server/auth/organizations";
+import { canManageOrganization } from "@/server/auth/roles";
 import {
   sendTwilioTestMessageForOrganization,
   upsertOrganizationTikTokAccountForOrganization,
   upsertOrganizationTwilioConfigForOrganization,
 } from "@/server/messaging/mutations";
 import { getOrganizationMessagingWorkspace } from "@/server/messaging/queries";
+import {
+  getTikTokOauthCookieOptions,
+  getTikTokOauthPendingSelectionCookieName,
+  readPendingAdvertiserSelectionCookieValue,
+  saveTikTokOauthPendingAdvertiserSelection,
+} from "@/server/tiktok-business/oauth";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +39,21 @@ function getSearchParamValue(
 function getTrimmedFormValue(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value.trim() : "";
+}
+
+function getScopeInputValue(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter(Boolean)
+      .join(",");
+  }
+
+  return "";
 }
 
 function getActionErrorMessage(error: unknown) {
@@ -74,6 +98,10 @@ function getNoticeLabel(value: string | undefined) {
       return "Twilio settings saved.";
     case "tiktok-saved":
       return "TikTok advertiser settings saved.";
+    case "tiktok-oauth-connected":
+      return "TikTok advertiser account connected.";
+    case "tiktok-select-advertiser":
+      return "Choose which TikTok advertiser account to save for this organization.";
     case "test-sent":
       return "Test message sent.";
     default:
@@ -96,9 +124,15 @@ export default async function IntegrationsPage({
   const { organizationSlug } = await params;
   const resolvedSearchParams = await searchParams;
   const workspace = await getOrganizationMessagingWorkspace(organizationSlug);
+  const cookieStore = await cookies();
+  const pendingSelection = readPendingAdvertiserSelectionCookieValue(
+    cookieStore.get(getTikTokOauthPendingSelectionCookieName())?.value,
+  );
   const notice = getNoticeLabel(getSearchParamValue(resolvedSearchParams, "notice"));
   const error = getErrorLabel(getSearchParamValue(resolvedSearchParams, "error"));
   const primaryTikTokAccount = workspace.tiktokAccounts[0] ?? null;
+  const connectTikTokHref = `/api/org/${organizationSlug}/integrations/tiktok/oauth/start`;
+  const paidViewsHref = `/org/${organizationSlug}/tiktok-paid-views`;
 
   async function saveTwilioConfigAction(formData: FormData) {
     "use server";
@@ -192,6 +226,51 @@ export default async function IntegrationsPage({
           organizationSlug,
           notice: null,
           error: getActionErrorMessage(testError),
+        }),
+      );
+    }
+  }
+
+  async function completeTikTokAdvertiserSelectionAction(formData: FormData) {
+    "use server";
+
+    try {
+      const membership = await requireOrganizationMembership(organizationSlug);
+
+      if (!canManageOrganization(membership.role)) {
+        throw new Error("Integration access denied.");
+      }
+
+      const advertiserId = getTrimmedFormValue(formData, "advertiserId");
+      const serverCookieStore = await cookies();
+      const pendingAdvertiserSelection = readPendingAdvertiserSelectionCookieValue(
+        serverCookieStore.get(getTikTokOauthPendingSelectionCookieName())?.value,
+      );
+
+      await saveTikTokOauthPendingAdvertiserSelection({
+        organizationId: membership.organizationId,
+        advertiserId,
+        pendingSelection: pendingAdvertiserSelection,
+      });
+      serverCookieStore.set(
+        getTikTokOauthPendingSelectionCookieName(),
+        "",
+        getTikTokOauthCookieOptions(0),
+      );
+
+      redirect(
+        buildIntegrationsHref({
+          organizationSlug,
+          notice: "tiktok-oauth-connected",
+          error: null,
+        }),
+      );
+    } catch (selectionError) {
+      redirect(
+        buildIntegrationsHref({
+          organizationSlug,
+          notice: null,
+          error: getActionErrorMessage(selectionError),
         }),
       );
     }
@@ -292,16 +371,120 @@ export default async function IntegrationsPage({
           </section>
 
           <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
-            <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
-              TikTok Business
-            </p>
-            <h2 className="mt-2 text-xl font-medium tracking-[-0.04em] text-foreground">
-              Store advertiser account credentials.
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              These credentials are used for Spark authorization apply calls after a
-              creator replies with a code.
-            </p>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
+                  TikTok Business
+                </p>
+                <h2 className="mt-2 text-xl font-medium tracking-[-0.04em] text-foreground">
+                  Connect advertiser access and launch paid-view lookups.
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  OAuth is the fastest path. Manual advertiser credentials remain
+                  available below as a fallback.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-white/[0.08] bg-white/[0.04] px-4 text-sm font-medium text-foreground transition hover:border-white/[0.14] hover:bg-white/[0.07]"
+                  href={paidViewsHref}
+                >
+                  Open paid views
+                </Link>
+                <Link
+                  className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68]"
+                  href={connectTikTokHref}
+                >
+                  Connect TikTok
+                </Link>
+              </div>
+            </div>
+
+            {pendingSelection ? (
+              <div className="mt-5 rounded-[1.1rem] border border-[#90FF4D]/20 bg-[#90FF4D]/[0.08] p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-[#D7FFBC]">
+                  OAuth selection
+                </p>
+                <h3 className="mt-2 text-lg font-medium tracking-[-0.03em] text-[#F3FFE8]">
+                  Choose the TikTok advertiser to save
+                </h3>
+                <p className="mt-2 text-sm leading-6 text-[#D7FFBC]">
+                  TikTok returned {pendingSelection.advertisers.length} advertiser
+                  accounts for this authorization. Pick the one this organization
+                  should use by default.
+                </p>
+                <form
+                  action={completeTikTokAdvertiserSelectionAction}
+                  className="mt-4 space-y-4"
+                >
+                  <label className="block">
+                    <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-[#D7FFBC]">
+                      Advertiser account
+                    </span>
+                    <select
+                      className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
+                      defaultValue={pendingSelection.advertisers[0]?.advertiserId ?? ""}
+                      name="advertiserId"
+                    >
+                      {pendingSelection.advertisers.map((advertiser) => (
+                        <option
+                          key={advertiser.advertiserId}
+                          value={advertiser.advertiserId}
+                        >
+                          {advertiser.advertiserName
+                            ? `${advertiser.advertiserName} (${advertiser.advertiserId})`
+                            : advertiser.advertiserId}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68]"
+                    type="submit"
+                  >
+                    Save advertiser
+                  </button>
+                </form>
+              </div>
+            ) : null}
+
+            {workspace.tiktokAccounts.length > 0 ? (
+              <div className="mt-5 grid gap-3 lg:grid-cols-3">
+                {workspace.tiktokAccounts.map((account) => (
+                  <article
+                    key={account.id}
+                    className="rounded-[1.05rem] border border-white/[0.08] bg-black/[0.22] p-4"
+                  >
+                    <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                      Saved advertiser
+                    </p>
+                    <p className="mt-2 text-sm font-medium text-foreground">
+                      {account.advertiserName
+                        ? `${account.advertiserName}`
+                        : account.advertiserId}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {account.advertiserName ? account.advertiserId : account.status}
+                    </p>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {account.lastValidatedAt
+                        ? `Last updated ${account.lastValidatedAt.toISOString()}`
+                        : "Not validated yet"}
+                    </p>
+                    {account.accessTokenExpiresAt ? (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Access token expiry {account.accessTokenExpiresAt.toISOString()}
+                      </p>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-5 rounded-[1rem] border border-dashed border-white/[0.08] bg-black/[0.2] px-4 py-6 text-sm text-muted-foreground">
+                No TikTok advertiser accounts are saved yet. Connect TikTok with OAuth
+                or enter manual credentials below.
+              </div>
+            )}
 
             <form action={saveTikTokConfigAction} className="mt-5 space-y-4">
               <div className="grid gap-3 sm:grid-cols-2">
@@ -351,9 +534,7 @@ export default async function IntegrationsPage({
                 <input
                   className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-white/[0.16]"
                   defaultValue={
-                    typeof primaryTikTokAccount?.scope === "string"
-                      ? primaryTikTokAccount.scope
-                      : ""
+                    getScopeInputValue(primaryTikTokAccount?.scope)
                   }
                   name="scope"
                   placeholder="spark_auth,ad_management"

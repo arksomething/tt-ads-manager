@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { AuthInfoRow, AuthShell } from "@/components/auth/auth-shell";
+import { isGoogleAuthDisabled } from "@/lib/server-env";
 
 export const dynamic = "force-dynamic";
 
@@ -20,13 +21,19 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const resolvedSearchParams = await searchParams;
   const isSwitchAccountFlow =
     getSearchParamValue(resolvedSearchParams, "mode") === "switch-account";
+  const googleAuthDisabled = isGoogleAuthDisabled();
   const googleAuthConfigured = Boolean(
-    process.env.DATABASE_URL &&
+    !googleAuthDisabled &&
+      process.env.DATABASE_URL &&
       process.env.AUTH_SECRET &&
       process.env.AUTH_SECRET.length >= 32 &&
       process.env.GOOGLE_CLIENT_ID &&
       process.env.GOOGLE_CLIENT_SECRET,
   );
+
+  if (googleAuthDisabled) {
+    redirect("/tiktok-paid-views");
+  }
 
   if (googleAuthConfigured) {
     try {

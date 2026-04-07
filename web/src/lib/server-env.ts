@@ -30,6 +30,13 @@ const twilioEnvSchema = z.object({
 
 const tikTokBusinessEnvSchema = z.object({
   TIKTOK_BUSINESS_BASE_URL: z.url().default("https://business-api.tiktok.com"),
+  TIKTOK_AUTH_URL: z.url().default("https://business-api.tiktok.com/portal/auth"),
+});
+
+const tikTokBusinessOauthEnvSchema = tikTokBusinessEnvSchema.extend({
+  TIKTOK_APP_ID: z.string().min(1),
+  TIKTOK_SECRET: z.string().min(1),
+  TIKTOK_REDIRECT: z.url(),
 });
 
 type AuthEnv = z.infer<typeof authEnvSchema>;
@@ -37,12 +44,14 @@ type DataProviderEnv = z.infer<typeof dataProviderEnvSchema>;
 type AiEnv = z.infer<typeof aiEnvSchema>;
 type TwilioEnv = z.infer<typeof twilioEnvSchema>;
 type TikTokBusinessEnv = z.infer<typeof tikTokBusinessEnvSchema>;
+type TikTokBusinessOauthEnv = z.infer<typeof tikTokBusinessOauthEnvSchema>;
 
 let cachedAuthEnv: AuthEnv | undefined;
 let cachedDataProviderEnv: DataProviderEnv | undefined;
 let cachedAiEnv: AiEnv | undefined;
 let cachedTwilioEnv: TwilioEnv | undefined;
 let cachedTikTokBusinessEnv: TikTokBusinessEnv | undefined;
+let cachedTikTokBusinessOauthEnv: TikTokBusinessOauthEnv | undefined;
 
 export function getAuthEnv() {
   if (!cachedAuthEnv) {
@@ -91,6 +100,10 @@ export function hasTwilioEnv() {
   return Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
 }
 
+export function isGoogleAuthDisabled() {
+  return process.env.DISABLE_GOOGLE_AUTH?.trim() === "true";
+}
+
 export function getTwilioEnv() {
   if (!cachedTwilioEnv) {
     cachedTwilioEnv = twilioEnvSchema.parse({
@@ -116,8 +129,30 @@ export function getTikTokBusinessEnv() {
     cachedTikTokBusinessEnv = tikTokBusinessEnvSchema.parse({
       TIKTOK_BUSINESS_BASE_URL:
         process.env.TIKTOK_BUSINESS_BASE_URL || "https://business-api.tiktok.com",
+      TIKTOK_AUTH_URL:
+        process.env.TIKTOK_AUTH_URL || "https://business-api.tiktok.com/portal/auth",
     });
   }
 
   return cachedTikTokBusinessEnv;
+}
+
+export function hasTikTokBusinessOauthEnv() {
+  return Boolean(process.env.TIKTOK_APP_ID && process.env.TIKTOK_SECRET && process.env.TIKTOK_REDIRECT);
+}
+
+export function getTikTokBusinessOauthEnv() {
+  if (!cachedTikTokBusinessOauthEnv) {
+    cachedTikTokBusinessOauthEnv = tikTokBusinessOauthEnvSchema.parse({
+      TIKTOK_BUSINESS_BASE_URL:
+        process.env.TIKTOK_BUSINESS_BASE_URL || "https://business-api.tiktok.com",
+      TIKTOK_AUTH_URL:
+        process.env.TIKTOK_AUTH_URL || "https://business-api.tiktok.com/portal/auth",
+      TIKTOK_APP_ID: process.env.TIKTOK_APP_ID,
+      TIKTOK_SECRET: process.env.TIKTOK_SECRET,
+      TIKTOK_REDIRECT: process.env.TIKTOK_REDIRECT,
+    });
+  }
+
+  return cachedTikTokBusinessOauthEnv;
 }
