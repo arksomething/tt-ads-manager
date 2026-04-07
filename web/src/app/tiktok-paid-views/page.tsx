@@ -7,6 +7,7 @@ import {
   getPaidViewsForCreator,
   getPaidViewsForSparkItems,
   type TikTokPaidViewMetric,
+  type TikTokPaidViewsRow,
 } from "@/server/tiktok-business/public-reporting";
 import {
   createTikTokPublicConnectionCookieValue,
@@ -44,6 +45,19 @@ const metricOptions: Array<{
   },
 ];
 
+const metricDisplayCopy = {
+  impressions: {
+    totalLabel: "Total paid impressions",
+    shortLabel: "Paid impressions",
+    rowValueLabel: "Impressions",
+  },
+  videoPlayActions: {
+    totalLabel: "Total paid video plays",
+    shortLabel: "Paid video plays",
+    rowValueLabel: "Video plays",
+  },
+} as const;
+
 const numberFormatter = new Intl.NumberFormat("en-US");
 const dateFormatter = new Intl.DateTimeFormat("en-US", {
   month: "short",
@@ -78,13 +92,127 @@ function normalizeMetric(value: string | undefined): TikTokPaidViewMetric {
   return value === "videoPlayActions" ? "videoPlayActions" : "impressions";
 }
 
+function parseReportDate(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const directMatch = trimmed.match(/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}:\d{2}))?$/);
+
+  if (directMatch) {
+    const [, datePart, timePart] = directMatch;
+    const parsed = new Date(`${datePart}T${timePart ?? "00:00:00"}.000Z`);
+
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function formatDate(value: string | null) {
   if (!value) {
     return "Unknown";
   }
 
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  return Number.isNaN(parsed.getTime()) ? value : dateFormatter.format(parsed);
+  const parsed = parseReportDate(value);
+  return parsed ? dateFormatter.format(parsed) : value;
+}
+
+function getReportDateSortValue(value: string | null) {
+  return parseReportDate(value)?.getTime() ?? 0;
+}
+
+function getMetricDisplayCopy(metric: TikTokPaidViewMetric) {
+  return metricDisplayCopy[metric];
+}
+
+type TikTokAdBreakdown = {
+  adId: string;
+  itemIds: string[];
+  totalValue: number;
+  rowCount: number;
+  firstDate: string | null;
+  lastDate: string | null;
+  rows: TikTokPaidViewsRow[];
+};
+
+function buildAdBreakdown(rows: TikTokPaidViewsRow[]): TikTokAdBreakdown[] {
+  const groups = new Map<
+    string,
+    {
+      adId: string;
+      itemIds: Set<string>;
+      totalValue: number;
+      rows: TikTokPaidViewsRow[];
+    }
+  >();
+
+  for (const row of rows) {
+    const adId = row.adId ?? "Unknown";
+    const existingGroup = groups.get(adId);
+
+    if (existingGroup) {
+      existingGroup.totalValue += row.metricValue;
+      existingGroup.rows.push(row);
+
+      if (row.itemId) {
+        existingGroup.itemIds.add(row.itemId);
+      }
+
+      continue;
+    }
+
+    groups.set(adId, {
+      adId,
+      itemIds: new Set(row.itemId ? [row.itemId] : []),
+      totalValue: row.metricValue,
+      rows: [row],
+    });
+  }
+
+  return [...groups.values()]
+    .map((group) => {
+      const sortedRows = [...group.rows].sort(
+        (left, right) =>
+          getReportDateSortValue(left.statDate) - getReportDateSortValue(right.statDate),
+      );
+
+      return {
+        adId: group.adId,
+        itemIds: [...group.itemIds],
+        totalValue: group.totalValue,
+        rowCount: sortedRows.length,
+        firstDate: sortedRows[0]?.statDate ?? null,
+        lastDate: sortedRows[sortedRows.length - 1]?.statDate ?? null,
+        rows: sortedRows,
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.totalValue - left.totalValue ||
+        getReportDateSortValue(right.lastDate) - getReportDateSortValue(left.lastDate),
+    );
+}
+
+function summarizeItemIds(itemIds: string[]) {
+  if (itemIds.length === 0) {
+    return "TikTok did not return Spark item IDs for this ad.";
+  }
+
+  if (itemIds.length <= 3) {
+    return itemIds.join(", ");
+  }
+
+  return `${itemIds.slice(0, 3).join(", ")} +${itemIds.length - 3} more`;
 }
 
 function withFlashPath(args: {
@@ -328,6 +456,11 @@ export default async function TikTokPaidViewsPage({
       }
     }
   }
+
+  const metricCopy = getMetricDisplayCopy(result?.metric ?? metric);
+  const visibleRows = result ? result.rows.filter((row) => row.metricValue > 0) : [];
+  const hiddenZeroRowCount = result ? Math.max(result.rows.length - visibleRows.length, 0) : 0;
+  const adBreakdown = buildAdBreakdown(visibleRows);
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-4 px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
@@ -662,8 +795,8 @@ export default async function TikTokPaidViewsPage({
                 </h2>
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
                   {result.discoveryMode === "manual_item_ids"
-                    ? `Paid ${metric === "impressions" ? "impressions" : "video plays"} for the Spark items you provided.`
-                    : `Paid ${metric === "impressions" ? "impressions" : "video plays"} for the Spark ads TikTok matched to this creator.`}
+                    ? `${metricCopy.shortLabel} for the Spark items you provided.`
+                    : `${metricCopy.shortLabel} for the Spark ads TikTok matched to this creator.`}
                 </p>
                 {result.resolvedIdentities.length > 0 ? (
                   <p className="mt-2 text-xs text-muted-foreground">
@@ -673,7 +806,7 @@ export default async function TikTokPaidViewsPage({
               </div>
               <div className="rounded-[1.1rem] border border-[#90FF4D]/20 bg-[#90FF4D]/[0.08] px-4 py-3 text-right">
                 <p className="text-xs uppercase tracking-[0.2em] text-[#D7FFBC]">
-                  Total paid views
+                  {metricCopy.totalLabel}
                 </p>
                 <p className="mt-2 text-3xl font-medium tracking-[-0.04em] text-[#F3FFE8]">
                   {numberFormatter.format(result.paidViews)}
@@ -718,10 +851,10 @@ export default async function TikTokPaidViewsPage({
               </div>
               <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
                 <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                  Report rows
+                  Active daily rows
                 </p>
                 <p className="mt-2 text-sm font-medium text-foreground">
-                  {numberFormatter.format(result.rowCount)}
+                  {numberFormatter.format(visibleRows.length)}
                 </p>
               </div>
               <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
@@ -746,51 +879,109 @@ export default async function TikTokPaidViewsPage({
                 </ul>
               </div>
             ) : null}
+
+            {hiddenZeroRowCount > 0 ? (
+              <div className="mt-5 rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4 text-sm text-muted-foreground">
+                Hidden {numberFormatter.format(hiddenZeroRowCount)} zero-value daily rows
+                to keep the breakdown readable.
+              </div>
+            ) : null}
           </section>
 
           <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
-                  Report rows
+                  Ad breakdown
                 </p>
                 <h3 className="mt-2 text-lg font-medium tracking-[-0.03em] text-foreground">
-                  Raw TikTok row breakdown
+                  Daily {metricCopy.shortLabel.toLowerCase()} by matched ad
                 </h3>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  Each card is one matched ad. The table inside each card shows
+                  non-zero days only.
+                </p>
               </div>
             </div>
 
-            {result.rows.length > 0 ? (
-              <div className="mt-5 overflow-x-auto">
-                <table className="min-w-full divide-y divide-white/[0.08] text-sm">
-                  <thead>
-                    <tr className="text-left text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                      <th className="py-3 pr-4 font-medium">Date</th>
-                      <th className="py-3 pr-4 font-medium">Ad ID</th>
-                      <th className="py-3 pr-4 font-medium">Item ID</th>
-                      <th className="py-3 font-medium">Value</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/[0.05] text-foreground">
-                    {result.rows.map((row, index) => (
-                      <tr key={`${row.adId ?? "ad"}-${row.itemId ?? "item"}-${row.statDate ?? index}`}>
-                        <td className="py-3 pr-4 text-muted-foreground">
-                          {formatDate(row.statDate)}
-                        </td>
-                        <td className="py-3 pr-4">{row.adId ?? "Unknown"}</td>
-                        <td className="py-3 pr-4">{row.itemId ?? "Filtered only"}</td>
-                        <td className="py-3">
-                          {numberFormatter.format(row.metricValue)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            {adBreakdown.length > 0 ? (
+              <div className="mt-5 space-y-4">
+                {adBreakdown.map((ad) => (
+                  <article
+                    className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4"
+                    key={ad.adId}
+                  >
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                          Matched ad
+                        </p>
+                        <h4 className="mt-2 text-base font-medium text-foreground">
+                          {ad.adId}
+                        </h4>
+                        <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                          {ad.itemIds.length > 0
+                            ? `Spark item IDs: ${summarizeItemIds(ad.itemIds)}`
+                            : "TikTok did not return Spark item IDs for this ad's report rows."}
+                        </p>
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {formatDate(ad.firstDate)} to {formatDate(ad.lastDate)} ·{" "}
+                          {numberFormatter.format(ad.rowCount)} non-zero day
+                          {ad.rowCount === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                      <div className="rounded-[1rem] border border-[#90FF4D]/20 bg-[#90FF4D]/[0.08] px-4 py-3 text-right">
+                        <p className="text-xs uppercase tracking-[0.2em] text-[#D7FFBC]">
+                          {metricCopy.shortLabel}
+                        </p>
+                        <p className="mt-2 text-2xl font-medium tracking-[-0.03em] text-[#F3FFE8]">
+                          {numberFormatter.format(ad.totalValue)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="min-w-full divide-y divide-white/[0.08] text-sm">
+                        <thead>
+                          <tr className="text-left text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                            <th className="py-3 pr-4 font-medium">Date</th>
+                            <th className="py-3 pr-4 font-medium">Item ID</th>
+                            <th className="py-3 font-medium">
+                              {metricCopy.rowValueLabel}
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/[0.05] text-foreground">
+                          {ad.rows.map((row, index) => (
+                            <tr
+                              key={`${ad.adId}-${row.itemId ?? "item"}-${row.statDate ?? index}`}
+                            >
+                              <td className="py-3 pr-4 text-muted-foreground">
+                                {formatDate(row.statDate)}
+                              </td>
+                              <td className="py-3 pr-4">
+                                {row.itemId ?? "Not returned by TikTok"}
+                              </td>
+                              <td className="py-3">
+                                {numberFormatter.format(row.metricValue)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </article>
+                ))}
               </div>
+            ) : result.rows.length > 0 ? (
+              <p className="mt-5 text-sm leading-6 text-muted-foreground">
+                TikTok returned rows for this lookup, but every row in the selected
+                window had a value of zero.
+              </p>
             ) : (
               <p className="mt-5 text-sm leading-6 text-muted-foreground">
-                TikTok returned no matching paid-delivery rows for those Spark items
-                in the selected window.
+                TikTok returned no matching paid-delivery rows for this lookup in
+                the selected window.
               </p>
             )}
           </section>
