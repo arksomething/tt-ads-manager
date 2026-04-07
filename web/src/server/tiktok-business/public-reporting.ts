@@ -369,8 +369,8 @@ async function fetchPaidReportRows(args: {
   startDate: string;
   endDate: string;
   metric: TikTokPaidViewMetric;
-  filterFieldName: "item_id" | "ad_id";
-  filterValues: string[];
+  filterFieldName?: "item_id";
+  filterValues?: string[];
 }) {
   const apiMetricName = paidViewMetricMap[args.metric];
   const rows: TikTokIntegratedReportRow[] = [];
@@ -392,13 +392,17 @@ async function fetchPaidReportRows(args: {
         end_date: args.endDate,
         page,
         page_size: REPORT_PAGE_SIZE,
-        filtering: [
-          {
-            field_name: args.filterFieldName,
-            filter_type: "IN",
-            filter_value: JSON.stringify(args.filterValues),
-          },
-        ],
+        ...(args.filterFieldName && args.filterValues && args.filterValues.length > 0
+          ? {
+              filtering: [
+                {
+                  field_name: args.filterFieldName,
+                  filter_type: "IN",
+                  filter_value: JSON.stringify(args.filterValues),
+                },
+              ],
+            }
+          : {}),
       },
     });
 
@@ -765,6 +769,8 @@ export async function getPaidViewsForCreator(args: {
   const discoveredItemIds = uniqueNonEmptyStrings(
     matchedAds.ads.map((ad) => ad.tiktokItemId),
   );
+  const canServerFilterByItemId =
+    matchedAds.ads.length > 0 && matchedAds.ads.every((ad) => Boolean(ad.tiktokItemId));
 
   if (adIds.length === 0) {
     return {
@@ -795,16 +801,25 @@ export async function getPaidViewsForCreator(args: {
     startDate: toDateOnlyString(startDate),
     endDate: toDateOnlyString(endDate),
     metric,
-    filterFieldName: "ad_id",
-    filterValues: adIds,
+    ...(canServerFilterByItemId
+      ? {
+          filterFieldName: "item_id" as const,
+          filterValues: discoveredItemIds,
+        }
+      : {}),
   });
   const normalizedRows = report.rows.map((row) =>
     normalizeReportRow(row, report.apiMetricName),
   );
   const adIdSet = new Set(adIds);
-  const scopedRows = normalizedRows.filter(
-    (row) => row.adId !== null && adIdSet.has(row.adId),
-  );
+  const itemIdSet = new Set(discoveredItemIds);
+  const rowsIncludeAdIds = normalizedRows.some((row) => row.adId !== null);
+  const rowsIncludeItemIds = normalizedRows.some((row) => row.itemId !== null);
+  const scopedRows = rowsIncludeAdIds
+    ? normalizedRows.filter((row) => row.adId !== null && adIdSet.has(row.adId))
+    : canServerFilterByItemId && rowsIncludeItemIds
+      ? normalizedRows.filter((row) => row.itemId !== null && itemIdSet.has(row.itemId))
+      : normalizedRows;
   const paidViews = scopedRows.reduce((total, row) => total + row.metricValue, 0);
   const matchedSparkItemIds = uniqueNonEmptyStrings([
     ...discoveredItemIds,
@@ -828,6 +843,11 @@ export async function getPaidViewsForCreator(args: {
       ...identityResolution.warnings,
       ...advertiserAds.warnings,
       ...matchedAds.warnings,
+      ...(!canServerFilterByItemId
+        ? [
+            "TikTok reporting does not support filtering by ad_id, so this lookup scanned advertiser rows for the date window and scoped them locally to the matched ads.",
+          ]
+        : []),
       ...report.warnings,
       ...(matchedSparkItemIds.length === 0
         ? [
