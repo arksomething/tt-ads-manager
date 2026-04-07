@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { isGoogleAuthDisabled } from "@/lib/server-env";
+import { hasSingularEnv, isGoogleAuthDisabled } from "@/lib/server-env";
 
 export function GET() {
   const hasGenericProviderConfig =
@@ -24,6 +24,7 @@ export function GET() {
       aiAnalytics: Boolean(process.env.OPENAI_API_KEY),
       dataProvider: hasGenericProviderConfig,
       viralApp: hasViralAppConfig,
+      singularReporting: hasSingularEnv(),
     },
   });
 }

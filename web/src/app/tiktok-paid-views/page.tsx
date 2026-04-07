@@ -5,6 +5,10 @@ import { redirect } from "next/navigation";
 
 import { hasTikTokBusinessOauthEnv } from "@/lib/server-env";
 import {
+  type TikTokSingularOverlay,
+  type TikTokSingularReportRow,
+} from "@/server/singular/reporting";
+import {
   getPaidViewsForCreator,
   getPaidViewsForSparkItems,
   type TikTokMatchedAd,
@@ -62,12 +66,19 @@ const metricDisplayCopy = {
 } as const;
 
 const numberFormatter = new Intl.NumberFormat("en-US");
+const decimalFormatter = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 2,
+});
+const ratioFormatter = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 2,
+});
 const dateFormatter = new Intl.DateTimeFormat("en-US", {
   month: "short",
   day: "numeric",
   year: "numeric",
   timeZone: "UTC",
 });
+const currencyFormatterCache = new Map<string, Intl.NumberFormat>();
 
 function getSearchParamValue(
   searchParams: Record<string, string | string[] | undefined>,
@@ -181,6 +192,88 @@ function getResolvedPostsForMatchedAds(matchedAds: readonly TikTokMatchedAd[]) {
   return [...postsByItemId.values()].sort((left, right) => left.itemId.localeCompare(right.itemId));
 }
 
+function uniqueNonEmptyStrings(values: ReadonlyArray<string | null | undefined>) {
+  return [...new Set(values.map((value) => value?.trim()).filter(Boolean) as string[])];
+}
+
+function normalizeMatchText(value: string | null | undefined) {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function isMeaningfulMatchLabel(value: string | null | undefined) {
+  const trimmed = value?.trim() ?? "";
+
+  if (trimmed.length < 3) {
+    return false;
+  }
+
+  return !/^ad\s+\d+$/i.test(trimmed) && !/^video\s+\d+$/i.test(trimmed);
+}
+
+function extractTikTokVideoIdFromUrl(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const match = value.match(/\/video\/(\d+)/i);
+  return match ? match[1] : null;
+}
+
+function formatSingularPeriodLabel(value: string) {
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0) {
+    return "7d";
+  }
+
+  if (trimmed.toLowerCase() === "ltv") {
+    return "LTV";
+  }
+
+  if (trimmed.toLowerCase() === "actual") {
+    return "Actual";
+  }
+
+  return trimmed;
+}
+
+function getCurrencyFormatter(currency: string) {
+  const normalizedCurrency = currency.toUpperCase();
+  const existingFormatter = currencyFormatterCache.get(normalizedCurrency);
+
+  if (existingFormatter) {
+    return existingFormatter;
+  }
+
+  const formatter = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: normalizedCurrency,
+    maximumFractionDigits: 2,
+  });
+
+  currencyFormatterCache.set(normalizedCurrency, formatter);
+  return formatter;
+}
+
+function formatAmount(value: number, currency: string | null) {
+  if (currency && /^[A-Za-z]{3}$/.test(currency)) {
+    return getCurrencyFormatter(currency).format(value);
+  }
+
+  return decimalFormatter.format(value);
+}
+
+function formatRoas(value: number | null) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${ratioFormatter.format(value)}x`
+    : "Unavailable";
+}
+
 type TikTokMatchedGroupAd = {
   adId: string;
   adLabel: string;
@@ -195,7 +288,27 @@ type TikTokMatchedGroupPoint = {
   value: number;
 };
 
-type TikTokMatchedGroup = {
+type TikTokSingularMatchLevel =
+  | "exact_item_id"
+  | "exact_post_url"
+  | "name_fallback"
+  | "unavailable";
+
+type TikTokSingularGroupMetrics = {
+  configured: boolean;
+  cohortPeriod: string;
+  matchLevel: TikTokSingularMatchLevel;
+  matchedRowCount: number;
+  matchedRows: TikTokSingularReportRow[];
+  spend: number;
+  revenue: number;
+  installs: number;
+  conversions: number;
+  roas: number | null;
+  currency: string | null;
+};
+
+type TikTokMatchedGroupBase = {
   key: string;
   kind: "video" | "creative";
   title: string;
@@ -213,9 +326,157 @@ type TikTokMatchedGroup = {
   primaryPost: TikTokResolvedPost | null;
 };
 
+type TikTokMatchedGroup = TikTokMatchedGroupBase & {
+  singular: TikTokSingularGroupMetrics;
+};
+
+function addSingularRowToLookup(
+  lookup: Map<string, TikTokSingularReportRow[]>,
+  key: string | null,
+  row: TikTokSingularReportRow,
+) {
+  if (!key) {
+    return;
+  }
+
+  const existingRows = lookup.get(key);
+
+  if (existingRows) {
+    existingRows.push(row);
+    return;
+  }
+
+  lookup.set(key, [row]);
+}
+
+function getGroupCandidateNameKeys(group: TikTokMatchedGroupBase) {
+  return uniqueNonEmptyStrings([
+    group.title,
+    ...group.ads.map((ad) => ad.adLabel),
+    ...group.resolvedPosts.map((post) => post.title),
+  ])
+    .filter(isMeaningfulMatchLabel)
+    .map((value) => normalizeMatchText(value))
+    .filter((value) => value.length > 0);
+}
+
+function buildSingularMetrics(args: {
+  overlay: TikTokSingularOverlay;
+  matchedRows: TikTokSingularReportRow[];
+  matchLevel: TikTokSingularMatchLevel;
+}): TikTokSingularGroupMetrics {
+  const matchedRows = [...args.matchedRows].sort(
+    (left, right) =>
+      right.spend - left.spend ||
+      right.revenue - left.revenue ||
+      (left.creativeName ?? "").localeCompare(right.creativeName ?? ""),
+  );
+  const currencyCodes = uniqueNonEmptyStrings(matchedRows.map((row) => row.currency));
+  const spend = matchedRows.reduce((total, row) => total + row.spend, 0);
+  const revenue = matchedRows.reduce((total, row) => total + row.revenue, 0);
+  const installs = matchedRows.reduce((total, row) => total + row.installs, 0);
+  const conversions = matchedRows.reduce((total, row) => total + row.conversions, 0);
+
+  return {
+    configured: args.overlay.configured,
+    cohortPeriod: args.overlay.cohortPeriod,
+    matchLevel: matchedRows.length > 0 ? args.matchLevel : "unavailable",
+    matchedRowCount: matchedRows.length,
+    matchedRows,
+    spend,
+    revenue,
+    installs,
+    conversions,
+    roas: spend > 0 ? revenue / spend : null,
+    currency: currencyCodes.length === 1 ? currencyCodes[0].toUpperCase() : null,
+  };
+}
+
+function attachSingularMetricsToGroups(args: {
+  groups: TikTokMatchedGroupBase[];
+  singular: TikTokSingularOverlay;
+}): TikTokMatchedGroup[] {
+  const rowsByCreativeId = new Map<string, TikTokSingularReportRow[]>();
+  const rowsByVideoIdFromUrl = new Map<string, TikTokSingularReportRow[]>();
+  const rowsByNameKey = new Map<string, TikTokSingularReportRow[]>();
+  const groupKeysByName = new Map<string, Set<string>>();
+
+  for (const row of args.singular.rows) {
+    addSingularRowToLookup(rowsByCreativeId, row.creativeId, row);
+    addSingularRowToLookup(rowsByVideoIdFromUrl, extractTikTokVideoIdFromUrl(row.creativeUrl), row);
+    addSingularRowToLookup(rowsByNameKey, normalizeMatchText(row.creativeName), row);
+  }
+
+  for (const group of args.groups) {
+    for (const nameKey of getGroupCandidateNameKeys(group)) {
+      const existingGroups = groupKeysByName.get(nameKey);
+
+      if (existingGroups) {
+        existingGroups.add(group.key);
+        continue;
+      }
+
+      groupKeysByName.set(nameKey, new Set([group.key]));
+    }
+  }
+
+  return args.groups.map((group) => {
+    const matchedRows = new Map<string, TikTokSingularReportRow>();
+    let matchLevel: TikTokSingularMatchLevel = "unavailable";
+
+    for (const itemId of group.itemIds) {
+      for (const row of rowsByCreativeId.get(itemId) ?? []) {
+        matchedRows.set(row.rowKey, row);
+      }
+    }
+
+    if (matchedRows.size > 0) {
+      matchLevel = "exact_item_id";
+    }
+
+    if (matchedRows.size === 0) {
+      for (const itemId of group.itemIds) {
+        for (const row of rowsByVideoIdFromUrl.get(itemId) ?? []) {
+          matchedRows.set(row.rowKey, row);
+        }
+      }
+
+      if (matchedRows.size > 0) {
+        matchLevel = "exact_post_url";
+      }
+    }
+
+    if (matchedRows.size === 0) {
+      for (const nameKey of getGroupCandidateNameKeys(group)) {
+        if ((groupKeysByName.get(nameKey)?.size ?? 0) !== 1) {
+          continue;
+        }
+
+        for (const row of rowsByNameKey.get(nameKey) ?? []) {
+          matchedRows.set(row.rowKey, row);
+        }
+      }
+
+      if (matchedRows.size > 0) {
+        matchLevel = "name_fallback";
+      }
+    }
+
+    return {
+      ...group,
+      singular: buildSingularMetrics({
+        overlay: args.singular,
+        matchedRows: [...matchedRows.values()],
+        matchLevel,
+      }),
+    };
+  });
+}
+
 function buildMatchedGroups(args: {
   rows: TikTokPaidViewsRow[];
   matchedAds: TikTokMatchedAd[];
+  singular: TikTokSingularOverlay;
 }): TikTokMatchedGroup[] {
   const adMetadata = new Map(args.matchedAds.map((ad) => [ad.adId, ad] as const));
   const perAdGroups = new Map<
@@ -308,7 +569,7 @@ function buildMatchedGroups(args: {
     });
   }
 
-  return [...groupedMatches.values()]
+  const baseGroups: TikTokMatchedGroupBase[] = [...groupedMatches.values()]
     .map((group) => {
       const sortedRows = [...group.rows].sort(
         (left, right) =>
@@ -396,6 +657,57 @@ function buildMatchedGroups(args: {
         right.totalValue - left.totalValue ||
         getReportDateSortValue(right.lastDate) - getReportDateSortValue(left.lastDate),
     );
+
+  return attachSingularMetricsToGroups({
+    groups: baseGroups,
+    singular: args.singular,
+  });
+}
+
+function getSingularMatchBadgeLabel(metrics: TikTokSingularGroupMetrics) {
+  if (!metrics.configured) {
+    return "Singular off";
+  }
+
+  switch (metrics.matchLevel) {
+    case "exact_item_id":
+      return "Exact";
+    case "exact_post_url":
+      return "Exact URL";
+    case "name_fallback":
+      return "Name fallback";
+    default:
+      return "Unavailable";
+  }
+}
+
+function getSingularMatchDescription(metrics: TikTokSingularGroupMetrics) {
+  if (!metrics.configured) {
+    return "Singular is not configured on this deployment yet.";
+  }
+
+  switch (metrics.matchLevel) {
+    case "exact_item_id":
+      return `Matched ${metrics.matchedRowCount} Singular creative row${metrics.matchedRowCount === 1 ? "" : "s"} by TikTok video ID.`;
+    case "exact_post_url":
+      return `Matched ${metrics.matchedRowCount} Singular creative row${metrics.matchedRowCount === 1 ? "" : "s"} from the TikTok post URL.`;
+    case "name_fallback":
+      return `Matched ${metrics.matchedRowCount} Singular creative row${metrics.matchedRowCount === 1 ? "" : "s"} by creative name only.`;
+    default:
+      return "No trustworthy Singular creative match for this grouped result.";
+  }
+}
+
+function getSingularPanelClassName(metrics: TikTokSingularGroupMetrics) {
+  if (!metrics.configured || metrics.matchedRowCount === 0) {
+    return "border-white/[0.08] bg-black/[0.2]";
+  }
+
+  if (metrics.matchLevel === "name_fallback") {
+    return "border-[#FFD24D]/20 bg-[#FFD24D]/[0.08]";
+  }
+
+  return "border-[#4DA3FF]/20 bg-[#4DA3FF]/[0.08]";
 }
 
 function summarizeItemIds(itemIds: string[]) {
@@ -726,11 +1038,26 @@ export default async function TikTokPaidViewsPage({
   const matchedGroups = buildMatchedGroups({
     rows: visibleRows,
     matchedAds: result?.matchedAds ?? [],
+    singular:
+      result?.singular ?? {
+        configured: false,
+        cohortPeriod: "7d",
+        sourceNames: [],
+        rowCount: 0,
+        rows: [],
+        warnings: [],
+      },
   });
   const resolvedPosts = getResolvedPostsForMatchedAds(result?.matchedAds ?? []);
   const resolvedPostCount = resolvedPosts.length;
   const knownVideoGroupCount = matchedGroups.filter((group) => group.kind === "video").length;
   const creativeOnlyGroupCount = matchedGroups.length - knownVideoGroupCount;
+  const singularMatchedGroupCount = matchedGroups.filter(
+    (group) => group.singular.matchedRowCount > 0,
+  ).length;
+  const combinedWarnings = result
+    ? uniqueNonEmptyStrings([...result.warnings, ...result.singular.warnings])
+    : [];
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-4 px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
@@ -1079,6 +1406,11 @@ export default async function TikTokPaidViewsPage({
                     {numberFormatter.format(result.matchedSparkItemIds.length)} known video IDs.
                   </p>
                 ) : null}
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {result.singular.configured
+                    ? `Singular matched ${numberFormatter.format(singularMatchedGroupCount)} of ${numberFormatter.format(matchedGroups.length)} grouped results using ${formatSingularPeriodLabel(result.singular.cohortPeriod)} revenue.`
+                    : "Singular overlay is not configured on this deployment yet."}
+                </p>
               </div>
               <div className="rounded-[1.1rem] border border-[#90FF4D]/20 bg-[#90FF4D]/[0.08] px-4 py-3 text-right">
                 <p className="text-xs uppercase tracking-[0.2em] text-[#D7FFBC]">
@@ -1090,7 +1422,7 @@ export default async function TikTokPaidViewsPage({
               </div>
             </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
               <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
                 <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
                   Advertiser ID
@@ -1141,15 +1473,30 @@ export default async function TikTokPaidViewsPage({
                   {formatDate(result.startDate)} to {formatDate(result.endDate)}
                 </p>
               </div>
+              <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Singular overlay
+                </p>
+                <p className="mt-2 text-sm font-medium text-foreground">
+                  {result.singular.configured
+                    ? `${numberFormatter.format(singularMatchedGroupCount)}/${numberFormatter.format(matchedGroups.length)} groups`
+                    : "Not configured"}
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {result.singular.configured
+                    ? `${formatSingularPeriodLabel(result.singular.cohortPeriod)} revenue`
+                    : "Set Singular env vars to enable ROAS and spend overlay."}
+                </p>
+              </div>
             </div>
 
-            {result.warnings.length > 0 ? (
+            {combinedWarnings.length > 0 ? (
               <div className="mt-5 rounded-[1.1rem] border border-[#FFD24D]/20 bg-[#FFD24D]/[0.08] p-4 text-sm text-[#FFEAB1]">
                 <p className="text-xs uppercase tracking-[0.2em] text-[#FFEAB1]/80">
                   Warnings
                 </p>
                 <ul className="mt-2 space-y-1.5">
-                  {result.warnings.map((warning) => (
+                  {combinedWarnings.map((warning) => (
                     <li key={warning}>{warning}</li>
                   ))}
                 </ul>
@@ -1226,15 +1573,52 @@ export default async function TikTokPaidViewsPage({
                                     ? `Spark item IDs: ${summarizeItemIds(group.itemIds)}`
                                     : "TikTok did not return a Spark video ID for this creative."}
                             </p>
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              <span
+                                className={`inline-flex min-h-7 items-center rounded-full border px-3 text-[11px] font-medium ${
+                                  group.singular.matchLevel === "name_fallback"
+                                    ? "border-[#FFD24D]/20 bg-[#FFD24D]/10 text-[#FFEAB1]"
+                                    : group.singular.matchedRowCount > 0
+                                      ? "border-[#4DA3FF]/20 bg-[#4DA3FF]/10 text-[#D6EBFF]"
+                                      : "border-white/[0.1] bg-white/[0.04] text-muted-foreground"
+                                }`}
+                              >
+                                {getSingularMatchBadgeLabel(group.singular)}
+                              </span>
+                              <span className="text-xs text-muted-foreground">
+                                {getSingularMatchDescription(group.singular)}
+                              </span>
+                            </div>
                           </div>
                         </div>
-                        <div className="rounded-[1rem] border border-[#90FF4D]/20 bg-[#90FF4D]/[0.08] px-4 py-3 text-right">
-                          <p className="text-xs uppercase tracking-[0.2em] text-[#D7FFBC]">
-                            {metricCopy.shortLabel}
-                          </p>
-                          <p className="mt-2 text-2xl font-medium tracking-[-0.03em] text-[#F3FFE8]">
-                            {numberFormatter.format(group.totalValue)}
-                          </p>
+                        <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
+                          <div className="rounded-[1rem] border border-[#90FF4D]/20 bg-[#90FF4D]/[0.08] px-4 py-3 text-right">
+                            <p className="text-xs uppercase tracking-[0.2em] text-[#D7FFBC]">
+                              {metricCopy.shortLabel}
+                            </p>
+                            <p className="mt-2 text-2xl font-medium tracking-[-0.03em] text-[#F3FFE8]">
+                              {numberFormatter.format(group.totalValue)}
+                            </p>
+                          </div>
+                          <div
+                            className={`rounded-[1rem] border px-4 py-3 text-right ${getSingularPanelClassName(group.singular)}`}
+                          >
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                              Singular {formatSingularPeriodLabel(group.singular.cohortPeriod)} ROAS
+                            </p>
+                            <p className="mt-2 text-2xl font-medium tracking-[-0.03em] text-foreground">
+                              {group.singular.matchedRowCount > 0
+                                ? formatRoas(group.singular.roas)
+                                : group.singular.configured
+                                  ? "Unavailable"
+                                  : "Off"}
+                            </p>
+                            <p className="mt-2 text-xs text-muted-foreground">
+                              {group.singular.matchedRowCount > 0
+                                ? `Spend ${formatAmount(group.singular.spend, group.singular.currency)} · Revenue ${formatAmount(group.singular.revenue, group.singular.currency)}`
+                                : getSingularMatchBadgeLabel(group.singular)}
+                            </p>
+                          </div>
                         </div>
                       </div>
                       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
@@ -1301,6 +1685,117 @@ export default async function TikTokPaidViewsPage({
                           </div>
                         </div>
                       ) : null}
+
+                      <div
+                        className={`mb-4 rounded-[1rem] border p-4 ${getSingularPanelClassName(group.singular)}`}
+                      >
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                              Singular overlay
+                            </p>
+                            <p className="mt-2 text-sm font-medium text-foreground">
+                              {getSingularMatchBadgeLabel(group.singular)} match ·{" "}
+                              {formatSingularPeriodLabel(group.singular.cohortPeriod)} revenue
+                            </p>
+                            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                              {getSingularMatchDescription(group.singular)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 lg:grid-cols-5">
+                          <div className="rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-4">
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                              Spend
+                            </p>
+                            <p className="mt-2 text-sm font-medium text-foreground">
+                              {group.singular.matchedRowCount > 0
+                                ? formatAmount(group.singular.spend, group.singular.currency)
+                                : "Unavailable"}
+                            </p>
+                          </div>
+                          <div className="rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-4">
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                              Revenue
+                            </p>
+                            <p className="mt-2 text-sm font-medium text-foreground">
+                              {group.singular.matchedRowCount > 0
+                                ? formatAmount(group.singular.revenue, group.singular.currency)
+                                : "Unavailable"}
+                            </p>
+                          </div>
+                          <div className="rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-4">
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                              Installs
+                            </p>
+                            <p className="mt-2 text-sm font-medium text-foreground">
+                              {group.singular.matchedRowCount > 0
+                                ? numberFormatter.format(group.singular.installs)
+                                : "Unavailable"}
+                            </p>
+                          </div>
+                          <div className="rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-4">
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                              Conversions
+                            </p>
+                            <p className="mt-2 text-sm font-medium text-foreground">
+                              {group.singular.matchedRowCount > 0
+                                ? numberFormatter.format(group.singular.conversions)
+                                : "Unavailable"}
+                            </p>
+                          </div>
+                          <div className="rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-4">
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                              ROAS
+                            </p>
+                            <p className="mt-2 text-sm font-medium text-foreground">
+                              {group.singular.matchedRowCount > 0
+                                ? formatRoas(group.singular.roas)
+                                : "Unavailable"}
+                            </p>
+                          </div>
+                        </div>
+
+                        {group.singular.matchedRows.length > 0 ? (
+                          <div className="mt-4">
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                              Matched Singular creatives
+                            </p>
+                            <div className="mt-3 grid gap-3 md:grid-cols-2">
+                              {group.singular.matchedRows.slice(0, 4).map((row) => (
+                                <div
+                                  className="rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-4"
+                                  key={row.rowKey}
+                                >
+                                  <p className="text-sm font-medium text-foreground">
+                                    {row.creativeName ?? row.creativeId ?? "Unnamed creative"}
+                                  </p>
+                                  <p className="mt-2 text-xs text-muted-foreground">
+                                    {row.creativeId
+                                      ? `Creative ID ${row.creativeId}`
+                                      : "Creative ID unavailable"}
+                                  </p>
+                                  <p className="mt-2 text-xs text-muted-foreground">
+                                    Spend {formatAmount(row.spend, row.currency)} · Revenue{" "}
+                                    {formatAmount(row.revenue, row.currency)}
+                                  </p>
+                                  <p className="mt-2 text-xs text-muted-foreground">
+                                    {row.source ? `Source ${row.source}` : "Source unavailable"}
+                                    {row.app ? ` · App ${row.app}` : ""}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                            {group.singular.matchedRows.length > 4 ? (
+                              <p className="mt-3 text-xs text-muted-foreground">
+                                Showing 4 of {numberFormatter.format(group.singular.matchedRows.length)}{" "}
+                                matched Singular rows for this group.
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
 
                       <DailyMetricChart
                         metricLabel={metricCopy.rowValueLabel}

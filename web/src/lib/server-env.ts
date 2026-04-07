@@ -39,12 +39,21 @@ const tikTokBusinessOauthEnvSchema = tikTokBusinessEnvSchema.extend({
   TIKTOK_REDIRECT: z.url(),
 });
 
+const singularEnvSchema = z.object({
+  SINGULAR_API_BASE_URL: z.url().default("https://api.singular.net"),
+  SINGULAR_API_KEY: z.string().min(1),
+  SINGULAR_APP_NAMES: z.string().optional(),
+  SINGULAR_SOURCE_NAMES: z.string().optional(),
+  SINGULAR_COHORT_PERIOD: z.string().min(1).default("7d"),
+});
+
 type AuthEnv = z.infer<typeof authEnvSchema>;
 type DataProviderEnv = z.infer<typeof dataProviderEnvSchema>;
 type AiEnv = z.infer<typeof aiEnvSchema>;
 type TwilioEnv = z.infer<typeof twilioEnvSchema>;
 type TikTokBusinessEnv = z.infer<typeof tikTokBusinessEnvSchema>;
 type TikTokBusinessOauthEnv = z.infer<typeof tikTokBusinessOauthEnvSchema>;
+type SingularEnv = z.infer<typeof singularEnvSchema>;
 
 let cachedAuthEnv: AuthEnv | undefined;
 let cachedDataProviderEnv: DataProviderEnv | undefined;
@@ -52,6 +61,7 @@ let cachedAiEnv: AiEnv | undefined;
 let cachedTwilioEnv: TwilioEnv | undefined;
 let cachedTikTokBusinessEnv: TikTokBusinessEnv | undefined;
 let cachedTikTokBusinessOauthEnv: TikTokBusinessOauthEnv | undefined;
+let cachedSingularEnv: SingularEnv | undefined;
 
 export function getAuthEnv() {
   if (!cachedAuthEnv) {
@@ -155,4 +165,22 @@ export function getTikTokBusinessOauthEnv() {
   }
 
   return cachedTikTokBusinessOauthEnv;
+}
+
+export function hasSingularEnv() {
+  return Boolean(process.env.SINGULAR_API_KEY);
+}
+
+export function getSingularEnv() {
+  if (!cachedSingularEnv) {
+    cachedSingularEnv = singularEnvSchema.parse({
+      SINGULAR_API_BASE_URL: process.env.SINGULAR_API_BASE_URL || "https://api.singular.net",
+      SINGULAR_API_KEY: process.env.SINGULAR_API_KEY,
+      SINGULAR_APP_NAMES: process.env.SINGULAR_APP_NAMES || undefined,
+      SINGULAR_SOURCE_NAMES: process.env.SINGULAR_SOURCE_NAMES || undefined,
+      SINGULAR_COHORT_PERIOD: process.env.SINGULAR_COHORT_PERIOD || "7d",
+    });
+  }
+
+  return cachedSingularEnv;
 }

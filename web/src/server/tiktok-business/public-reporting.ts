@@ -1,3 +1,9 @@
+import {
+  getDefaultTikTokSingularOverlay,
+  getTikTokSingularOverlay,
+  type TikTokSingularOverlay,
+} from "@/server/singular/reporting";
+
 import { requestTikTokBusinessApi } from "./client";
 
 const MAX_REPORT_PAGES = 20;
@@ -146,6 +152,7 @@ export type TikTokSparkItemPaidViewsResult = {
   discoveryMode: "manual_item_ids" | "creator_discovery";
   rowCount: number;
   rows: TikTokPaidViewsRow[];
+  singular: TikTokSingularOverlay;
   warnings: string[];
 };
 
@@ -1286,6 +1293,10 @@ export async function getPaidViewsForSparkItems(args: {
     ads: adMetadata.ads,
     rows: scopedRows,
   });
+  const singular = await getTikTokSingularOverlay({
+    startDate: toDateOnlyString(startDate),
+    endDate: toDateOnlyString(endDate),
+  });
   const matchedSparkItemIds = uniqueNonEmptyStrings([
     ...itemIds,
     ...scopedRows.map((row) => row.itemId),
@@ -1310,6 +1321,7 @@ export async function getPaidViewsForSparkItems(args: {
     discoveryMode: "manual_item_ids",
     rowCount: scopedRows.length,
     rows: scopedRows,
+    singular,
     warnings: uniqueNonEmptyStrings(
       rowsIncludeItemIds
         ? [...report.warnings, ...adMetadata.warnings, ...resolvedPosts.warnings]
@@ -1387,6 +1399,7 @@ export async function getPaidViewsForCreator(args: {
       discoveryMode: "creator_discovery",
       rowCount: 0,
       rows: [],
+      singular: getDefaultTikTokSingularOverlay(),
       warnings: [
         ...identityResolution.warnings,
         ...advertiserAds.warnings,
@@ -1432,6 +1445,10 @@ export async function getPaidViewsForCreator(args: {
     ads: matchedAds.ads,
     rows: scopedRows,
   });
+  const singular = await getTikTokSingularOverlay({
+    startDate: toDateOnlyString(startDate),
+    endDate: toDateOnlyString(endDate),
+  });
 
   return {
     creatorLabel: creatorName,
@@ -1451,6 +1468,7 @@ export async function getPaidViewsForCreator(args: {
     discoveryMode: "creator_discovery",
     rowCount: scopedRows.length,
     rows: scopedRows,
+    singular,
     warnings: uniqueNonEmptyStrings([
       ...identityResolution.warnings,
       ...advertiserAds.warnings,
