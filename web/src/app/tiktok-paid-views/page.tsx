@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { hasTikTokBusinessOauthEnv } from "@/lib/server-env";
 import {
+  getPaidViewsForCreator,
   getPaidViewsForSparkItems,
   type TikTokPaidViewMetric,
 } from "@/server/tiktok-business/public-reporting";
@@ -139,6 +140,8 @@ export default async function TikTokPaidViewsPage({
   const resolvedSearchParams = await searchParams;
   const creatorLabel = (getSearchParamValue(resolvedSearchParams, "creator") ?? "").trim();
   const itemIdsInput = getSearchParamValue(resolvedSearchParams, "itemIds") ?? "";
+  const hasManualItemIds = itemIdsInput.trim().length > 0;
+  const hasLookupInput = creatorLabel.length > 0 || hasManualItemIds;
   const startDate =
     getSearchParamValue(resolvedSearchParams, "startDate") ?? getDefaultStartDate();
   const endDate =
@@ -294,25 +297,34 @@ export default async function TikTokPaidViewsPage({
   let result: Awaited<ReturnType<typeof getPaidViewsForSparkItems>> | null = null;
   let errorMessage = getSearchParamValue(resolvedSearchParams, "error") ?? null;
 
-  if ((creatorLabel.length > 0 || itemIdsInput.trim().length > 0) && !errorMessage) {
+  if (hasLookupInput && !errorMessage) {
     if (!connection) {
       errorMessage = "Save a TikTok advertiser connection before running a lookup.";
     } else {
       try {
-        result = await getPaidViewsForSparkItems({
-          creatorLabel,
-          advertiserId: connection.advertiserId,
-          accessToken: connection.accessToken,
-          itemIds: itemIdsInput,
-          startDate,
-          endDate,
-          metric,
-        });
+        result = hasManualItemIds
+          ? await getPaidViewsForSparkItems({
+              creatorLabel,
+              advertiserId: connection.advertiserId,
+              accessToken: connection.accessToken,
+              itemIds: itemIdsInput,
+              startDate,
+              endDate,
+              metric,
+            })
+          : await getPaidViewsForCreator({
+              creatorName: creatorLabel,
+              advertiserId: connection.advertiserId,
+              accessToken: connection.accessToken,
+              startDate,
+              endDate,
+              metric,
+            });
       } catch (error) {
         errorMessage =
           error instanceof Error
             ? error.message
-            : "Could not load TikTok paid views for these Spark items.";
+            : "Could not load TikTok paid views for this creator.";
       }
     }
   }
@@ -336,7 +348,8 @@ export default async function TikTokPaidViewsPage({
             </h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
               This page talks directly to TikTok’s reporting API. Save an advertiser
-              ID and access token in an encrypted browser cookie, then query paid
+              ID and access token in an encrypted browser cookie, then either
+              auto-discover a creator’s existing Spark posts or query paid
               delivery by Spark <code>item_id</code> with no workspace database
               required.
             </p>
@@ -382,10 +395,12 @@ export default async function TikTokPaidViewsPage({
             <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
               Creator lookup
             </p>
-            <p className="mt-2 text-sm font-medium text-foreground">Manual Spark item IDs</p>
+            <p className="mt-2 text-sm font-medium text-foreground">
+              Auto-discovery first
+            </p>
             <p className="mt-2 text-xs text-muted-foreground">
-              The creator field is now a label only. Paste the Spark <code>item_id</code>
-              values you want counted.
+              Leave Spark item IDs blank to discover existing Spark ads for a
+              creator. Paste item IDs only when you want manual override.
             </p>
           </div>
           <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
@@ -551,13 +566,13 @@ export default async function TikTokPaidViewsPage({
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
             <label className="block">
               <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                Creator label
+                Creator handle or label
               </span>
               <input
                 className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-white/[0.16]"
                 defaultValue={creatorLabel}
                 name="creator"
-                placeholder="@creator or campaign label"
+                placeholder="@creator"
                 type="text"
               />
             </label>
@@ -569,7 +584,7 @@ export default async function TikTokPaidViewsPage({
                 className="min-h-24 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 py-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-white/[0.16]"
                 defaultValue={itemIdsInput}
                 name="itemIds"
-                placeholder={"Paste comma or newline separated item IDs"}
+                placeholder={"Optional manual override: paste comma or newline separated item IDs"}
               />
             </label>
             <label className="block">
@@ -621,8 +636,9 @@ export default async function TikTokPaidViewsPage({
           </div>
 
           <p className="text-xs text-muted-foreground">
-            The creator field is just a label for the result card. The actual TikTok
-            filter runs on the Spark <code>item_id</code> values you provide.
+            Leave Spark item IDs blank to auto-discover existing Spark ads for the
+            creator from TikTok identities and ads. If you paste item IDs, manual
+            mode wins and the creator field becomes a label again.
           </p>
         </form>
       </section>
@@ -645,9 +661,15 @@ export default async function TikTokPaidViewsPage({
                   {result.creatorLabel}
                 </h2>
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  Paid {metric === "impressions" ? "impressions" : "video plays"} for
-                  the Spark items in the selected date range.
+                  {result.discoveryMode === "manual_item_ids"
+                    ? `Paid ${metric === "impressions" ? "impressions" : "video plays"} for the Spark items you provided.`
+                    : `Paid ${metric === "impressions" ? "impressions" : "video plays"} for the Spark ads TikTok matched to this creator.`}
                 </p>
+                {result.resolvedIdentities.length > 0 ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Resolved via {result.resolvedIdentities.join(", ")}.
+                  </p>
+                ) : null}
               </div>
               <div className="rounded-[1.1rem] border border-[#90FF4D]/20 bg-[#90FF4D]/[0.08] px-4 py-3 text-right">
                 <p className="text-xs uppercase tracking-[0.2em] text-[#D7FFBC]">
@@ -659,13 +681,31 @@ export default async function TikTokPaidViewsPage({
               </div>
             </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
               <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
                 <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
                   Advertiser ID
                 </p>
                 <p className="mt-2 text-sm font-medium text-foreground">
                   {result.advertiserId}
+                </p>
+              </div>
+              <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Match mode
+                </p>
+                <p className="mt-2 text-sm font-medium text-foreground">
+                  {result.discoveryMode === "manual_item_ids"
+                    ? "Manual item IDs"
+                    : "Creator discovery"}
+                </p>
+              </div>
+              <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Matched ads
+                </p>
+                <p className="mt-2 text-sm font-medium text-foreground">
+                  {numberFormatter.format(result.matchedAdIds.length)}
                 </p>
               </div>
               <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
@@ -755,9 +795,9 @@ export default async function TikTokPaidViewsPage({
             )}
           </section>
         </>
-      ) : itemIdsInput.trim().length > 0 && !errorMessage ? (
+      ) : hasLookupInput && !errorMessage ? (
         <section className="rounded-[1.25rem] border border-white/[0.08] bg-white/[0.03] px-4 py-3 text-sm text-muted-foreground">
-          No paid TikTok data matched those Spark item IDs in the selected date range.
+          No paid TikTok data matched this lookup in the selected date range.
         </section>
       ) : null}
     </div>
