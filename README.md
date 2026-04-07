@@ -1,6 +1,6 @@
 # Billion Views
 
-`Billion Views` is a campaign-first SaaS for creator analytics and UGC operations.
+`Billion Views` currently deploys a minimal branded homepage.
 
 The product direction lives in `PRD.md`. The actual application scaffold lives in `web/` so the repo can keep product docs and inspiration assets at the root.
 

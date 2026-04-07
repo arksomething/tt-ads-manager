@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 
-import { publicEnv } from "@/lib/env";
-
 import "./globals.css";
 
 const geistSans = Geist({
@@ -16,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: publicEnv.NEXT_PUBLIC_APP_NAME,
-  description: "Campaign-first SaaS foundation for creator operations.",
+  title: "billionviews",
+  description: "billionviews by superviralstudio",
 };
 
 export default function RootLayout({
