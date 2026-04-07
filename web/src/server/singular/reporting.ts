@@ -12,6 +12,21 @@ const SINGULAR_SOURCE_CACHE_TTL_MS = 60 * 60 * 1_000;
 const SINGULAR_REPORT_CACHE_TTL_MS = 15 * 60 * 1_000;
 const SINGULAR_PENDING_REPORT_TTL_MS = 30 * 60 * 1_000;
 const SINGULAR_STATUS_POLL_INTERVAL_MS = 10_000;
+const SINGULAR_REPORT_DIMENSIONS = [
+  "app",
+  "source",
+  "unified_campaign_id",
+  "unified_campaign_name",
+  "sub_campaign_id",
+  "sub_campaign_name",
+  "adn_creative_id",
+  "adn_creative_name",
+] as const;
+const SINGULAR_REPORT_METRICS = [
+  "adn_cost",
+  "custom_installs",
+  "tracker_conversions",
+] as const;
 
 type CachedValue<T> = {
   expiresAt: number;
@@ -209,6 +224,103 @@ function getRevenueMetricKeys(period: string) {
   ]);
 }
 
+function getNestedNumber(
+  record: Record<string, unknown>,
+  key: string,
+  nestedKeys: string[],
+) {
+  const nestedValue = record[key];
+
+  if (!isRecord(nestedValue)) {
+    return null;
+  }
+
+  for (const nestedKey of nestedKeys) {
+    const value = nestedValue[nestedKey];
+    const numberValue =
+      typeof value === "number"
+        ? value
+        : typeof value === "string"
+          ? Number(value)
+          : null;
+
+    if (typeof numberValue === "number" && Number.isFinite(numberValue)) {
+      return numberValue;
+    }
+  }
+
+  return null;
+}
+
+function getRevenueNumber(record: Record<string, unknown>, period: string) {
+  const directRevenue = getFirstNumber(record, getRevenueMetricKeys(period));
+
+  if (directRevenue > 0) {
+    return directRevenue;
+  }
+
+  const normalizedPeriod = normalizeCohortPeriod(period);
+  return (
+    getNestedNumber(record, "revenue", uniqueNonEmptyStrings([period.trim(), normalizedPeriod])) ?? 0
+  );
+}
+
+function toDateOnlyString(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
+function splitDateRangeIntoChunks(args: {
+  startDate: string;
+  endDate: string;
+  maxDaysInclusive: number;
+}) {
+  const chunks: Array<{
+    startDate: string;
+    endDate: string;
+  }> = [];
+  const finalDate = new Date(`${args.endDate}T00:00:00.000Z`);
+  let cursor = new Date(`${args.startDate}T00:00:00.000Z`);
+
+  while (cursor <= finalDate) {
+    const chunkStart = new Date(cursor);
+    const chunkEnd = new Date(cursor);
+    chunkEnd.setUTCDate(chunkEnd.getUTCDate() + args.maxDaysInclusive - 1);
+
+    if (chunkEnd > finalDate) {
+      chunkEnd.setTime(finalDate.getTime());
+    }
+
+    chunks.push({
+      startDate: toDateOnlyString(chunkStart),
+      endDate: toDateOnlyString(chunkEnd),
+    });
+
+    cursor = new Date(chunkEnd);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return chunks;
+}
+
+function mergeTikTokSingularOverlays(overlays: TikTokSingularOverlay[]) {
+  const firstOverlay = overlays[0];
+
+  if (!firstOverlay) {
+    return getEmptyTikTokSingularOverlay();
+  }
+
+  const rows = overlays.flatMap((overlay) => overlay.rows);
+
+  return {
+    configured: overlays.some((overlay) => overlay.configured),
+    cohortPeriod: firstOverlay.cohortPeriod,
+    sourceNames: firstOverlay.sourceNames,
+    rowCount: rows.length,
+    rows,
+    warnings: uniqueNonEmptyStrings(overlays.flatMap((overlay) => overlay.warnings)),
+  };
+}
+
 function buildRowKey(record: TikTokSingularReportRow) {
   return [
     record.source,
@@ -225,7 +337,7 @@ function buildRowKey(record: TikTokSingularReportRow) {
 
 function normalizeReportRow(record: Record<string, unknown>, cohortPeriod: string) {
   const spend = getFirstNumber(record, ["adn_cost"]);
-  const revenue = getFirstNumber(record, getRevenueMetricKeys(cohortPeriod));
+  const revenue = getRevenueNumber(record, cohortPeriod);
   const installs = getFirstNumber(record, ["custom_installs", "tracker_installs", "adn_installs"]);
   const conversions = getFirstNumber(record, ["tracker_conversions"]);
 
@@ -409,32 +521,81 @@ function buildSingularReportQuery(args: {
     timeBreakdown: "all",
     sourceNames: args.sourceNames,
     appNames: args.appNames,
-    dimensions: [
-      "app",
-      "source",
-      "unified_campaign_id",
-      "unified_campaign_name",
-      "sub_campaign_id",
-      "sub_campaign_name",
-      "adn_creative_id",
-      "adn_creative_name",
-      "creative_url",
-      "creative_image",
-      "creative_is_video",
-      "asset_id",
-      "asset_name",
-    ],
-    metrics: [
-      "adn_cost",
-      "adn_original_currency",
-      "custom_installs",
-      "tracker_conversions",
-    ],
+    dimensions: [...SINGULAR_REPORT_DIMENSIONS],
+    metrics: [...SINGULAR_REPORT_METRICS],
     cohortMetrics: ["revenue"],
     cohortPeriods: [args.cohortPeriod],
     displayUnenriched: true,
     format: "json",
   };
+}
+
+async function getTikTokSingularOverlayForRange(args: {
+  startDate: string;
+  endDate: string;
+  cohortPeriod: string;
+  sourceNames: string[];
+  appNames: string[];
+}): Promise<TikTokSingularOverlay> {
+  const cacheKey = buildReportCacheKey({
+    startDate: args.startDate,
+    endDate: args.endDate,
+    cohortPeriod: args.cohortPeriod,
+    sourceNames: args.sourceNames,
+    appNames: args.appNames,
+  });
+  const cached = readReportCache(cacheKey);
+
+  if (cached?.kind === "ready") {
+    return cached.value;
+  }
+
+  if (cached?.kind === "pending") {
+    return completePendingReport(cacheKey, cached);
+  }
+
+  const query = buildSingularReportQuery({
+    startDate: args.startDate,
+    endDate: args.endDate,
+    cohortPeriod: args.cohortPeriod,
+    sourceNames: args.sourceNames,
+    appNames: args.appNames,
+  });
+
+  try {
+    const reportId = await singularClient.createAsyncReport(query);
+    const pendingEntry: SingularPendingReportCacheEntry = {
+      kind: "pending",
+      expiresAt: Date.now() + SINGULAR_PENDING_REPORT_TTL_MS,
+      reportId,
+      query,
+      sourceNames: args.sourceNames,
+      appNames: args.appNames,
+      cohortPeriod: args.cohortPeriod,
+      lastPolledAt: Date.now(),
+    };
+
+    singularReportCache.set(cacheKey, pendingEntry);
+    await sleep(SINGULAR_STATUS_POLL_INTERVAL_MS);
+
+    return completePendingReport(cacheKey, {
+      ...pendingEntry,
+      lastPolledAt: 0,
+    });
+  } catch (error) {
+    singularReportCache.delete(cacheKey);
+
+    return getEmptyTikTokSingularOverlay({
+      configured: true,
+      cohortPeriod: args.cohortPeriod,
+      sourceNames: args.sourceNames,
+      warnings: [
+        error instanceof SingularApiError || error instanceof Error
+          ? error.message
+          : "Could not load Singular reporting for this date window.",
+      ],
+    });
+  }
 }
 
 async function completePendingReport(
@@ -507,6 +668,7 @@ async function completePendingReport(
       sourceNames: entry.sourceNames,
       warnings: [
         status.error ??
+          status.error_message ??
           status.message ??
           "Singular failed to prepare the creative report for this date window.",
       ],
@@ -565,77 +727,29 @@ export async function getTikTokSingularOverlay(args: {
   }
 
   const rangeDays = getInclusiveDateRangeDays(args.startDate, args.endDate);
+  const dateChunks =
+    rangeDays > MAX_SINGULAR_REPORT_RANGE_DAYS
+      ? splitDateRangeIntoChunks({
+          startDate: args.startDate,
+          endDate: args.endDate,
+          maxDaysInclusive: MAX_SINGULAR_REPORT_RANGE_DAYS,
+        })
+      : [{ startDate: args.startDate, endDate: args.endDate }];
+  const overlays: TikTokSingularOverlay[] = [];
 
-  if (rangeDays > MAX_SINGULAR_REPORT_RANGE_DAYS) {
-    return getEmptyTikTokSingularOverlay({
-      configured: true,
-      cohortPeriod: env.SINGULAR_COHORT_PERIOD,
-      sourceNames,
-      warnings: [
-        `Singular overlay currently runs on ranges up to ${MAX_SINGULAR_REPORT_RANGE_DAYS} days at a time. Narrow the date window to fetch creative-level metrics.`,
-      ],
-    });
+  for (const chunk of dateChunks) {
+    overlays.push(
+      await getTikTokSingularOverlayForRange({
+        startDate: chunk.startDate,
+        endDate: chunk.endDate,
+        cohortPeriod: env.SINGULAR_COHORT_PERIOD,
+        sourceNames,
+        appNames,
+      }),
+    );
   }
 
-  const cacheKey = buildReportCacheKey({
-    startDate: args.startDate,
-    endDate: args.endDate,
-    cohortPeriod: env.SINGULAR_COHORT_PERIOD,
-    sourceNames,
-    appNames,
-  });
-  const cached = readReportCache(cacheKey);
-
-  if (cached?.kind === "ready") {
-    return cached.value;
-  }
-
-  if (cached?.kind === "pending") {
-    return completePendingReport(cacheKey, cached);
-  }
-
-  const query = buildSingularReportQuery({
-    startDate: args.startDate,
-    endDate: args.endDate,
-    cohortPeriod: env.SINGULAR_COHORT_PERIOD,
-    sourceNames,
-    appNames,
-  });
-
-  try {
-    const reportId = await singularClient.createAsyncReport(query);
-    const pendingEntry: SingularPendingReportCacheEntry = {
-      kind: "pending",
-      expiresAt: Date.now() + SINGULAR_PENDING_REPORT_TTL_MS,
-      reportId,
-      query,
-      sourceNames,
-      appNames,
-      cohortPeriod: env.SINGULAR_COHORT_PERIOD,
-      lastPolledAt: Date.now(),
-    };
-
-    singularReportCache.set(cacheKey, pendingEntry);
-    await sleep(SINGULAR_STATUS_POLL_INTERVAL_MS);
-
-    return completePendingReport(cacheKey, {
-      ...pendingEntry,
-      lastPolledAt: 0,
-    });
-  } catch (error) {
-    singularReportCache.delete(cacheKey);
-
-    return getEmptyTikTokSingularOverlay({
-      configured: true,
-      cohortPeriod: env.SINGULAR_COHORT_PERIOD,
-      sourceNames,
-      warnings: [
-        error instanceof SingularApiError || error instanceof Error
-          ? error.message
-          : "Could not load Singular reporting for this date window.",
-      ],
-    });
-  }
+  return mergeTikTokSingularOverlays(overlays);
 }
 
 export function getDefaultTikTokSingularOverlay() {

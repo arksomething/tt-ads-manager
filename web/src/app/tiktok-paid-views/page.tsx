@@ -675,7 +675,7 @@ function getSingularMatchBadgeLabel(metrics: TikTokSingularGroupMetrics) {
     case "exact_post_url":
       return "Exact URL";
     case "name_fallback":
-      return "Name fallback";
+      return "Ad-level fallback";
     default:
       return "Unavailable";
   }
@@ -692,7 +692,7 @@ function getSingularMatchDescription(metrics: TikTokSingularGroupMetrics) {
     case "exact_post_url":
       return `Matched ${metrics.matchedRowCount} Singular creative row${metrics.matchedRowCount === 1 ? "" : "s"} from the TikTok post URL.`;
     case "name_fallback":
-      return `Matched ${metrics.matchedRowCount} Singular creative row${metrics.matchedRowCount === 1 ? "" : "s"} by creative name only.`;
+      return `Matched ${metrics.matchedRowCount} Singular creative row${metrics.matchedRowCount === 1 ? "" : "s"} by ad or creative name.`;
     default:
       return "No trustworthy Singular creative match for this grouped result.";
   }

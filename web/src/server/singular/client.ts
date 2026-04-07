@@ -32,6 +32,7 @@ export type SingularReportStatusValue = {
   url_expired_time_in_utc?: string;
   message?: string;
   error?: string;
+  error_message?: string;
 };
 
 export type SingularFilterDimensionValue = {
