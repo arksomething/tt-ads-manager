@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -9,6 +10,7 @@ import {
   type TikTokMatchedAd,
   type TikTokPaidViewMetric,
   type TikTokPaidViewsRow,
+  type TikTokResolvedPost,
 } from "@/server/tiktok-business/public-reporting";
 import {
   createTikTokPublicConnectionCookieValue,
@@ -152,11 +154,40 @@ function getBestAdLabel(ad: TikTokMatchedAd) {
   return `Ad ${ad.adId}`;
 }
 
+function getBestPostTitle(post: TikTokResolvedPost) {
+  const title = post.title?.trim();
+  return title && title.length > 0 ? title : `Video ${post.itemId}`;
+}
+
+function getPrimaryResolvedPost(posts: readonly TikTokResolvedPost[]) {
+  return (
+    posts.find((post) => Boolean(post.title?.trim() || post.coverUrl || post.shareUrl)) ??
+    posts[0] ??
+    null
+  );
+}
+
+function getResolvedPostsForMatchedAds(matchedAds: readonly TikTokMatchedAd[]) {
+  const postsByItemId = new Map<string, TikTokResolvedPost>();
+
+  for (const ad of matchedAds) {
+    for (const post of ad.resolvedPosts) {
+      if (!postsByItemId.has(post.itemId)) {
+        postsByItemId.set(post.itemId, post);
+      }
+    }
+  }
+
+  return [...postsByItemId.values()].sort((left, right) => left.itemId.localeCompare(right.itemId));
+}
+
 type TikTokMatchedGroupAd = {
   adId: string;
   adLabel: string;
   itemIds: string[];
   totalValue: number;
+  resolvedPosts: TikTokResolvedPost[];
+  primaryPost: TikTokResolvedPost | null;
 };
 
 type TikTokMatchedGroupPoint = {
@@ -178,12 +209,14 @@ type TikTokMatchedGroup = {
   rows: TikTokPaidViewsRow[];
   dailyPoints: TikTokMatchedGroupPoint[];
   ads: TikTokMatchedGroupAd[];
+  resolvedPosts: TikTokResolvedPost[];
+  primaryPost: TikTokResolvedPost | null;
 };
 
 function buildMatchedGroups(args: {
   rows: TikTokPaidViewsRow[];
   matchedAds: TikTokMatchedAd[];
-}) {
+}): TikTokMatchedGroup[] {
   const adMetadata = new Map(args.matchedAds.map((ad) => [ad.adId, ad] as const));
   const perAdGroups = new Map<
     string,
@@ -241,11 +274,16 @@ function buildMatchedGroups(args: {
     const isVideoGroup = itemIds.length === 1;
     const key = isVideoGroup ? `video:${itemIds[0]}` : `creative:${adGroup.adId}`;
     const existingGroup = groupedMatches.get(key);
+    const resolvedPosts = [...(adMetadata.get(adGroup.adId)?.resolvedPosts ?? [])].sort(
+      (left, right) => left.itemId.localeCompare(right.itemId),
+    );
     const adSummary = {
       adId: adGroup.adId,
       adLabel: adGroup.adLabel,
       itemIds,
       totalValue: adGroup.totalValue,
+      resolvedPosts,
+      primaryPost: getPrimaryResolvedPost(resolvedPosts),
     };
 
     if (existingGroup) {
@@ -278,6 +316,7 @@ function buildMatchedGroups(args: {
       );
       const itemIds = [...group.itemIds].sort();
       const dailyPointMap = new Map<string, TikTokMatchedGroupPoint>();
+      const resolvedPostsByItemId = new Map<string, TikTokResolvedPost>();
 
       for (const row of sortedRows) {
         const key = row.statDate ?? `unknown-${group.key}`;
@@ -294,21 +333,42 @@ function buildMatchedGroups(args: {
         });
       }
 
+      for (const ad of group.ads) {
+        for (const post of ad.resolvedPosts) {
+          if (!resolvedPostsByItemId.has(post.itemId)) {
+            resolvedPostsByItemId.set(post.itemId, post);
+          }
+        }
+      }
+
       const dailyPoints = [...dailyPointMap.values()].sort(
         (left, right) =>
           getReportDateSortValue(left.date) - getReportDateSortValue(right.date),
       );
+      const resolvedPosts = [...resolvedPostsByItemId.values()].sort(
+        (left, right) => left.itemId.localeCompare(right.itemId),
+      );
+      const primaryPost =
+        group.kind === "video"
+          ? (itemIds[0] ? resolvedPostsByItemId.get(itemIds[0]) : null) ??
+            getPrimaryResolvedPost(resolvedPosts)
+          : getPrimaryResolvedPost(resolvedPosts);
       const leadAd = group.ads[0];
       const title =
         group.kind === "video"
-          ? leadAd && !leadAd.adLabel.startsWith("Ad ")
+          ? primaryPost
+            ? getBestPostTitle(primaryPost)
+            : leadAd && !leadAd.adLabel.startsWith("Ad ")
             ? leadAd.adLabel
             : `Video ${itemIds[0]}`
-          : leadAd?.adLabel ?? `Ad ${leadAd?.adId ?? "Unknown"}`;
+          : leadAd?.adLabel ??
+            (primaryPost ? getBestPostTitle(primaryPost) : `Ad ${leadAd?.adId ?? "Unknown"}`);
       const subtitle =
         group.kind === "video"
           ? `Video ID ${itemIds[0]}${group.ads.length > 1 ? ` · ${group.ads.length} ads` : ""}`
-          : `Ad ID ${leadAd?.adId ?? "Unknown"}`;
+          : primaryPost
+            ? `Lead post ${primaryPost.itemId} · Ad ID ${leadAd?.adId ?? "Unknown"}`
+            : `Ad ID ${leadAd?.adId ?? "Unknown"}`;
 
       return {
         key: group.key,
@@ -327,6 +387,8 @@ function buildMatchedGroups(args: {
           (left, right) =>
             right.totalValue - left.totalValue || left.adId.localeCompare(right.adId),
         ),
+        resolvedPosts,
+        primaryPost,
       };
     })
     .sort(
@@ -665,6 +727,8 @@ export default async function TikTokPaidViewsPage({
     rows: visibleRows,
     matchedAds: result?.matchedAds ?? [],
   });
+  const resolvedPosts = getResolvedPostsForMatchedAds(result?.matchedAds ?? []);
+  const resolvedPostCount = resolvedPosts.length;
   const knownVideoGroupCount = matchedGroups.filter((group) => group.kind === "video").length;
   const creativeOnlyGroupCount = matchedGroups.length - knownVideoGroupCount;
 
@@ -1009,6 +1073,12 @@ export default async function TikTokPaidViewsPage({
                     Resolved via {result.resolvedIdentities.join(", ")}.
                   </p>
                 ) : null}
+                {result.matchedSparkItemIds.length > 0 ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Exact post info resolved for {numberFormatter.format(resolvedPostCount)} of{" "}
+                    {numberFormatter.format(result.matchedSparkItemIds.length)} known video IDs.
+                  </p>
+                ) : null}
               </div>
               <div className="rounded-[1.1rem] border border-[#90FF4D]/20 bg-[#90FF4D]/[0.08] px-4 py-3 text-right">
                 <p className="text-xs uppercase tracking-[0.2em] text-[#D7FFBC]">
@@ -1123,26 +1193,40 @@ export default async function TikTokPaidViewsPage({
                   >
                     <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
                       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                        <div>
-                          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                            {group.kind === "video" ? "Matched video" : "Matched creative"}
-                          </p>
-                          <h4 className="mt-2 text-base font-medium text-foreground">
-                            {group.title}
-                          </h4>
-                          <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                            {group.subtitle}
-                          </p>
-                          <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                            {group.kind === "video"
-                              ? `Underlying ads: ${group.ads
-                                  .map((ad) => ad.adLabel)
-                                  .slice(0, 2)
-                                  .join(", ")}${group.ads.length > 2 ? ` +${group.ads.length - 2} more` : ""}`
-                              : group.itemIds.length > 0
-                                ? `Spark item IDs: ${summarizeItemIds(group.itemIds)}`
-                                : "TikTok did not return a Spark video ID for this creative."}
-                          </p>
+                        <div className="flex gap-4">
+                          {group.kind === "video" && group.primaryPost?.coverUrl ? (
+                            <div className="h-24 w-[72px] overflow-hidden rounded-[0.95rem] border border-white/[0.08] bg-black/[0.2]">
+                              <img
+                                alt={`Cover for ${getBestPostTitle(group.primaryPost)}`}
+                                className="h-full w-full object-cover"
+                                loading="lazy"
+                                src={group.primaryPost.coverUrl}
+                              />
+                            </div>
+                          ) : null}
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                              {group.kind === "video" ? "Matched video" : "Matched creative"}
+                            </p>
+                            <h4 className="mt-2 text-base font-medium text-foreground">
+                              {group.title}
+                            </h4>
+                            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                              {group.subtitle}
+                            </p>
+                            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                              {group.kind === "video"
+                                ? `Underlying ads: ${group.ads
+                                    .map((ad) => ad.adLabel)
+                                    .slice(0, 2)
+                                    .join(", ")}${group.ads.length > 2 ? ` +${group.ads.length - 2} more` : ""}`
+                                : group.resolvedPosts.length > 0
+                                  ? `Resolved posts: ${numberFormatter.format(group.resolvedPosts.length)} · Spark item IDs: ${summarizeItemIds(group.itemIds)}`
+                                  : group.itemIds.length > 0
+                                    ? `Spark item IDs: ${summarizeItemIds(group.itemIds)}`
+                                    : "TikTok did not return a Spark video ID for this creative."}
+                            </p>
+                          </div>
                         </div>
                         <div className="rounded-[1rem] border border-[#90FF4D]/20 bg-[#90FF4D]/[0.08] px-4 py-3 text-right">
                           <p className="text-xs uppercase tracking-[0.2em] text-[#D7FFBC]">
@@ -1166,6 +1250,58 @@ export default async function TikTokPaidViewsPage({
                     </summary>
 
                     <div className="mt-4 border-t border-white/[0.08] pt-4">
+                      {group.resolvedPosts.length > 0 ? (
+                        <div className="mb-4">
+                          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                            Resolved TikTok posts
+                          </p>
+                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            {group.resolvedPosts.map((post) => (
+                              <div
+                                className="rounded-[1rem] border border-white/[0.08] bg-black/[0.2] p-4"
+                                key={post.itemId}
+                              >
+                                <div className="flex gap-4">
+                                  {post.coverUrl ? (
+                                    <div className="h-24 w-[72px] overflow-hidden rounded-[0.9rem] border border-white/[0.08] bg-black/[0.28]">
+                                      <img
+                                        alt={`Cover for ${getBestPostTitle(post)}`}
+                                        className="h-full w-full object-cover"
+                                        loading="lazy"
+                                        src={post.coverUrl}
+                                      />
+                                    </div>
+                                  ) : null}
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-medium text-foreground">
+                                      {getBestPostTitle(post)}
+                                    </p>
+                                    <p className="mt-2 text-xs text-muted-foreground">
+                                      Video ID {post.itemId}
+                                    </p>
+                                    {post.createTime ? (
+                                      <p className="mt-2 text-xs text-muted-foreground">
+                                        Posted {formatDate(post.createTime)}
+                                      </p>
+                                    ) : null}
+                                    {post.shareUrl ? (
+                                      <a
+                                        className="mt-3 inline-flex min-h-9 items-center rounded-[0.85rem] border border-white/[0.12] bg-black/[0.24] px-3 text-xs font-medium text-foreground transition hover:border-white/[0.2]"
+                                        href={post.shareUrl}
+                                        rel="noreferrer"
+                                        target="_blank"
+                                      >
+                                        Open TikTok post
+                                      </a>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
                       <DailyMetricChart
                         metricLabel={metricCopy.rowValueLabel}
                         points={group.dailyPoints}
@@ -1208,21 +1344,50 @@ export default async function TikTokPaidViewsPage({
                               className="rounded-[1rem] border border-white/[0.08] bg-black/[0.2] p-4"
                               key={ad.adId}
                             >
-                              <p className="text-sm font-medium text-foreground">
-                                {ad.adLabel}
-                              </p>
-                              <p className="mt-2 text-xs text-muted-foreground">
-                                Ad ID {ad.adId}
-                              </p>
-                              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                                {ad.itemIds.length > 0
-                                  ? `Spark item IDs: ${summarizeItemIds(ad.itemIds)}`
-                                  : "TikTok did not return a Spark video ID for this ad."}
-                              </p>
-                              <p className="mt-3 text-sm font-medium text-foreground">
-                                {numberFormatter.format(ad.totalValue)}{" "}
-                                {metricCopy.rowValueLabel.toLowerCase()}
-                              </p>
+                              <div className="flex gap-4">
+                                {ad.primaryPost?.coverUrl ? (
+                                  <div className="h-20 w-[60px] overflow-hidden rounded-[0.85rem] border border-white/[0.08] bg-black/[0.28]">
+                                    <img
+                                      alt={`Cover for ${getBestPostTitle(ad.primaryPost)}`}
+                                      className="h-full w-full object-cover"
+                                      loading="lazy"
+                                      src={ad.primaryPost.coverUrl}
+                                    />
+                                  </div>
+                                ) : null}
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium text-foreground">
+                                    {ad.adLabel}
+                                  </p>
+                                  <p className="mt-2 text-xs text-muted-foreground">
+                                    Ad ID {ad.adId}
+                                  </p>
+                                  {ad.primaryPost ? (
+                                    <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                                      Resolved post: {getBestPostTitle(ad.primaryPost)}
+                                    </p>
+                                  ) : null}
+                                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                                    {ad.itemIds.length > 0
+                                      ? `Spark item IDs: ${summarizeItemIds(ad.itemIds)}`
+                                      : "TikTok did not return a Spark video ID for this ad."}
+                                  </p>
+                                  {ad.primaryPost?.shareUrl ? (
+                                    <a
+                                      className="mt-3 inline-flex min-h-8 items-center rounded-[0.8rem] border border-white/[0.12] bg-black/[0.24] px-3 text-xs font-medium text-foreground transition hover:border-white/[0.2]"
+                                      href={ad.primaryPost.shareUrl}
+                                      rel="noreferrer"
+                                      target="_blank"
+                                    >
+                                      Open TikTok post
+                                    </a>
+                                  ) : null}
+                                  <p className="mt-3 text-sm font-medium text-foreground">
+                                    {numberFormatter.format(ad.totalValue)}{" "}
+                                    {metricCopy.rowValueLabel.toLowerCase()}
+                                  </p>
+                                </div>
+                              </div>
                             </div>
                           ))}
                         </div>

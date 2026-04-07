@@ -27,6 +27,16 @@ const AD_GET_FIELDS_CANDIDATES: Array<readonly string[] | undefined> = [
   ["ad_id", "ad_name", "identity_id", "identity_type"],
   undefined,
 ] as const;
+const MAX_VIDEO_INFO_LOOKUPS = 20;
+const VIDEO_INFO_LOOKUP_BATCH_SIZE = 2;
+const VIDEO_INFO_LOOKUP_BATCH_DELAY_MS = 500;
+const METADATA_CACHE_TTL_MS = 5 * 60 * 1_000;
+const RESOLVED_POST_CACHE_TTL_MS = 15 * 60 * 1_000;
+const SUPPORTED_VIDEO_INFO_IDENTITY_TYPES = new Set([
+  "AUTH_CODE",
+  "TT_USER",
+  "BC_AUTH_TT",
+]);
 
 const paidViewMetricMap = {
   impressions: "impressions",
@@ -74,11 +84,44 @@ type TikTokAdRecord = {
   raw: Record<string, unknown>;
 };
 
+type TikTokVideoInfoIdentityType = "AUTH_CODE" | "TT_USER" | "BC_AUTH_TT";
+
+type TikTokVideoLookupContext = {
+  itemId: string;
+  identityId: string;
+  identityType: TikTokVideoInfoIdentityType;
+  identityAuthorizedBcId: string | null;
+};
+
+export type TikTokResolvedPost = {
+  itemId: string;
+  title: string | null;
+  coverUrl: string | null;
+  shareUrl: string | null;
+  createTime: string | null;
+};
+
+type CachedValue<T> = {
+  expiresAt: number;
+  value: T;
+};
+
+const advertiserIdentityCache = new Map<string, CachedValue<TikTokIdentityRecord[]>>();
+const advertiserAdsCache = new Map<
+  string,
+  CachedValue<{
+    ads: TikTokAdRecord[];
+    warnings: string[];
+  }>
+>();
+const resolvedPostCache = new Map<string, CachedValue<TikTokResolvedPost | null>>();
+
 export type TikTokMatchedAd = {
   adId: string;
   adName: string | null;
   displayName: string | null;
   itemIds: string[];
+  resolvedPosts: TikTokResolvedPost[];
 };
 
 export type TikTokPaidViewsRow = {
@@ -125,6 +168,22 @@ function getFirstString(records: Array<Record<string, unknown> | null>, keys: st
 
       if (typeof value === "number" && Number.isFinite(value)) {
         return String(value);
+      }
+
+      if (Array.isArray(value)) {
+        const primitiveValue = value.find(
+          (entry) =>
+            (typeof entry === "string" && entry.trim().length > 0) ||
+            (typeof entry === "number" && Number.isFinite(entry)),
+        );
+
+        if (typeof primitiveValue === "string") {
+          return primitiveValue;
+        }
+
+        if (typeof primitiveValue === "number") {
+          return String(primitiveValue);
+        }
       }
     }
   }
@@ -264,6 +323,161 @@ function normalizeAdRecord(record: Record<string, unknown>): TikTokAdRecord | nu
   };
 }
 
+function normalizeVideoInfoIdentityType(
+  value: string | null,
+): TikTokVideoInfoIdentityType | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toUpperCase();
+  return SUPPORTED_VIDEO_INFO_IDENTITY_TYPES.has(normalized)
+    ? (normalized as TikTokVideoInfoIdentityType)
+    : null;
+}
+
+function normalizeResolvedPost(
+  record: Record<string, unknown>,
+  fallbackItemId?: string,
+): TikTokResolvedPost | null {
+  const candidates = [
+    record,
+    ...getNestedRecordCandidates(record, [
+      "video_info",
+      "videoInfo",
+      "item_info",
+      "itemInfo",
+      "post_info",
+      "postInfo",
+      "share_info",
+      "shareInfo",
+    ]),
+  ];
+  const itemId =
+    getFirstString(candidates, [
+      "item_id",
+      "itemId",
+      "tiktok_item_id",
+      "tiktokItemId",
+      "aweme_item_id",
+      "awemeItemId",
+    ]) ?? fallbackItemId ?? null;
+
+  if (!itemId) {
+    return null;
+  }
+
+  return {
+    itemId,
+    title: getFirstString(candidates, [
+      "title",
+      "video_title",
+      "videoTitle",
+      "video_name",
+      "videoName",
+      "caption",
+      "description",
+      "desc",
+      "name",
+      "display_name",
+      "displayName",
+    ]),
+    coverUrl: getFirstString(candidates, [
+      "cover_url",
+      "coverUrl",
+      "video_cover_url",
+      "videoCoverUrl",
+      "poster_url",
+      "posterUrl",
+      "cover_image_url",
+      "coverImageUrl",
+      "thumbnail_url",
+      "thumbnailUrl",
+      "image_url",
+      "imageUrl",
+    ]),
+    shareUrl: getFirstString(candidates, [
+      "share_url",
+      "shareUrl",
+      "video_share_url",
+      "videoShareUrl",
+      "tiktok_url",
+      "tiktokUrl",
+      "permalink",
+      "permalink_url",
+      "permalinkUrl",
+      "url",
+    ]),
+    createTime: getFirstString(candidates, [
+      "create_time",
+      "createTime",
+      "publish_time",
+      "publishTime",
+      "published_at",
+      "publishedAt",
+      "post_time",
+      "postTime",
+    ]),
+  };
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function readCachedValue<T>(cache: Map<string, CachedValue<T>>, key: string) {
+  const cached = cache.get(key);
+
+  if (!cached) {
+    return { found: false as const };
+  }
+
+  if (cached.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return { found: false as const };
+  }
+
+  return {
+    found: true as const,
+    value: cached.value,
+  };
+}
+
+function writeCachedValue<T>(
+  cache: Map<string, CachedValue<T>>,
+  key: string,
+  value: T,
+  ttlMs: number,
+) {
+  cache.set(key, {
+    expiresAt: Date.now() + ttlMs,
+    value,
+  });
+}
+
+function buildMetadataCacheKey(args: {
+  advertiserId: string;
+  accessToken: string;
+}) {
+  return `${args.advertiserId}:${args.accessToken}`;
+}
+
+function buildResolvedPostCacheKey(args: {
+  advertiserId: string;
+  itemId: string;
+  identityId: string;
+  identityType: TikTokVideoInfoIdentityType;
+  identityAuthorizedBcId: string | null;
+}) {
+  return [
+    args.advertiserId,
+    args.identityId,
+    args.identityType,
+    args.identityAuthorizedBcId ?? "",
+    args.itemId,
+  ].join(":");
+}
+
 function parseDateInput(value: QueryDateInput, label: string) {
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) {
@@ -353,7 +567,9 @@ function normalizeReportRow(row: TikTokIntegratedReportRow, apiMetricName: strin
 function buildMatchedAdSummaries(args: {
   ads?: readonly TikTokAdRecord[];
   rows?: readonly TikTokPaidViewsRow[];
+  resolvedPostsByItemId?: ReadonlyMap<string, TikTokResolvedPost>;
 }) {
+  const resolvedPostsByItemId = args.resolvedPostsByItemId ?? new Map();
   const summaries = new Map<
     string,
     {
@@ -368,6 +584,9 @@ function buildMatchedAdSummaries(args: {
     const existingSummary = summaries.get(ad.adId);
 
     if (existingSummary) {
+      existingSummary.adName ??= ad.adName;
+      existingSummary.displayName ??= ad.displayName;
+
       if (ad.tiktokItemId) {
         existingSummary.itemIds.add(ad.tiktokItemId);
       }
@@ -411,7 +630,11 @@ function buildMatchedAdSummaries(args: {
       adId: summary.adId,
       adName: summary.adName,
       displayName: summary.displayName,
-      itemIds: [...summary.itemIds],
+      itemIds: [...summary.itemIds].sort(),
+      resolvedPosts: [...summary.itemIds]
+        .sort()
+        .map((itemId) => resolvedPostsByItemId.get(itemId))
+        .filter((post): post is TikTokResolvedPost => Boolean(post)),
     }))
     .sort((left, right) => left.adId.localeCompare(right.adId));
 }
@@ -511,6 +734,13 @@ async function fetchAdvertiserIdentities(args: {
   advertiserId: string;
   accessToken: string;
 }) {
+  const cacheKey = buildMetadataCacheKey(args);
+  const cached = readCachedValue(advertiserIdentityCache, cacheKey);
+
+  if (cached.found) {
+    return cached.value;
+  }
+
   const identities: TikTokIdentityRecord[] = [];
   let totalPages = 1;
 
@@ -542,6 +772,8 @@ async function fetchAdvertiserIdentities(args: {
       break;
     }
   }
+
+  writeCachedValue(advertiserIdentityCache, cacheKey, identities, METADATA_CACHE_TTL_MS);
 
   return identities;
 }
@@ -662,6 +894,13 @@ async function fetchAdvertiserAds(args: {
   advertiserId: string;
   accessToken: string;
 }) {
+  const cacheKey = buildMetadataCacheKey(args);
+  const cached = readCachedValue(advertiserAdsCache, cacheKey);
+
+  if (cached.found) {
+    return cached.value;
+  }
+
   let lastError: unknown = null;
 
   for (const [index, fields] of AD_GET_FIELDS_CANDIDATES.entries()) {
@@ -672,7 +911,7 @@ async function fetchAdvertiserAds(args: {
         fields,
       });
 
-      return {
+      const result = {
         ads,
         warnings:
           index > 0
@@ -681,6 +920,10 @@ async function fetchAdvertiserAds(args: {
               ]
             : [],
       };
+
+      writeCachedValue(advertiserAdsCache, cacheKey, result, METADATA_CACHE_TTL_MS);
+
+      return result;
     } catch (error) {
       lastError = error;
     }
@@ -689,6 +932,261 @@ async function fetchAdvertiserAds(args: {
   throw lastError instanceof Error
     ? lastError
     : new Error("Could not load TikTok ads for this advertiser.");
+}
+
+async function fetchMatchedAdsByIdsBestEffort(args: {
+  advertiserId: string;
+  accessToken: string;
+  adIds: readonly string[];
+}) {
+  if (args.adIds.length === 0) {
+    return {
+      ads: [] as TikTokAdRecord[],
+      warnings: [] as string[],
+    };
+  }
+
+  try {
+    const advertiserAds = await fetchAdvertiserAds({
+      advertiserId: args.advertiserId,
+      accessToken: args.accessToken,
+    });
+    const adIdSet = new Set(args.adIds);
+    const matchedAds = advertiserAds.ads.filter((ad) => adIdSet.has(ad.adId));
+
+    return {
+      ads: matchedAds,
+      warnings: uniqueNonEmptyStrings([
+        ...advertiserAds.warnings,
+        ...(matchedAds.length < adIdSet.size
+          ? [
+              "TikTok only returned ad metadata for some matched rows, so a few cards may still show raw ad IDs.",
+            ]
+          : []),
+      ]),
+    };
+  } catch {
+    return {
+      ads: [] as TikTokAdRecord[],
+      warnings: [
+        "Could not load TikTok ad metadata to enrich the matched rows with ad names or post details.",
+      ],
+    };
+  }
+}
+
+function buildVideoLookupContexts(args: {
+  ads?: readonly TikTokAdRecord[];
+  rows?: readonly TikTokPaidViewsRow[];
+}) {
+  const rowItemIdsByAdId = new Map<string, Set<string>>();
+  const candidateItemIds = new Set<string>();
+
+  for (const row of args.rows ?? []) {
+    if (row.itemId) {
+      candidateItemIds.add(row.itemId);
+    }
+
+    if (!row.adId || !row.itemId) {
+      continue;
+    }
+
+    const existingSet = rowItemIdsByAdId.get(row.adId);
+
+    if (existingSet) {
+      existingSet.add(row.itemId);
+      continue;
+    }
+
+    rowItemIdsByAdId.set(row.adId, new Set([row.itemId]));
+  }
+
+  const contexts = new Map<string, TikTokVideoLookupContext>();
+
+  for (const ad of args.ads ?? []) {
+    const itemIds = uniqueNonEmptyStrings([
+      ad.tiktokItemId,
+      ...(rowItemIdsByAdId.has(ad.adId) ? [...(rowItemIdsByAdId.get(ad.adId) ?? [])] : []),
+    ]);
+
+    for (const itemId of itemIds) {
+      candidateItemIds.add(itemId);
+    }
+
+    const identityType = normalizeVideoInfoIdentityType(ad.identityType);
+
+    if (
+      itemIds.length === 0 ||
+      !ad.identityId ||
+      !identityType ||
+      (identityType === "BC_AUTH_TT" && !ad.identityAuthorizedBcId)
+    ) {
+      continue;
+    }
+
+    for (const itemId of itemIds) {
+      if (!contexts.has(itemId)) {
+        contexts.set(itemId, {
+          itemId,
+          identityId: ad.identityId,
+          identityType,
+          identityAuthorizedBcId: ad.identityAuthorizedBcId,
+        });
+      }
+    }
+  }
+
+  return {
+    candidateItemIds: [...candidateItemIds].sort(),
+    contexts,
+  };
+}
+
+async function fetchIdentityVideoInfo(args: {
+  advertiserId: string;
+  accessToken: string;
+  itemId: string;
+  identityId: string;
+  identityType: TikTokVideoInfoIdentityType;
+  identityAuthorizedBcId: string | null;
+}) {
+  const cacheKey = buildResolvedPostCacheKey(args);
+  const cached = readCachedValue(resolvedPostCache, cacheKey);
+
+  if (cached.found) {
+    return cached.value;
+  }
+
+  const payload = await requestTikTokBusinessApi<Record<string, unknown> | null>({
+    accessToken: args.accessToken,
+    method: "GET",
+    path: "/open_api/v1.3/identity/video/info/",
+    query: {
+      advertiser_id: args.advertiserId,
+      identity_type: args.identityType,
+      identity_id: args.identityId,
+      item_id: args.itemId,
+      ...(args.identityType === "BC_AUTH_TT" && args.identityAuthorizedBcId
+        ? {
+            identity_authorized_bc_id: args.identityAuthorizedBcId,
+          }
+        : {}),
+    },
+  });
+
+  const resolvedPost = normalizeResolvedPost(isRecord(payload) ? payload : {}, args.itemId);
+  writeCachedValue(resolvedPostCache, cacheKey, resolvedPost, RESOLVED_POST_CACHE_TTL_MS);
+  return resolvedPost;
+}
+
+async function fetchResolvedPostsForAds(args: {
+  advertiserId: string;
+  accessToken: string;
+  ads?: readonly TikTokAdRecord[];
+  rows?: readonly TikTokPaidViewsRow[];
+}) {
+  const { candidateItemIds, contexts } = buildVideoLookupContexts(args);
+
+  if (candidateItemIds.length === 0) {
+    return {
+      resolvedPostsByItemId: new Map<string, TikTokResolvedPost>(),
+      warnings: [] as string[],
+    };
+  }
+
+  if (contexts.size === 0) {
+    return {
+      resolvedPostsByItemId: new Map<string, TikTokResolvedPost>(),
+      warnings: [
+        "TikTok exposed Spark item IDs for some matches, but not enough identity metadata to fetch the underlying post details.",
+      ],
+    };
+  }
+
+  const itemIdsToLookup = [...contexts.keys()].slice(0, MAX_VIDEO_INFO_LOOKUPS);
+  const resolvedPostsByItemId = new Map<string, TikTokResolvedPost>();
+  const pendingContexts: TikTokVideoLookupContext[] = [];
+
+  for (const itemId of itemIdsToLookup) {
+    const context = contexts.get(itemId);
+
+    if (!context) {
+      continue;
+    }
+
+    const cached = readCachedValue(
+      resolvedPostCache,
+      buildResolvedPostCacheKey({
+        advertiserId: args.advertiserId,
+        itemId: context.itemId,
+        identityId: context.identityId,
+        identityType: context.identityType,
+        identityAuthorizedBcId: context.identityAuthorizedBcId,
+      }),
+    );
+
+    if (cached.found) {
+      if (cached.value) {
+        resolvedPostsByItemId.set(itemId, cached.value);
+      }
+
+      continue;
+    }
+
+    pendingContexts.push(context);
+  }
+
+  for (
+    let start = 0;
+    start < pendingContexts.length;
+    start += VIDEO_INFO_LOOKUP_BATCH_SIZE
+  ) {
+    const batch = pendingContexts.slice(start, start + VIDEO_INFO_LOOKUP_BATCH_SIZE);
+    const batchResults = await Promise.allSettled(
+      batch.map((context) =>
+        fetchIdentityVideoInfo({
+          advertiserId: args.advertiserId,
+          accessToken: args.accessToken,
+          itemId: context.itemId,
+          identityId: context.identityId,
+          identityType: context.identityType,
+          identityAuthorizedBcId: context.identityAuthorizedBcId,
+        }),
+      ),
+    );
+
+    for (const [index, result] of batchResults.entries()) {
+      if (result.status !== "fulfilled" || !result.value) {
+        continue;
+      }
+
+      resolvedPostsByItemId.set(batch[index]!.itemId, result.value);
+    }
+
+    if (start + VIDEO_INFO_LOOKUP_BATCH_SIZE < pendingContexts.length) {
+      await sleep(VIDEO_INFO_LOOKUP_BATCH_DELAY_MS);
+    }
+  }
+
+  return {
+    resolvedPostsByItemId,
+    warnings: uniqueNonEmptyStrings([
+      ...(contexts.size > MAX_VIDEO_INFO_LOOKUPS
+        ? [
+            `Resolved exact post info for the first ${MAX_VIDEO_INFO_LOOKUPS} known Spark item IDs only to keep the lookup fast.`,
+          ]
+        : []),
+      ...(resolvedPostsByItemId.size === 0
+        ? [
+            "TikTok exposed Spark item IDs, but the post-info lookup still did not return any underlying post metadata.",
+          ]
+        : resolvedPostsByItemId.size < candidateItemIds.length
+          ? [
+              `Resolved exact post info for ${resolvedPostsByItemId.size} of ${candidateItemIds.length} known Spark item IDs. TikTok withheld the rest, so those matches still fall back to ad-level data.`,
+            ]
+          : []),
+    ]),
+  };
 }
 
 function filterCreatorAds(args: {
@@ -776,6 +1274,23 @@ export async function getPaidViewsForSparkItems(args: {
     ? normalizedRows.filter((row) => row.itemId !== null && itemIdSet.has(row.itemId))
     : normalizedRows;
   const paidViews = scopedRows.reduce((total, row) => total + row.metricValue, 0);
+  const matchedAdIds = uniqueNonEmptyStrings(scopedRows.map((row) => row.adId));
+  const adMetadata = await fetchMatchedAdsByIdsBestEffort({
+    advertiserId,
+    accessToken,
+    adIds: matchedAdIds,
+  });
+  const resolvedPosts = await fetchResolvedPostsForAds({
+    advertiserId,
+    accessToken,
+    ads: adMetadata.ads,
+    rows: scopedRows,
+  });
+  const matchedSparkItemIds = uniqueNonEmptyStrings([
+    ...itemIds,
+    ...scopedRows.map((row) => row.itemId),
+    ...adMetadata.ads.map((ad) => ad.tiktokItemId),
+  ]);
 
   return {
     creatorLabel: args.creatorLabel.trim() || "Spark item set",
@@ -785,20 +1300,26 @@ export async function getPaidViewsForSparkItems(args: {
     endDate: toDateOnlyString(endDate),
     paidViews,
     matchedAds: buildMatchedAdSummaries({
+      ads: adMetadata.ads,
       rows: scopedRows,
+      resolvedPostsByItemId: resolvedPosts.resolvedPostsByItemId,
     }),
-    matchedSparkItemIds: itemIds,
-    matchedAdIds: uniqueNonEmptyStrings(scopedRows.map((row) => row.adId)),
+    matchedSparkItemIds,
+    matchedAdIds,
     resolvedIdentities: [],
     discoveryMode: "manual_item_ids",
     rowCount: scopedRows.length,
     rows: scopedRows,
-    warnings: rowsIncludeItemIds
-      ? report.warnings
-      : [
-          ...report.warnings,
-          "TikTok report rows did not include item_id, so the total depends entirely on TikTok's server-side filter.",
-        ],
+    warnings: uniqueNonEmptyStrings(
+      rowsIncludeItemIds
+        ? [...report.warnings, ...adMetadata.warnings, ...resolvedPosts.warnings]
+        : [
+            ...report.warnings,
+            ...adMetadata.warnings,
+            ...resolvedPosts.warnings,
+            "TikTok report rows did not include item_id, so the total depends entirely on TikTok's server-side filter.",
+          ],
+    ),
   };
 }
 
@@ -905,6 +1426,12 @@ export async function getPaidViewsForCreator(args: {
     ...discoveredItemIds,
     ...scopedRows.map((row) => row.itemId),
   ]);
+  const resolvedPosts = await fetchResolvedPostsForAds({
+    advertiserId,
+    accessToken,
+    ads: matchedAds.ads,
+    rows: scopedRows,
+  });
 
   return {
     creatorLabel: creatorName,
@@ -916,6 +1443,7 @@ export async function getPaidViewsForCreator(args: {
     matchedAds: buildMatchedAdSummaries({
       ads: matchedAds.ads,
       rows: scopedRows,
+      resolvedPostsByItemId: resolvedPosts.resolvedPostsByItemId,
     }),
     matchedSparkItemIds,
     matchedAdIds: adIds,
@@ -923,10 +1451,11 @@ export async function getPaidViewsForCreator(args: {
     discoveryMode: "creator_discovery",
     rowCount: scopedRows.length,
     rows: scopedRows,
-    warnings: [
+    warnings: uniqueNonEmptyStrings([
       ...identityResolution.warnings,
       ...advertiserAds.warnings,
       ...matchedAds.warnings,
+      ...resolvedPosts.warnings,
       ...(!canServerFilterByItemId
         ? [
             "TikTok reporting does not support filtering by ad_id, so this lookup scanned advertiser rows for the date window and scoped them locally to the matched ads.",
@@ -938,6 +1467,6 @@ export async function getPaidViewsForCreator(args: {
             "TikTok did not expose Spark item IDs for the matched ads, but the totals were still scoped by ad_id.",
           ]
         : []),
-    ],
+    ]),
   };
 }
