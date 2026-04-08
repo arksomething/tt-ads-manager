@@ -50,6 +50,7 @@ const paidViewMetricMap = {
 } as const;
 
 export type TikTokPaidViewMetric = keyof typeof paidViewMetricMap;
+export type TikTokPaidViewsMatchMode = "exact" | "best_effort";
 
 type QueryDateInput = Date | string;
 
@@ -142,6 +143,7 @@ export type TikTokSparkItemPaidViewsResult = {
   creatorLabel: string;
   advertiserId: string;
   metric: TikTokPaidViewMetric;
+  matchMode: TikTokPaidViewsMatchMode;
   startDate: string;
   endDate: string;
   paidViews: number;
@@ -523,6 +525,26 @@ function uniqueNonEmptyStrings(values: ReadonlyArray<string | null | undefined>)
   return [...new Set(values.filter((value): value is string => Boolean(value && value.trim())))];
 }
 
+function extractSparkItemId(value: string) {
+  const trimmed = value.trim();
+
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const directVideoMatch = trimmed.match(/\/video\/(\d{8,})/i);
+
+  if (directVideoMatch) {
+    return directVideoMatch[1] ?? null;
+  }
+
+  if (/^\d{8,}$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  return trimmed;
+}
+
 function normalizeSparkItemIds(value: string | readonly string[]) {
   const parts = typeof value === "string"
     ? value
@@ -531,7 +553,7 @@ function normalizeSparkItemIds(value: string | readonly string[]) {
         .filter(Boolean)
     : value;
 
-  return uniqueNonEmptyStrings(parts);
+  return uniqueNonEmptyStrings(parts.map((entry) => extractSparkItemId(entry)));
 }
 
 function getReportRows(payload: TikTokIntegratedReportData) {
@@ -1307,6 +1329,7 @@ export async function getPaidViewsForSparkItems(args: {
     creatorLabel: args.creatorLabel.trim() || "Spark item set",
     advertiserId,
     metric,
+    matchMode: "exact",
     startDate: toDateOnlyString(startDate),
     endDate: toDateOnlyString(endDate),
     paidViews,
@@ -1342,6 +1365,7 @@ export async function getPaidViewsForCreator(args: {
   startDate: QueryDateInput;
   endDate: QueryDateInput;
   metric?: TikTokPaidViewMetric;
+  matchMode?: TikTokPaidViewsMatchMode;
 }): Promise<TikTokSparkItemPaidViewsResult> {
   const { advertiserId, accessToken } = validateCredentials(args);
   const creatorName = args.creatorName.trim();
@@ -1358,6 +1382,7 @@ export async function getPaidViewsForCreator(args: {
   }
 
   const metric = args.metric ?? "impressions";
+  const matchMode = args.matchMode ?? "exact";
   const identities = await fetchAdvertiserIdentities({
     advertiserId,
     accessToken,
@@ -1379,6 +1404,9 @@ export async function getPaidViewsForCreator(args: {
   const discoveredItemIds = uniqueNonEmptyStrings(
     matchedAds.ads.map((ad) => ad.tiktokItemId),
   );
+  const exactMatchedAds = matchedAds.ads.filter((ad) => Boolean(ad.tiktokItemId));
+  const exactMatchedAdIds = uniqueNonEmptyStrings(exactMatchedAds.map((ad) => ad.adId));
+  const exactItemIds = uniqueNonEmptyStrings(exactMatchedAds.map((ad) => ad.tiktokItemId));
   const canServerFilterByItemId =
     matchedAds.ads.length > 0 && matchedAds.ads.every((ad) => Boolean(ad.tiktokItemId));
 
@@ -1387,6 +1415,7 @@ export async function getPaidViewsForCreator(args: {
       creatorLabel: creatorName,
       advertiserId,
       metric,
+      matchMode,
       startDate: toDateOnlyString(startDate),
       endDate: toDateOnlyString(endDate),
       paidViews: 0,
@@ -1409,13 +1438,47 @@ export async function getPaidViewsForCreator(args: {
     };
   }
 
+  if (matchMode === "exact" && exactItemIds.length === 0) {
+    return {
+      creatorLabel: creatorName,
+      advertiserId,
+      metric,
+      matchMode,
+      startDate: toDateOnlyString(startDate),
+      endDate: toDateOnlyString(endDate),
+      paidViews: 0,
+      matchedAds: buildMatchedAdSummaries({
+        ads: exactMatchedAds,
+      }),
+      matchedSparkItemIds: [],
+      matchedAdIds: [],
+      resolvedIdentities: identityResolution.identities.map(formatIdentityLabel),
+      discoveryMode: "creator_discovery",
+      rowCount: 0,
+      rows: [],
+      singular: getDefaultTikTokSingularOverlay(),
+      warnings: uniqueNonEmptyStrings([
+        ...identityResolution.warnings,
+        ...advertiserAds.warnings,
+        ...matchedAds.warnings,
+        `TikTok matched ${adIds.length} ad${adIds.length === 1 ? "" : "s"} for "${creatorName}", but none exposed Spark item IDs. Exact mode ignores ad-level matches without item IDs.`,
+        "Paste Spark item IDs or switch to best-effort creator discovery to include ad-only matches.",
+      ]),
+    };
+  }
+
   const report = await fetchPaidReportRows({
     advertiserId,
     accessToken,
     startDate: toDateOnlyString(startDate),
     endDate: toDateOnlyString(endDate),
     metric,
-    ...(canServerFilterByItemId
+    ...(matchMode === "exact"
+      ? {
+          filterFieldName: "item_id" as const,
+          filterValues: exactItemIds,
+        }
+      : canServerFilterByItemId
       ? {
           filterFieldName: "item_id" as const,
           filterValues: discoveredItemIds,
@@ -1427,22 +1490,35 @@ export async function getPaidViewsForCreator(args: {
   );
   const adIdSet = new Set(adIds);
   const itemIdSet = new Set(discoveredItemIds);
+  const exactItemIdSet = new Set(exactItemIds);
   const rowsIncludeAdIds = normalizedRows.some((row) => row.adId !== null);
   const rowsIncludeItemIds = normalizedRows.some((row) => row.itemId !== null);
-  const scopedRows = rowsIncludeAdIds
-    ? normalizedRows.filter((row) => row.adId !== null && adIdSet.has(row.adId))
-    : canServerFilterByItemId && rowsIncludeItemIds
-      ? normalizedRows.filter((row) => row.itemId !== null && itemIdSet.has(row.itemId))
-      : normalizedRows;
+  const scopedRows = matchMode === "exact"
+    ? rowsIncludeItemIds
+      ? normalizedRows.filter((row) => row.itemId !== null && exactItemIdSet.has(row.itemId))
+      : normalizedRows
+    : rowsIncludeAdIds
+      ? normalizedRows.filter((row) => row.adId !== null && adIdSet.has(row.adId))
+      : canServerFilterByItemId && rowsIncludeItemIds
+        ? normalizedRows.filter((row) => row.itemId !== null && itemIdSet.has(row.itemId))
+        : normalizedRows;
   const paidViews = scopedRows.reduce((total, row) => total + row.metricValue, 0);
-  const matchedSparkItemIds = uniqueNonEmptyStrings([
-    ...discoveredItemIds,
-    ...scopedRows.map((row) => row.itemId),
-  ]);
+  const matchedSparkItemIds = uniqueNonEmptyStrings(
+    matchMode === "exact"
+      ? [
+          ...exactItemIds,
+          ...scopedRows.map((row) => row.itemId),
+        ]
+      : [
+          ...discoveredItemIds,
+          ...scopedRows.map((row) => row.itemId),
+        ],
+  );
+  const matchedAdIdsForResult = uniqueNonEmptyStrings(scopedRows.map((row) => row.adId));
   const resolvedPosts = await fetchResolvedPostsForAds({
     advertiserId,
     accessToken,
-    ads: matchedAds.ads,
+    ads: matchMode === "exact" ? exactMatchedAds : matchedAds.ads,
     rows: scopedRows,
   });
   const singular = await getTikTokSingularOverlay({
@@ -1454,16 +1530,22 @@ export async function getPaidViewsForCreator(args: {
     creatorLabel: creatorName,
     advertiserId,
     metric,
+    matchMode,
     startDate: toDateOnlyString(startDate),
     endDate: toDateOnlyString(endDate),
     paidViews,
     matchedAds: buildMatchedAdSummaries({
-      ads: matchedAds.ads,
+      ads: matchMode === "exact" ? exactMatchedAds : matchedAds.ads,
       rows: scopedRows,
       resolvedPostsByItemId: resolvedPosts.resolvedPostsByItemId,
     }),
     matchedSparkItemIds,
-    matchedAdIds: adIds,
+    matchedAdIds:
+      matchedAdIdsForResult.length > 0
+        ? matchedAdIdsForResult
+        : matchMode === "exact"
+          ? exactMatchedAdIds
+          : adIds,
     resolvedIdentities: identityResolution.identities.map(formatIdentityLabel),
     discoveryMode: "creator_discovery",
     rowCount: scopedRows.length,
@@ -1474,13 +1556,23 @@ export async function getPaidViewsForCreator(args: {
       ...advertiserAds.warnings,
       ...matchedAds.warnings,
       ...resolvedPosts.warnings,
-      ...(!canServerFilterByItemId
+      ...(matchMode === "exact" && matchedAds.ads.length > exactMatchedAds.length
+        ? [
+            `Excluded ${matchedAds.ads.length - exactMatchedAds.length} matched ad${matchedAds.ads.length - exactMatchedAds.length === 1 ? "" : "s"} because TikTok did not expose Spark item IDs for them.`,
+          ]
+        : []),
+      ...(matchMode !== "exact" && !canServerFilterByItemId
         ? [
             "TikTok reporting does not support filtering by ad_id, so this lookup scanned advertiser rows for the date window and scoped them locally to the matched ads.",
           ]
         : []),
       ...report.warnings,
-      ...(matchedSparkItemIds.length === 0
+      ...(matchMode === "exact" && !rowsIncludeItemIds
+        ? [
+            "TikTok's response did not echo item_id in each row, so exact mode depends on TikTok's server-side item_id filter for the final total.",
+          ]
+        : []),
+      ...(matchMode !== "exact" && matchedSparkItemIds.length === 0
         ? [
             "TikTok did not expose Spark item IDs for the matched ads, but the totals were still scoped by ad_id.",
           ]

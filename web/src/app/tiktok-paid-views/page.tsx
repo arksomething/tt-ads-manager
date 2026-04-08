@@ -14,6 +14,7 @@ import {
   type TikTokMatchedAd,
   type TikTokPaidViewMetric,
   type TikTokPaidViewsRow,
+  type TikTokPaidViewsMatchMode,
   type TikTokResolvedPost,
 } from "@/server/tiktok-business/public-reporting";
 import {
@@ -104,6 +105,12 @@ function getDefaultEndDate() {
 
 function normalizeMetric(value: string | undefined): TikTokPaidViewMetric {
   return value === "videoPlayActions" ? "videoPlayActions" : "impressions";
+}
+
+function normalizeLookupMode(
+  value: string | undefined,
+): TikTokPaidViewsMatchMode {
+  return value === "best_effort" ? "best_effort" : "exact";
 }
 
 function parseReportDate(value: string | null) {
@@ -505,6 +512,7 @@ function buildGroupMetadataPresentation(args: {
 function attachSingularMetricsToGroups(args: {
   groups: TikTokMatchedGroupBase[];
   singular: TikTokSingularOverlay;
+  allowSingularNameFallback: boolean;
 }): TikTokMatchedGroup[] {
   const rowsByCreativeId = new Map<string, TikTokSingularReportRow[]>();
   const rowsByVideoIdFromUrl = new Map<string, TikTokSingularReportRow[]>();
@@ -556,7 +564,7 @@ function attachSingularMetricsToGroups(args: {
       }
     }
 
-    if (matchedRows.size === 0) {
+    if (matchedRows.size === 0 && args.allowSingularNameFallback) {
       for (const nameKey of getGroupCandidateNameKeys(group)) {
         if ((groupKeysByName.get(nameKey)?.size ?? 0) !== 1) {
           continue;
@@ -600,6 +608,7 @@ function buildMatchedGroups(args: {
   rows: TikTokPaidViewsRow[];
   matchedAds: TikTokMatchedAd[];
   singular: TikTokSingularOverlay;
+  allowSingularNameFallback: boolean;
 }): TikTokMatchedGroup[] {
   const adMetadata = new Map(args.matchedAds.map((ad) => [ad.adId, ad] as const));
   const perAdGroups = new Map<
@@ -784,6 +793,7 @@ function buildMatchedGroups(args: {
   return attachSingularMetricsToGroups({
     groups: baseGroups,
     singular: args.singular,
+    allowSingularNameFallback: args.allowSingularNameFallback,
   });
 }
 
@@ -966,6 +976,9 @@ export default async function TikTokPaidViewsPage({
   const resolvedSearchParams = await searchParams;
   const creatorLabel = (getSearchParamValue(resolvedSearchParams, "creator") ?? "").trim();
   const itemIdsInput = getSearchParamValue(resolvedSearchParams, "itemIds") ?? "";
+  const lookupMode = normalizeLookupMode(
+    getSearchParamValue(resolvedSearchParams, "lookupMode"),
+  );
   const hasManualItemIds = itemIdsInput.trim().length > 0;
   const hasLookupInput = creatorLabel.length > 0 || hasManualItemIds;
   const startDate =
@@ -985,6 +998,7 @@ export default async function TikTokPaidViewsPage({
     returnTo: `/tiktok-paid-views?${new URLSearchParams({
       creator: creatorLabel,
       itemIds: itemIdsInput,
+      lookupMode,
       startDate,
       endDate,
       metric,
@@ -1145,6 +1159,7 @@ export default async function TikTokPaidViewsPage({
               startDate,
               endDate,
               metric,
+              matchMode: lookupMode,
             });
       } catch (error) {
         errorMessage =
@@ -1170,6 +1185,7 @@ export default async function TikTokPaidViewsPage({
         rows: [],
         warnings: [],
       },
+    allowSingularNameFallback: result?.matchMode === "best_effort",
   });
   const resolvedPosts = getResolvedPostsForMatchedAds(result?.matchedAds ?? []);
   const resolvedPostCount = resolvedPosts.length;
@@ -1197,14 +1213,14 @@ export default async function TikTokPaidViewsPage({
               TikTok Spark Ads
             </p>
             <h1 className="mt-2 text-2xl font-medium tracking-[-0.045em] text-foreground">
-              Prisma-free paid views lookup.
+              Exact Spark paid views lookup.
             </h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
               This page talks directly to TikTok’s reporting API. Save an advertiser
-              ID and access token in an encrypted browser cookie, then either
-              auto-discover a creator’s existing Spark posts or query paid
-              delivery by Spark <code>item_id</code> with no workspace database
-              required.
+              ID and access token in an encrypted browser cookie, then query paid
+              delivery by Spark <code>item_id</code> or TikTok post URL. Creator
+              discovery is still available, but exact Spark item IDs are the
+              recommended path because they avoid ad-level inference.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -1248,12 +1264,10 @@ export default async function TikTokPaidViewsPage({
             <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
               Creator lookup
             </p>
-            <p className="mt-2 text-sm font-medium text-foreground">
-              Auto-discovery first
-            </p>
+            <p className="mt-2 text-sm font-medium text-foreground">Exact item IDs first</p>
             <p className="mt-2 text-xs text-muted-foreground">
-              Leave Spark item IDs blank to discover existing Spark ads for a
-              creator. Paste item IDs only when you want manual override.
+              Paste Spark item IDs or TikTok post URLs when you have them. Only
+              use creator discovery when you need TikTok to infer the exact posts.
             </p>
           </div>
           <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
@@ -1416,7 +1430,18 @@ export default async function TikTokPaidViewsPage({
 
       <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
         <form className="space-y-4" method="get">
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+            <label className="block lg:col-span-1">
+              <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                Spark item IDs or TikTok URLs
+              </span>
+              <textarea
+                className="min-h-24 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 py-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-white/[0.16]"
+                defaultValue={itemIdsInput}
+                name="itemIds"
+                placeholder={"Recommended: paste comma or newline separated item IDs or TikTok post URLs"}
+              />
+            </label>
             <label className="block">
               <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
                 Creator handle or label
@@ -1429,16 +1454,18 @@ export default async function TikTokPaidViewsPage({
                 type="text"
               />
             </label>
-            <label className="block lg:col-span-1">
+            <label className="block">
               <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                Spark item IDs
+                Lookup mode
               </span>
-              <textarea
-                className="min-h-24 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 py-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-white/[0.16]"
-                defaultValue={itemIdsInput}
-                name="itemIds"
-                placeholder={"Optional manual override: paste comma or newline separated item IDs"}
-              />
+              <select
+                className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
+                defaultValue={lookupMode}
+                name="lookupMode"
+              >
+                <option value="exact">Exact Spark posts</option>
+                <option value="best_effort">Best-effort creator discovery</option>
+              </select>
             </label>
             <label className="block">
               <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
@@ -1489,9 +1516,10 @@ export default async function TikTokPaidViewsPage({
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Leave Spark item IDs blank to auto-discover existing Spark ads for the
-            creator from TikTok identities and ads. If you paste item IDs, manual
-            mode wins and the creator field becomes a label again.
+            Exact mode is the default. If you paste Spark item IDs or TikTok post
+            URLs, the page only uses those exact posts. Creator discovery remains
+            available as a lower-confidence fallback for cases where you do not
+            have the item IDs yet.
           </p>
         </form>
       </section>
@@ -1516,7 +1544,9 @@ export default async function TikTokPaidViewsPage({
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
                   {result.discoveryMode === "manual_item_ids"
                     ? `${metricCopy.shortLabel} for the Spark items you provided.`
-                    : `${metricCopy.shortLabel} for the Spark ads TikTok matched to this creator.`}
+                    : result.matchMode === "exact"
+                      ? `${metricCopy.shortLabel} for the exact Spark posts TikTok exposed for this creator.`
+                      : `${metricCopy.shortLabel} for the Spark ads TikTok matched to this creator in best-effort mode.`}
                 </p>
                 {result.resolvedIdentities.length > 0 ? (
                   <p className="mt-2 text-xs text-muted-foreground">
@@ -1560,8 +1590,10 @@ export default async function TikTokPaidViewsPage({
                 </p>
                 <p className="mt-2 text-sm font-medium text-foreground">
                   {result.discoveryMode === "manual_item_ids"
-                    ? "Manual item IDs"
-                    : "Creator discovery"}
+                    ? "Exact item IDs"
+                    : result.matchMode === "exact"
+                      ? "Exact creator match"
+                      : "Best-effort creator discovery"}
                 </p>
               </div>
               <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
