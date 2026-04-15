@@ -1210,20 +1210,27 @@ export default async function TikTokPaidViewsPage({
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-3xl">
             <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
-              TikTok Spark Ads
+              Standalone TikTok lookup
             </p>
             <h1 className="mt-2 text-2xl font-medium tracking-[-0.045em] text-foreground">
-              Exact Spark paid views lookup.
+              Run a one-off TikTok Spark lookup.
             </h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              This page talks directly to TikTok’s reporting API. Save an advertiser
-              ID and access token in an encrypted browser cookie, then query paid
-              delivery by Spark <code>item_id</code> or TikTok post URL. Creator
-              discovery is still available, but exact Spark item IDs are the
-              recommended path because they avoid ad-level inference.
+              This page talks directly to TikTok’s reporting API without needing an
+              organization workspace. It saves the advertiser connection in an
+              encrypted browser cookie, then lets you query paid delivery by Spark{" "}
+              <code>item_id</code> or TikTok post URL. Use the workspace dashboard
+              when you want saved org-level connections, profit ranking, and a
+              fuller operator view.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <Link
+              className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-white/[0.12] bg-black/[0.24] px-4 text-sm font-medium text-foreground transition hover:border-white/[0.2]"
+              href="/app"
+            >
+              Open workspace dashboard
+            </Link>
             <Link
               className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-white/[0.12] bg-black/[0.24] px-4 text-sm font-medium text-foreground transition hover:border-white/[0.2]"
               href="/"

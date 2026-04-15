@@ -31,6 +31,40 @@ const createOrganizationFromNameSchema = z.object({
   name: z.string().trim().min(2).max(120),
 });
 
+function toTitleCaseWords(value: string) {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function getDefaultOrganizationNameForUser(args: {
+  name?: string | null;
+  email?: string | null;
+}) {
+  const normalizedName = args.name?.trim();
+
+  if (normalizedName && normalizedName.length >= 2) {
+    return /workspace$/i.test(normalizedName)
+      ? normalizedName
+      : `${normalizedName} Workspace`;
+  }
+
+  const emailLocalPart = args.email?.split("@")[0]?.trim() ?? "";
+  const humanizedEmailLocalPart = toTitleCaseWords(
+    emailLocalPart.replace(/[^a-zA-Z0-9]+/g, " ").trim(),
+  );
+
+  if (humanizedEmailLocalPart.length >= 2) {
+    return /workspace$/i.test(humanizedEmailLocalPart)
+      ? humanizedEmailLocalPart
+      : `${humanizedEmailLocalPart} Workspace`;
+  }
+
+  return "My Workspace";
+}
+
 function revalidateOrganizationWorkspace(organizationSlug: string) {
   revalidatePath("/app");
   revalidatePath(`/org/${organizationSlug}`);
@@ -120,6 +154,32 @@ export async function createOrganizationForCurrentUser(input: unknown) {
   revalidatePath("/app");
 
   return organization;
+}
+
+export async function ensureOrganizationForCurrentUser() {
+  const user = await requireUser();
+  const existingMembership = await prisma.organizationMembership.findFirst({
+    where: {
+      userId: user.id,
+    },
+    include: {
+      organization: true,
+    },
+    orderBy: {
+      createdAt: "asc",
+    },
+  });
+
+  if (existingMembership) {
+    return existingMembership.organization;
+  }
+
+  return createOrganizationForCurrentUser({
+    name: getDefaultOrganizationNameForUser({
+      name: user.name,
+      email: user.email,
+    }),
+  });
 }
 
 export async function inviteOrganizationMember(args: {

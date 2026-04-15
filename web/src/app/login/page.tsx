@@ -54,14 +54,14 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         googleAuthConfigured
           ? isSwitchAccountFlow
             ? "Choose a different Google account to continue into your workspace."
-            : "Begin with one calm step. Continue with Google to enter your workspace."
+            : "Continue with Google to enter your workspace. If you do not have one yet, the app will create it automatically."
           : "The auth surface is ready. Add the required environment variables to enable Google sign-in."
       }
       footer={
         googleAuthConfigured
           ? isSwitchAccountFlow
             ? "You will be prompted to pick another Google account before returning to the app."
-            : "By continuing, you agree to the product terms and privacy expectations for your organization workspace."
+            : "By continuing, you agree to the product terms and privacy expectations for your workspace."
           : "Google auth is currently disabled in this environment, so the page stays visible while setup is incomplete."
       }
       title="Welcome to Billion Views"
@@ -99,7 +99,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           value={
             isSwitchAccountFlow
               ? "Pick the Google account you want to use"
-              : "Create or join your organization"
+              : "Open your workspace or have one created for you"
           }
         />
       </div>

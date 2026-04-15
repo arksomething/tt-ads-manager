@@ -7,7 +7,10 @@ import { publicEnv } from "@/lib/env";
 import { isGoogleAuthDisabled } from "@/lib/server-env";
 import { getViewerOrganizations } from "@/server/auth/organizations";
 import { getCurrentUser } from "@/server/auth/session";
-import { createOrganizationForCurrentUser } from "@/server/organizations/mutations";
+import {
+  createOrganizationForCurrentUser,
+  ensureOrganizationForCurrentUser,
+} from "@/server/organizations/mutations";
 
 export const dynamic = "force-dynamic";
 
@@ -39,12 +42,16 @@ export default async function AppHomePage({
 
   const organizations = await getViewerOrganizations();
 
+  if (organizations.length === 0) {
+    const organization = await ensureOrganizationForCurrentUser();
+    redirect(`/org/${organization.slug}`);
+  }
+
   if (organizations.length === 1 && !manageMode) {
     redirect(`/org/${organizations[0].organization.slug}`);
   }
 
   const signedInAs = user.email ?? user.name ?? "your account";
-  const isFirstOrganization = organizations.length === 0;
   const currentWorkspace = currentWorkspaceSlug
     ? organizations.find(
         ({ organization }) => organization.slug === currentWorkspaceSlug,
@@ -58,26 +65,20 @@ export default async function AppHomePage({
             ({ organization }) => organization.slug === currentWorkspaceSlug,
           ),
           ...organizations.filter(
-            ({ organization }) => organization.slug !== currentWorkspaceSlug,
-          ),
+        ({ organization }) => organization.slug !== currentWorkspaceSlug,
+      ),
         ];
   const pageEyebrow = manageMode
     ? "Workspace hub"
-    : isFirstOrganization
-      ? "First step"
-      : "New workspace";
+    : "New workspace";
   const pageTitle = manageMode
     ? "Manage your workspaces."
-    : isFirstOrganization
-      ? "What's your organization name?"
-      : "Name the next organization.";
+    : "Name the next workspace.";
   const pageDescription = manageMode
     ? currentWorkspace
       ? `Open ${currentWorkspace.name}, jump into workspace settings, or create another top-level workspace without losing your place.`
       : "Open any workspace you already have access to, jump into workspace settings, or create another top-level workspace."
-    : isFirstOrganization
-      ? "Start with the company, brand, or client account that will own campaigns, creators, notes, and payouts."
-      : "Create another top-level workspace without losing the calm structure of the current one.";
+    : "Create another top-level workspace without losing the calm structure of the current one.";
 
   async function handleSignOut() {
     "use server";
@@ -237,14 +238,12 @@ export default async function AppHomePage({
                 <section className="mt-8 rounded-[1.8rem] border border-white/[0.08] bg-white/[0.03] p-6 shadow-[0_30px_90px_rgba(0,0,0,0.28)] backdrop-blur sm:p-7">
                   <div className="space-y-3">
                     <p className="text-[0.62rem] uppercase tracking-[0.28em] text-muted-foreground">
-                      {isFirstOrganization ? "First workspace" : "New workspace"}
+                      New workspace
                     </p>
                     <h2
                       className={`${appSerif.className} text-[1.8rem] leading-none tracking-[-0.04em] text-foreground sm:text-[2rem]`}
                     >
-                      {isFirstOrganization
-                        ? "Create your first workspace."
-                        : "Create another workspace."}
+                      Create another workspace.
                     </h2>
                     <p className="max-w-xl text-sm leading-6 text-muted-foreground">
                       Separate brands, clients, or teams into their own
