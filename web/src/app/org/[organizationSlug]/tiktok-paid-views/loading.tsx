@@ -28,11 +28,11 @@ export default function TikTokPaidViewsLoading() {
               Ad profitability
             </p>
             <h1 className="mt-2 text-2xl font-medium tracking-[-0.045em] text-foreground">
-              Loading your TikTok ad dashboard...
+              Loading your Singular ad leaderboard...
             </h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              The app is checking the saved advertiser connection and loading the
-              live paid ranking.
+              The app is pulling the creative export, resolving the date range,
+              and ranking your ads by return.
             </p>
           </div>
 
@@ -43,23 +43,23 @@ export default function TikTokPaidViewsLoading() {
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <LoadingStatCard
-            label="Connection"
-            meta="Checking the saved advertiser for this workspace."
+            label="Singular"
+            meta="Checking the configured Singular connection for this workspace."
             value="Loading"
           />
           <LoadingStatCard
             label="Status"
-            meta="Validating the latest TikTok account state."
+            meta="Preparing the creative export for the selected date window."
             value="Loading"
           />
           <LoadingStatCard
-            label="Metric"
-            meta="Preparing the default paid-performance view."
+            label="Sort mode"
+            meta="Resolving the leaderboard order before the table renders."
             value="Loading"
           />
           <LoadingStatCard
             label="Date window"
-            meta="Resolving the report range before the API call runs."
+            meta="Chunking the report range when the selected span is too large."
             value="Loading"
           />
         </div>
@@ -71,11 +71,11 @@ export default function TikTokPaidViewsLoading() {
             Dashboard
           </p>
           <h2 className="text-lg font-medium tracking-[-0.03em] text-foreground">
-            Pulling live ad performance now.
+            Pulling creative performance now.
           </h2>
           <p className="text-sm leading-6 text-muted-foreground">
-            TikTok reporting and revenue matching can take a few seconds on a cold
-            load.
+            Singular exports can take a few seconds on a cold load, especially on
+            larger date ranges.
           </p>
         </div>
 
