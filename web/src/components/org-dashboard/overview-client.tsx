@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { getCampaignColorTone } from "@/lib/campaign-colors";
 
@@ -189,6 +190,8 @@ function TikTokConnectionCard({
   connection: OverviewClientProps["data"]["tiktokConnection"];
   organizationSlug: string;
 }) {
+  const router = useRouter();
+  const [isNavigatingToAdProfit, startAdProfitTransition] = useTransition();
   const connectHref = `/api/org/${organizationSlug}/integrations/tiktok/oauth/start`;
   const integrationsHref = `/org/${organizationSlug}/integrations`;
   const adProfitHref = `/org/${organizationSlug}/tiktok-paid-views?sort=profit&matchMode=best_effort`;
@@ -213,12 +216,18 @@ function TikTokConnectionCard({
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Link
+          <button
             className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-white/[0.12] bg-black/[0.24] px-4 text-sm font-medium text-foreground transition hover:border-white/[0.2]"
-            href={adProfitHref}
+            disabled={isNavigatingToAdProfit}
+            onClick={() => {
+              startAdProfitTransition(() => {
+                router.push(adProfitHref);
+              });
+            }}
+            type="button"
           >
-            Open Ad Profit
-          </Link>
+            {isNavigatingToAdProfit ? "Opening Ad Profit..." : "Open Ad Profit"}
+          </button>
           <Link
             className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68]"
             href={connectHref}
