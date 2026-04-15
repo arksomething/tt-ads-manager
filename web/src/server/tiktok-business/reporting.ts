@@ -478,7 +478,6 @@ async function fetchPaidReportRows(args: {
   startDate: string;
   endDate: string;
   metric: TikTokPaidViewMetric;
-  itemIds: string[];
 }) {
   const apiMetricName = paidViewMetricMap[args.metric];
   const rows: TikTokIntegratedReportRow[] = [];
@@ -500,13 +499,6 @@ async function fetchPaidReportRows(args: {
         end_date: args.endDate,
         page,
         page_size: REPORT_PAGE_SIZE,
-        filtering: [
-          {
-            field_name: "item_id",
-            filter_type: "IN",
-            filter_value: JSON.stringify(args.itemIds),
-          },
-        ],
       },
     });
 
@@ -585,16 +577,16 @@ export async function getPaidViewsForCreatorForOrganization(
     startDate: toDateOnlyString(startDate),
     endDate: toDateOnlyString(endDate),
     metric,
-    itemIds,
   });
   const normalizedRows = report.rows.map((row) =>
     normalizeReportRow(row, report.apiMetricName),
   );
   const itemIdSet = new Set(itemIds);
   const rowsIncludeItemIds = normalizedRows.some((row) => row.itemId !== null);
+  const rowsIncludeAdIds = normalizedRows.some((row) => row.adId !== null);
   const scopedRows = rowsIncludeItemIds
     ? normalizedRows.filter((row) => row.itemId !== null && itemIdSet.has(row.itemId))
-    : normalizedRows;
+    : [];
   const paidViews = scopedRows.reduce((total, row) => total + row.metricValue, 0);
 
   return {
@@ -616,7 +608,9 @@ export async function getPaidViewsForCreatorForOrganization(
       : [
           ...warnings,
           ...report.warnings,
-          "TikTok report rows did not include item_id, so the total depends entirely on TikTok's server-side filter.",
+          rowsIncludeAdIds
+            ? "TikTok report rows did not include item_id, so this creator lookup returned 0 rows rather than guess from ad-level data."
+            : "TikTok report rows did not include item_id or ad_id, so this creator lookup could not be safely scoped.",
         ],
   };
 }

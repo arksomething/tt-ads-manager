@@ -695,8 +695,6 @@ async function fetchPaidReportRows(args: {
   startDate: string;
   endDate: string;
   metric: TikTokPaidViewMetric;
-  filterFieldName?: "item_id";
-  filterValues?: string[];
 }) {
   const apiMetricName = paidViewMetricMap[args.metric];
   const rows: TikTokIntegratedReportRow[] = [];
@@ -718,17 +716,6 @@ async function fetchPaidReportRows(args: {
         end_date: args.endDate,
         page,
         page_size: REPORT_PAGE_SIZE,
-        ...(args.filterFieldName && args.filterValues && args.filterValues.length > 0
-          ? {
-              filtering: [
-                {
-                  field_name: args.filterFieldName,
-                  filter_type: "IN",
-                  filter_value: JSON.stringify(args.filterValues),
-                },
-              ],
-            }
-          : {}),
       },
     });
 
@@ -1291,24 +1278,43 @@ export async function getPaidViewsForSparkItems(args: {
     startDate: toDateOnlyString(startDate),
     endDate: toDateOnlyString(endDate),
     metric,
-    filterFieldName: "item_id",
-    filterValues: itemIds,
   });
   const normalizedRows = report.rows.map((row) =>
     normalizeReportRow(row, report.apiMetricName),
   );
   const itemIdSet = new Set(itemIds);
   const rowsIncludeItemIds = normalizedRows.some((row) => row.itemId !== null);
+  const rowsIncludeAdIds = normalizedRows.some((row) => row.adId !== null);
+  const fallbackAdvertiserAds =
+    !rowsIncludeItemIds && rowsIncludeAdIds
+      ? await fetchAdvertiserAds({
+          advertiserId,
+          accessToken,
+        })
+      : null;
+  const fallbackAdIdSet = new Set(
+    fallbackAdvertiserAds?.ads
+      .filter((ad) => ad.tiktokItemId !== null && itemIdSet.has(ad.tiktokItemId))
+      .map((ad) => ad.adId) ?? [],
+  );
   const scopedRows = rowsIncludeItemIds
     ? normalizedRows.filter((row) => row.itemId !== null && itemIdSet.has(row.itemId))
-    : normalizedRows;
+    : fallbackAdvertiserAds
+      ? normalizedRows.filter((row) => row.adId !== null && fallbackAdIdSet.has(row.adId))
+      : [];
   const paidViews = scopedRows.reduce((total, row) => total + row.metricValue, 0);
   const matchedAdIds = uniqueNonEmptyStrings(scopedRows.map((row) => row.adId));
-  const adMetadata = await fetchMatchedAdsByIdsBestEffort({
-    advertiserId,
-    accessToken,
-    adIds: matchedAdIds,
-  });
+  const adMetadata = rowsIncludeItemIds
+    ? await fetchMatchedAdsByIdsBestEffort({
+        advertiserId,
+        accessToken,
+        adIds: matchedAdIds,
+      })
+    : {
+        ads:
+          fallbackAdvertiserAds?.ads.filter((ad) => fallbackAdIdSet.has(ad.adId)) ?? [],
+        warnings: fallbackAdvertiserAds?.warnings ?? [],
+      };
   const resolvedPosts = await fetchResolvedPostsForAds({
     advertiserId,
     accessToken,
@@ -1346,14 +1352,20 @@ export async function getPaidViewsForSparkItems(args: {
     rows: scopedRows,
     singular,
     warnings: uniqueNonEmptyStrings(
-      rowsIncludeItemIds
-        ? [...report.warnings, ...adMetadata.warnings, ...resolvedPosts.warnings]
-        : [
-            ...report.warnings,
-            ...adMetadata.warnings,
-            ...resolvedPosts.warnings,
-            "TikTok report rows did not include item_id, so the total depends entirely on TikTok's server-side filter.",
-          ],
+      [
+        ...report.warnings,
+        ...adMetadata.warnings,
+        ...resolvedPosts.warnings,
+        ...(rowsIncludeItemIds
+          ? []
+          : fallbackAdvertiserAds
+            ? [
+                "TikTok did not include item_id in report rows, so exact mode scoped the lookup locally by matched ad metadata instead.",
+              ]
+            : [
+                "TikTok did not include item_id in report rows, so this exact lookup could not be safely scoped.",
+              ]),
+      ],
     ),
   };
 }
@@ -1407,9 +1419,6 @@ export async function getPaidViewsForCreator(args: {
   const exactMatchedAds = matchedAds.ads.filter((ad) => Boolean(ad.tiktokItemId));
   const exactMatchedAdIds = uniqueNonEmptyStrings(exactMatchedAds.map((ad) => ad.adId));
   const exactItemIds = uniqueNonEmptyStrings(exactMatchedAds.map((ad) => ad.tiktokItemId));
-  const canServerFilterByItemId =
-    matchedAds.ads.length > 0 && matchedAds.ads.every((ad) => Boolean(ad.tiktokItemId));
-
   if (adIds.length === 0) {
     return {
       creatorLabel: creatorName,
@@ -1473,17 +1482,6 @@ export async function getPaidViewsForCreator(args: {
     startDate: toDateOnlyString(startDate),
     endDate: toDateOnlyString(endDate),
     metric,
-    ...(matchMode === "exact"
-      ? {
-          filterFieldName: "item_id" as const,
-          filterValues: exactItemIds,
-        }
-      : canServerFilterByItemId
-      ? {
-          filterFieldName: "item_id" as const,
-          filterValues: discoveredItemIds,
-        }
-      : {}),
   });
   const normalizedRows = report.rows.map((row) =>
     normalizeReportRow(row, report.apiMetricName),
@@ -1491,17 +1489,20 @@ export async function getPaidViewsForCreator(args: {
   const adIdSet = new Set(adIds);
   const itemIdSet = new Set(discoveredItemIds);
   const exactItemIdSet = new Set(exactItemIds);
+  const exactAdIdSet = new Set(exactMatchedAdIds);
   const rowsIncludeAdIds = normalizedRows.some((row) => row.adId !== null);
   const rowsIncludeItemIds = normalizedRows.some((row) => row.itemId !== null);
   const scopedRows = matchMode === "exact"
     ? rowsIncludeItemIds
       ? normalizedRows.filter((row) => row.itemId !== null && exactItemIdSet.has(row.itemId))
-      : normalizedRows
+      : rowsIncludeAdIds
+        ? normalizedRows.filter((row) => row.adId !== null && exactAdIdSet.has(row.adId))
+        : []
     : rowsIncludeAdIds
       ? normalizedRows.filter((row) => row.adId !== null && adIdSet.has(row.adId))
-      : canServerFilterByItemId && rowsIncludeItemIds
+      : rowsIncludeItemIds
         ? normalizedRows.filter((row) => row.itemId !== null && itemIdSet.has(row.itemId))
-        : normalizedRows;
+        : [];
   const paidViews = scopedRows.reduce((total, row) => total + row.metricValue, 0);
   const matchedSparkItemIds = uniqueNonEmptyStrings(
     matchMode === "exact"
@@ -1561,17 +1562,27 @@ export async function getPaidViewsForCreator(args: {
             `Excluded ${matchedAds.ads.length - exactMatchedAds.length} matched ad${matchedAds.ads.length - exactMatchedAds.length === 1 ? "" : "s"} because TikTok did not expose Spark item IDs for them.`,
           ]
         : []),
-      ...(matchMode !== "exact" && !canServerFilterByItemId
+      ...(matchMode === "exact" && !rowsIncludeItemIds && rowsIncludeAdIds
         ? [
-            "TikTok reporting does not support filtering by ad_id, so this lookup scanned advertiser rows for the date window and scoped them locally to the matched ads.",
+            "TikTok did not include item_id in report rows, so exact mode scoped rows locally by matched ad_id instead.",
+          ]
+        : []),
+      ...(matchMode === "exact" && !rowsIncludeItemIds && !rowsIncludeAdIds
+        ? [
+            "TikTok omitted both item_id and ad_id in report rows, so this exact lookup could not be safely scoped.",
+          ]
+        : []),
+      ...(matchMode !== "exact" && !rowsIncludeAdIds && rowsIncludeItemIds
+        ? [
+            "TikTok did not include ad_id in report rows, so best-effort mode fell back to item_id-based scoping.",
+          ]
+        : []),
+      ...(matchMode !== "exact" && !rowsIncludeAdIds && !rowsIncludeItemIds
+        ? [
+            "TikTok omitted both ad_id and item_id in report rows, so this lookup could not be safely scoped.",
           ]
         : []),
       ...report.warnings,
-      ...(matchMode === "exact" && !rowsIncludeItemIds
-        ? [
-            "TikTok's response did not echo item_id in each row, so exact mode depends on TikTok's server-side item_id filter for the final total.",
-          ]
-        : []),
       ...(matchMode !== "exact" && matchedSparkItemIds.length === 0
         ? [
             "TikTok did not expose Spark item IDs for the matched ads, but the totals were still scoped by ad_id.",
