@@ -61,13 +61,52 @@ type AdProfitTableClientProps = {
   startDate: string;
 };
 
-function getBackgroundImageStyle(imageUrl: string) {
-  return {
-    backgroundImage: `url(${JSON.stringify(imageUrl)})`,
-    backgroundPosition: "center",
-    backgroundRepeat: "no-repeat",
-    backgroundSize: "cover",
-  } as const;
+function PreviewThumbnail(args: {
+  imageUrl: string | null;
+  title: string;
+  url: string | null;
+}) {
+  const content = args.imageUrl ? (
+    <div className="relative h-full w-full overflow-hidden rounded-[1rem] bg-black/[0.3]">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        alt={args.title}
+        className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.03]"
+        loading="lazy"
+        src={args.imageUrl}
+      />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.02),rgba(0,0,0,0.2))]" />
+    </div>
+  ) : (
+    <div className="flex h-full w-full items-center justify-center rounded-[1rem] border border-dashed border-white/[0.1] bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.01))] px-3 text-center">
+      <span className="text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
+        No preview
+      </span>
+    </div>
+  );
+
+  const className =
+    "group block h-24 w-[4.25rem] shrink-0 overflow-hidden rounded-[1rem] border border-white/[0.08] bg-black/[0.24] shadow-[0_12px_30px_rgba(0,0,0,0.22)]";
+
+  if (args.url) {
+    return (
+      <a
+        className={className}
+        href={args.url}
+        rel="noreferrer"
+        target="_blank"
+        title={`Open ${args.title}`}
+      >
+        {content}
+      </a>
+    );
+  }
+
+  return (
+    <div className={className} title={args.title}>
+      {content}
+    </div>
+  );
 }
 
 export function AdProfitTableClient({
@@ -325,14 +364,12 @@ export function AdProfitTableClient({
               return (
                 <tr className="align-top" key={row.id}>
                   <td className="px-4 py-4">
-                    <div className="flex gap-3">
-                      {row.creativeImage ? (
-                        <div
-                          aria-hidden="true"
-                          className="hidden h-16 w-12 shrink-0 rounded-[0.85rem] border border-white/[0.08] bg-black/[0.24] md:block"
-                          style={getBackgroundImageStyle(row.creativeImage)}
-                        />
-                      ) : null}
+                    <div className="flex gap-4">
+                      <PreviewThumbnail
+                        imageUrl={row.creativeImage}
+                        title={row.creativeTitle}
+                        url={row.creativeUrl}
+                      />
 
                       <div className="min-w-0">
                         <p
