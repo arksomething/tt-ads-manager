@@ -109,7 +109,7 @@ function toDateOnlyString(value: Date) {
 
 function getDefaultStartDate() {
   const date = new Date();
-  date.setUTCDate(date.getUTCDate() - 29);
+  date.setUTCDate(date.getUTCDate() - 6);
   return toDateOnlyString(date);
 }
 
