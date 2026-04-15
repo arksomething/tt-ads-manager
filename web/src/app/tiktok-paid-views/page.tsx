@@ -949,6 +949,8 @@ function getNoticeLabel(value: string | undefined) {
       return "TikTok advertiser connection cleared from this browser.";
     case "oauth-select-advertiser":
       return "Choose which TikTok advertiser account to save for this browser.";
+    case "workspace-backend-unavailable":
+      return "Workspace mode is temporarily unavailable because the production database connection is failing. Standalone TikTok lookup still works here.";
     default:
       return undefined;
   }

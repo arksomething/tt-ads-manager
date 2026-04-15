@@ -37,7 +37,17 @@ export default async function AppHomePage({
     redirect("/login");
   }
 
-  const organizations = await getViewerOrganizations();
+  let organizations: Awaited<ReturnType<typeof getViewerOrganizations>>;
+
+  try {
+    organizations = await getViewerOrganizations();
+  } catch (error) {
+    if (publicAccessEnabled) {
+      redirect("/tiktok-paid-views?notice=workspace-backend-unavailable");
+    }
+
+    throw error;
+  }
 
   if (organizations.length === 0) {
     if (publicAccessEnabled) {
