@@ -11,7 +11,9 @@ const MAX_SINGULAR_REPORT_RANGE_DAYS = 30;
 const SINGULAR_SOURCE_CACHE_TTL_MS = 60 * 60 * 1_000;
 const SINGULAR_REPORT_CACHE_TTL_MS = 15 * 60 * 1_000;
 const SINGULAR_PENDING_REPORT_TTL_MS = 30 * 60 * 1_000;
-const SINGULAR_STATUS_POLL_INTERVAL_MS = 10_000;
+const SINGULAR_STATUS_POLL_INTERVAL_MS = 2_000;
+const SINGULAR_INITIAL_STATUS_POLL_ATTEMPTS = 3;
+const SINGULAR_INITIAL_STATUS_POLL_INTERVAL_MS = 1_000;
 const SINGULAR_REPORT_DIMENSIONS = [
   "app",
   "source",
@@ -579,12 +581,7 @@ async function getTikTokSingularOverlayForRange(args: {
     };
 
     singularReportCache.set(cacheKey, pendingEntry);
-    await sleep(SINGULAR_STATUS_POLL_INTERVAL_MS);
-
-    return completePendingReport(cacheKey, {
-      ...pendingEntry,
-      lastPolledAt: 0,
-    });
+    return warmPendingReport(cacheKey, pendingEntry);
   } catch (error) {
     singularReportCache.delete(cacheKey);
 
@@ -615,6 +612,47 @@ async function completePendingReport(
       ],
     });
   }
+
+  return pollPendingReport(cacheKey, entry);
+}
+
+async function warmPendingReport(
+  cacheKey: string,
+  entry: SingularPendingReportCacheEntry,
+): Promise<TikTokSingularOverlay> {
+  let latestEntry = entry;
+  let latestOverlay = getEmptyTikTokSingularOverlay({
+    configured: true,
+    cohortPeriod: entry.cohortPeriod,
+    sourceNames: entry.sourceNames,
+  });
+
+  for (let attempt = 1; attempt <= SINGULAR_INITIAL_STATUS_POLL_ATTEMPTS; attempt += 1) {
+    latestOverlay = await pollPendingReport(cacheKey, latestEntry);
+    const cached = readReportCache(cacheKey);
+
+    if (cached?.kind === "ready") {
+      return cached.value;
+    }
+
+    if (cached?.kind !== "pending") {
+      return latestOverlay;
+    }
+
+    latestEntry = cached;
+
+    if (attempt < SINGULAR_INITIAL_STATUS_POLL_ATTEMPTS) {
+      await sleep(SINGULAR_INITIAL_STATUS_POLL_INTERVAL_MS);
+    }
+  }
+
+  return latestOverlay;
+}
+
+async function pollPendingReport(
+  cacheKey: string,
+  entry: SingularPendingReportCacheEntry,
+): Promise<TikTokSingularOverlay> {
 
   if (entry.expiresAt <= Date.now()) {
     singularReportCache.delete(cacheKey);

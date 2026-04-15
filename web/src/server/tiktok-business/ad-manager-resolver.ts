@@ -1155,22 +1155,64 @@ export async function resolveTikTokAdsManagerCandidates(
     accessToken: account.accessToken,
     adIds: scopedAdIds,
   });
-  const resolvedPosts = await fetchResolvedPostsForAds({
-    advertiserId: account.advertiserId,
-    accessToken: account.accessToken,
+  const baseGroups = buildMatchedAdGroups({
     ads: matchedAds.ads,
     rows: report.rows,
   });
-  const groups = buildMatchedAdGroups({
-    ads: matchedAds.ads,
-    rows: report.rows,
-    resolvedPostsByItemId: resolvedPosts.resolvedPostsByItemId,
-  });
-  const candidates = matchResolvedAdGroups({
+  let candidates = matchResolvedAdGroups({
     advertiserId: account.advertiserId,
-    groups,
+    groups: baseGroups,
     singularRow: args.singularRow,
   });
+  let resolvedPostWarnings: string[] = [];
+
+  if (candidates.length > 0) {
+    const matchedAdIds = new Set(candidates.map((candidate) => candidate.adId));
+    const resolvedPosts = await fetchResolvedPostsForAds({
+      advertiserId: account.advertiserId,
+      accessToken: account.accessToken,
+      ads: matchedAds.ads.filter((ad) => matchedAdIds.has(ad.adId)),
+      rows: report.rows.filter((row) => row.adId && matchedAdIds.has(row.adId)),
+    });
+
+    resolvedPostWarnings = resolvedPosts.warnings;
+
+    if (resolvedPosts.resolvedPostsByItemId.size > 0) {
+      const enrichedGroups = buildMatchedAdGroups({
+        ads: matchedAds.ads.filter((ad) => matchedAdIds.has(ad.adId)),
+        rows: report.rows.filter((row) => row.adId && matchedAdIds.has(row.adId)),
+        resolvedPostsByItemId: resolvedPosts.resolvedPostsByItemId,
+      });
+      const enrichedCandidates = new Map(
+        matchResolvedAdGroups({
+          advertiserId: account.advertiserId,
+          groups: enrichedGroups,
+          singularRow: args.singularRow,
+        }).map((candidate) => [candidate.adId, candidate] as const),
+      );
+
+      candidates = candidates.map((candidate) => enrichedCandidates.get(candidate.adId) ?? candidate);
+    }
+  } else {
+    const resolvedPosts = await fetchResolvedPostsForAds({
+      advertiserId: account.advertiserId,
+      accessToken: account.accessToken,
+      ads: matchedAds.ads,
+      rows: report.rows,
+    });
+
+    resolvedPostWarnings = resolvedPosts.warnings;
+
+    candidates = matchResolvedAdGroups({
+      advertiserId: account.advertiserId,
+      groups: buildMatchedAdGroups({
+        ads: matchedAds.ads,
+        rows: report.rows,
+        resolvedPostsByItemId: resolvedPosts.resolvedPostsByItemId,
+      }),
+      singularRow: args.singularRow,
+    });
+  }
 
   return {
     advertiserId: account.advertiserId,
@@ -1179,7 +1221,7 @@ export async function resolveTikTokAdsManagerCandidates(
       ...accountWarnings,
       ...report.warnings,
       ...matchedAds.warnings,
-      ...resolvedPosts.warnings,
+      ...resolvedPostWarnings,
       ...(candidates.length === 0
         ? [
             "No TikTok ad matched this creative in the selected date range.",
