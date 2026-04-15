@@ -490,6 +490,8 @@ export default async function TikTokPaidViewsPage({
   const sourceScopeLabel = `${overlay.sourceNames.length} TikTok source${overlay.sourceNames.length === 1 ? "" : "s"}`;
   const tableRows: AdProfitTableClientRow[] = sortedRows.map((row) => ({
     id: row.rowKey,
+    creativeId: row.creativeId,
+    creativeName: row.creativeName,
     creativeTitle: getCreativeTitle(row),
     creativeContextLabel: getCreativeContextLabel(row),
     creativeIdLabel: row.creativeId
@@ -498,6 +500,7 @@ export default async function TikTokPaidViewsPage({
     creativeImage: row.creativeImage,
     creativeUrl: row.creativeUrl,
     campaignLabel: getCampaignLabel(row),
+    campaignName: row.campaignName,
     spendLabel: formatAmount(row.spend, row.currency),
     revenueLabel: formatAmount(row.revenue, row.currency),
     profitLabel: formatAmount(row.profit, row.currency),
@@ -511,6 +514,7 @@ export default async function TikTokPaidViewsPage({
     volumeSecondaryLabel: `${integerFormatter.format(row.conversions)} conversions`,
     sourceLabel: row.source ?? "Unknown source",
     appLabel: row.app ?? "Unknown app",
+    subCampaignName: row.subCampaignName,
   }));
 
   return (
@@ -696,7 +700,12 @@ export default async function TikTokPaidViewsPage({
             </div>
 
             {sortedRows.length > 0 ? (
-              <AdProfitTableClient rows={tableRows} />
+              <AdProfitTableClient
+                endDate={endDate}
+                organizationSlug={organizationSlug}
+                rows={tableRows}
+                startDate={startDate}
+              />
             ) : (
               <p className="mt-5 text-sm leading-6 text-muted-foreground">
                 Singular returned no creative rows for the selected date range.
