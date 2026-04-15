@@ -1,5 +1,9 @@
 import Link from "next/link";
 
+import {
+  AdProfitTableClient,
+  type AdProfitTableClientRow,
+} from "@/components/org-dashboard/ad-profit-table-client";
 import { prisma } from "@/lib/db";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
 import {
@@ -257,13 +261,6 @@ function getCreativeTitle(row: SingularCreativeRow) {
   return getCampaignLabel(row);
 }
 
-function getCreativeSubtitle(row: SingularCreativeRow) {
-  return uniqueNonEmptyStrings([
-    getCampaignLabel(row),
-    getCreativeContextLabel(row),
-  ]).join(" · ");
-}
-
 function compareMetricRows(
   left: SingularCreativeRow,
   right: SingularCreativeRow,
@@ -389,15 +386,6 @@ function rankRows(rows: readonly SingularCreativeRow[]) {
   }));
 }
 
-function getBackgroundImageStyle(imageUrl: string) {
-  return {
-    backgroundImage: `url(${JSON.stringify(imageUrl)})`,
-    backgroundPosition: "center",
-    backgroundRepeat: "no-repeat",
-    backgroundSize: "cover",
-  } as const;
-}
-
 function StatCard(args: {
   label: string;
   value: string;
@@ -416,96 +404,13 @@ function StatCard(args: {
   );
 }
 
-function HighlightCard(args: {
-  title: string;
-  description: string;
-  highlight: "roas" | "profit" | "spend";
-  row: SingularCreativeRow | null;
+function SummaryPill(args: {
+  label: string;
 }) {
-  const toneClassName =
-    args.highlight === "profit"
-      ? "border-[#90FF4D]/20 bg-[linear-gradient(140deg,rgba(144,255,77,0.12),rgba(255,255,255,0.03))]"
-      : args.highlight === "roas"
-        ? "border-[#FFD24D]/20 bg-[linear-gradient(140deg,rgba(255,210,77,0.12),rgba(255,255,255,0.03))]"
-        : "border-[#4DA3FF]/20 bg-[linear-gradient(140deg,rgba(77,163,255,0.12),rgba(255,255,255,0.03))]";
-
-  if (!args.row) {
-    return (
-      <article
-        className={`rounded-[1.35rem] border p-4 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur ${toneClassName}`}
-      >
-        <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">
-          {args.title}
-        </p>
-        <h3 className="mt-2 text-lg font-medium tracking-[-0.03em] text-foreground">
-          No qualifying creative yet
-        </h3>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          {args.description}
-        </p>
-      </article>
-    );
-  }
-
-  const highlightValue =
-    args.highlight === "profit"
-      ? formatAmount(args.row.profit, args.row.currency)
-      : args.highlight === "spend"
-        ? formatAmount(args.row.spend, args.row.currency)
-        : formatRoas(args.row.roas);
-  const highlightMeta =
-    args.highlight === "profit"
-      ? `${formatAmount(args.row.revenue, args.row.currency)} revenue on ${formatAmount(args.row.spend, args.row.currency)} spend`
-      : args.highlight === "spend"
-        ? `${formatAmount(args.row.revenue, args.row.currency)} revenue returned`
-        : `${formatAmount(args.row.profit, args.row.currency)} profit`;
-
   return (
-    <article
-      className={`rounded-[1.35rem] border p-4 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur ${toneClassName}`}
-    >
-      <div className="flex gap-4">
-        {args.row.creativeImage ? (
-          <div
-            aria-hidden="true"
-            className="hidden h-24 w-20 shrink-0 rounded-[1rem] border border-white/[0.1] bg-black/[0.24] sm:block"
-            style={getBackgroundImageStyle(args.row.creativeImage)}
-          />
-        ) : null}
-
-        <div className="min-w-0 flex-1">
-          <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">
-            {args.title}
-          </p>
-          <h3 className="mt-2 truncate text-lg font-medium tracking-[-0.03em] text-foreground">
-            {getCreativeTitle(args.row)}
-          </h3>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            {getCreativeSubtitle(args.row)}
-          </p>
-
-          <p className="mt-4 text-2xl font-medium tracking-[-0.05em] text-foreground">
-            {highlightValue}
-          </p>
-          <p className="mt-2 text-xs leading-5 text-muted-foreground">
-            {highlightMeta}
-          </p>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            {args.row.creativeUrl ? (
-              <a
-                className="inline-flex min-h-10 items-center rounded-[0.95rem] border border-white/[0.08] bg-black/[0.22] px-3 text-sm text-foreground transition hover:border-white/[0.14] hover:bg-white/[0.05]"
-                href={args.row.creativeUrl}
-                rel="noreferrer"
-                target="_blank"
-              >
-                Open creative
-              </a>
-            ) : null}
-          </div>
-        </div>
-      </div>
-    </article>
+    <div className="rounded-full border border-white/[0.08] bg-black/[0.2] px-3 py-1.5 text-xs text-muted-foreground">
+      {args.label}
+    </div>
   );
 }
 
@@ -528,9 +433,6 @@ export default async function TikTokPaidViewsPage({
     },
     orderBy: [{ updatedAt: "desc" }],
     select: {
-      advertiserId: true,
-      advertiserName: true,
-      lastValidatedAt: true,
       status: true,
     },
   });
@@ -563,18 +465,6 @@ export default async function TikTokPaidViewsPage({
   const rows = rankRows(aggregateSingularRows(overlay.rows));
   const sortedRows = sortRows(rows, sortKey);
   const reportCurrency = getSingleCurrency(sortedRows);
-  const topByRoas = sortRows(
-    rows.filter((row) => typeof row.roas === "number"),
-    "roas",
-  )[0] ?? null;
-  const topByProfit = sortRows(
-    rows.filter((row) => row.profit > 0),
-    "profit",
-  )[0] ?? null;
-  const topBySpend = sortRows(
-    rows.filter((row) => row.spend > 0),
-    "spend",
-  )[0] ?? null;
   const totalSpend = rows.reduce((total, row) => total + row.spend, 0);
   const totalRevenue = rows.reduce((total, row) => total + row.revenue, 0);
   const totalProfit = rows.reduce((total, row) => total + row.profit, 0);
@@ -593,6 +483,35 @@ export default async function TikTokPaidViewsPage({
         ]
       : []),
   ]);
+  const summaryScopeLabel =
+    appFilterNames.length > 0
+      ? `${appFilterNames.length} app${appFilterNames.length === 1 ? "" : "s"}`
+      : "All apps";
+  const sourceScopeLabel = `${overlay.sourceNames.length} TikTok source${overlay.sourceNames.length === 1 ? "" : "s"}`;
+  const tableRows: AdProfitTableClientRow[] = sortedRows.map((row) => ({
+    id: row.rowKey,
+    creativeTitle: getCreativeTitle(row),
+    creativeContextLabel: getCreativeContextLabel(row),
+    creativeIdLabel: row.creativeId
+      ? `Creative ID ${row.creativeId}`
+      : "Creative ID unavailable",
+    creativeImage: row.creativeImage,
+    creativeUrl: row.creativeUrl,
+    campaignLabel: getCampaignLabel(row),
+    spendLabel: formatAmount(row.spend, row.currency),
+    revenueLabel: formatAmount(row.revenue, row.currency),
+    profitLabel: formatAmount(row.profit, row.currency),
+    profitPositive: row.profit > 0,
+    roasLabel: formatRoas(row.roas),
+    revenueRankLabel: integerFormatter.format(row.revenueRank),
+    roasRankLabel: integerFormatter.format(row.roasRank),
+    compositeLabel: decimalFormatter.format(row.compositeScore),
+    overallRankLabel: integerFormatter.format(row.overallRank),
+    volumePrimaryLabel: `${integerFormatter.format(row.installs)} installs`,
+    volumeSecondaryLabel: `${integerFormatter.format(row.conversions)} conversions`,
+    sourceLabel: row.source ?? "Unknown source",
+    appLabel: row.app ?? "Unknown app",
+  }));
 
   return (
     <div className="space-y-4">
@@ -605,10 +524,8 @@ export default async function TikTokPaidViewsPage({
             <h1 className="mt-2 text-2xl font-medium tracking-[-0.045em] text-foreground">
               See every returned creative and sort it however you want.
             </h1>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              This page reads Singular creative performance directly, keeps every
-              returned row visible, and lets you switch between profit, ROAS,
-              revenue, spend, volume, and spreadsheet-style composite ranking.
+            <p className="mt-2 text-sm text-muted-foreground">
+              Singular-first creative performance for the selected window.
             </p>
           </div>
 
@@ -628,52 +545,28 @@ export default async function TikTokPaidViewsPage({
           </div>
         </div>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard
-            label="Singular"
-            meta="This leaderboard is driven directly from Singular creative rows."
-            value={overlay.configured ? "Connected" : "Missing"}
+        <div className="mt-5 flex flex-wrap gap-2">
+          <SummaryPill
+            label={`Singular ${overlay.configured ? "connected" : "missing"}`}
           />
-          <StatCard
-            label="TikTok connection"
-            meta={
-              connectedAccount?.advertiserName
-                ? `${connectedAccount.advertiserName} (${connectedAccount.advertiserId})`
-                : "Optional for this view. Used only for TikTok-native lookups."
-            }
-            value={connectedAccount ? connectedAccount.status : "Optional"}
-          />
-          <StatCard
-            label="Date window"
-            meta="The Singular report is chunked automatically if the range exceeds 30 days."
-            value={`${formatDate(startDate)} to ${formatDate(endDate)}`}
-          />
-          <StatCard
-            label="Scope"
-            meta={`${overlay.sourceNames.length} TikTok source name${overlay.sourceNames.length === 1 ? "" : "s"} in scope`}
-            value={
-              appFilterNames.length > 0
-                ? `${appFilterNames.length} app${appFilterNames.length === 1 ? "" : "s"}`
-                : "All apps"
+          <SummaryPill
+            label={
+              connectedAccount
+                ? `TikTok ${connectedAccount.status.toLowerCase()}`
+                : "TikTok optional"
             }
           />
+          <SummaryPill
+            label={`${formatDate(startDate)} to ${formatDate(endDate)}`}
+          />
+          <SummaryPill label={`${summaryScopeLabel} · ${sourceScopeLabel}`} />
         </div>
       </section>
 
       <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
-        <div className="flex flex-col gap-2">
-          <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
-            Singular leaderboard
-          </p>
-          <h2 className="text-lg font-medium tracking-[-0.03em] text-foreground">
-            Sort the raw creative export the way you actually use it.
-          </h2>
-          <p className="text-sm leading-6 text-muted-foreground">
-            No match mode. No TikTok-first fallback. The table below is just the
-            Singular creative report, aggregated across the selected date range and
-            sorted by {selectedSortOption.label.toLowerCase()}.
-          </p>
-        </div>
+        <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
+          Controls
+        </p>
 
         <form className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" method="get">
           <label className="block">
@@ -770,39 +663,18 @@ export default async function TikTokPaidViewsPage({
             />
             <StatCard
               label="Total spend"
-              meta={`${integerFormatter.format(profitableCreatives)} profitable creative${profitableCreatives === 1 ? "" : "s"} in range`}
+              meta="Across all returned creatives"
               value={formatAmount(totalSpend, reportCurrency)}
             />
             <StatCard
               label="Total revenue"
-              meta={`${formatAmount(totalProfit, reportCurrency)} net profit`}
+              meta="Attributed revenue in range"
               value={formatAmount(totalRevenue, reportCurrency)}
             />
             <StatCard
-              label="Top sort mode"
-              meta={selectedSortOption.hint}
-              value={selectedSortOption.label}
-            />
-          </section>
-
-          <section className="grid gap-4 xl:grid-cols-3">
-            <HighlightCard
-              description="The creative with the strongest return on ad spend."
-              highlight="roas"
-              row={topByRoas}
-              title="Top ROAS"
-            />
-            <HighlightCard
-              description="The creative with the strongest net profit."
-              highlight="profit"
-              row={topByProfit}
-              title="Top profit"
-            />
-            <HighlightCard
-              description="The heaviest spender in the selected date range."
-              highlight="spend"
-              row={topBySpend}
-              title="Top spend"
+              label="Net profit"
+              meta={`${integerFormatter.format(profitableCreatives)} profitable creative${profitableCreatives === 1 ? "" : "s"} in range`}
+              value={formatAmount(totalProfit, reportCurrency)}
             />
           </section>
 
@@ -813,179 +685,18 @@ export default async function TikTokPaidViewsPage({
                   Ranked creatives
                 </p>
                 <h2 className="mt-2 text-xl font-medium tracking-[-0.04em] text-foreground">
-                  Singular-first creative table
+                  Creative table
                 </h2>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-                  Sorted by {selectedSortOption.label.toLowerCase()}. Every returned
-                  row stays visible, with direct metric sorts plus the same
-                  revenue-and-ROAS composite logic your spreadsheet uses.
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {integerFormatter.format(sortedRows.length)} row
+                  {sortedRows.length === 1 ? "" : "s"} · sorted by{" "}
+                  {selectedSortOption.label.toLowerCase()}
                 </p>
-              </div>
-              <div className="rounded-full border border-white/[0.08] bg-black/[0.2] px-3 py-2 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                Creative performance
               </div>
             </div>
 
             {sortedRows.length > 0 ? (
-              <div className="mt-5 overflow-x-auto rounded-[1.2rem] border border-white/[0.08] bg-black/[0.18]">
-                <table className="min-w-[1660px] w-full border-collapse text-left">
-                  <thead className="bg-white/[0.03]">
-                    <tr>
-                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
-                        Creative
-                      </th>
-                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
-                        Campaign
-                      </th>
-                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
-                        Spend
-                      </th>
-                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
-                        Revenue
-                      </th>
-                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
-                        Profit
-                      </th>
-                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
-                        ROAS
-                      </th>
-                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
-                        Revenue rank
-                      </th>
-                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
-                        ROAS rank
-                      </th>
-                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
-                        Composite
-                      </th>
-                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
-                        Overall rank
-                      </th>
-                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
-                        Volume
-                      </th>
-                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
-                        Source
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/[0.06] text-sm text-foreground">
-                    {sortedRows.map((row) => {
-                      const isPositiveProfit = row.profit > 0;
-
-                      return (
-                        <tr className="align-top" key={row.rowKey}>
-                          <td className="px-4 py-4">
-                            <div className="flex gap-3">
-                              {row.creativeImage ? (
-                                <div
-                                  aria-hidden="true"
-                                  className="hidden h-16 w-12 shrink-0 rounded-[0.85rem] border border-white/[0.08] bg-black/[0.24] md:block"
-                                  style={getBackgroundImageStyle(row.creativeImage)}
-                                />
-                              ) : null}
-
-                              <div className="min-w-0">
-                                <p className="truncate font-medium text-foreground">
-                                  {getCreativeTitle(row)}
-                                </p>
-                                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                                  {getCreativeContextLabel(row)}
-                                </p>
-                                <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                                  {row.creativeUrl ? (
-                                    <a
-                                      className="text-foreground transition hover:text-white"
-                                      href={row.creativeUrl}
-                                      rel="noreferrer"
-                                      target="_blank"
-                                    >
-                                      Open creative
-                                    </a>
-                                  ) : null}
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-4 py-4">
-                            <p className="font-medium text-foreground">
-                              {getCampaignLabel(row)}
-                            </p>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {row.creativeId
-                                ? `Creative ID ${row.creativeId}`
-                                : "Creative ID unavailable"}
-                            </p>
-                          </td>
-                          <td className="px-4 py-4">
-                            <p className="font-medium text-foreground">
-                              {formatAmount(row.spend, row.currency)}
-                            </p>
-                          </td>
-                          <td className="px-4 py-4">
-                            <p className="font-medium text-foreground">
-                              {formatAmount(row.revenue, row.currency)}
-                            </p>
-                          </td>
-                          <td className="px-4 py-4">
-                            <p
-                              className={`font-medium ${
-                                isPositiveProfit ? "text-[#B8FF86]" : "text-foreground"
-                              }`}
-                            >
-                              {formatAmount(row.profit, row.currency)}
-                            </p>
-                          </td>
-                          <td className="px-4 py-4">
-                            <p className="font-medium text-foreground">
-                              {formatRoas(row.roas)}
-                            </p>
-                          </td>
-                          <td className="px-4 py-4">
-                            <p className="font-medium text-foreground">
-                              {integerFormatter.format(row.revenueRank)}
-                            </p>
-                          </td>
-                          <td className="px-4 py-4">
-                            <p className="font-medium text-foreground">
-                              {integerFormatter.format(row.roasRank)}
-                            </p>
-                          </td>
-                          <td className="px-4 py-4">
-                            <p className="font-medium text-foreground">
-                              {decimalFormatter.format(row.compositeScore)}
-                            </p>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              Avg revenue rank and ROAS rank
-                            </p>
-                          </td>
-                          <td className="px-4 py-4">
-                            <p className="font-medium text-foreground">
-                              {integerFormatter.format(row.overallRank)}
-                            </p>
-                          </td>
-                          <td className="px-4 py-4">
-                            <p className="font-medium text-foreground">
-                              {integerFormatter.format(row.installs)} installs
-                            </p>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {integerFormatter.format(row.conversions)} conversions
-                            </p>
-                          </td>
-                          <td className="px-4 py-4">
-                            <p className="font-medium text-foreground">
-                              {row.source ?? "Unknown source"}
-                            </p>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {row.app ?? "Unknown app"}
-                            </p>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <AdProfitTableClient rows={tableRows} />
             ) : (
               <p className="mt-5 text-sm leading-6 text-muted-foreground">
                 Singular returned no creative rows for the selected date range.
