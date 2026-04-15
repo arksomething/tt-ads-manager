@@ -21,7 +21,9 @@ const SINGULAR_REPORT_DIMENSIONS = [
   "sub_campaign_name",
   "adn_creative_id",
   "adn_creative_name",
-  "creative_reported_url",
+  "creative_url",
+  "creative_image",
+  "creative_is_video",
 ] as const;
 const SINGULAR_REPORT_METRICS = [
   "adn_cost",
