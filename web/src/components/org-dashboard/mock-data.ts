@@ -184,7 +184,7 @@ export const dashboardNavGroups: DashboardNavGroup[] = [
       },
       {
         key: "tiktok-paid-views",
-        label: "Top Ads",
+        label: "Ad Profit",
         segment: "tiktok-paid-views",
         icon: "integrations",
       },
@@ -263,10 +263,10 @@ export const dashboardRouteMeta: Record<DashboardSectionKey, DashboardRouteMeta>
   },
   "tiktok-paid-views": {
     groupLabel: "Analytics",
-    navLabel: "Top Ads",
-    title: "See the highest-performing TikTok ads without leaving the organization workspace.",
+    navLabel: "Ad Profit",
+    title: "See the most profitable TikTok ads without leaving the organization workspace.",
     description:
-      "This route connects TikTok Business reporting with revenue overlays so operators can quickly rank ads by delivery, profit, and ROAS.",
+      "This route connects TikTok Business reporting with revenue overlays so operators can quickly rank ads by profit, ROAS, and paid delivery.",
   },
   "tracking-options": {
     groupLabel: "Analytics",
@@ -741,20 +741,20 @@ export const placeholderSectionData: Record<
     ],
   },
   "tiktok-paid-views": {
-    eyebrow: "TikTok Spark Ads",
-    spotlightTitle: "Paid Spark delivery can be looked up by creator here.",
+    eyebrow: "Ad profitability",
+    spotlightTitle: "The dashboard ranks paid TikTok ads by profit here.",
     spotlightDescription:
-      "This route is wired for live TikTok reporting, advertiser access, and Spark item matching instead of placeholder analytics copy.",
-    highlights: ["Creator lookup", "Paid delivery", "Spark item IDs"],
+      "This route is wired for live TikTok reporting, advertiser access, and revenue overlays instead of placeholder analytics copy.",
+    highlights: ["Profit ranking", "ROAS", "Paid delivery"],
     statCards: [
-      { label: "Metric", value: "Impressions" },
+      { label: "Default view", value: "Profit" },
       { label: "Data source", value: "TikTok Business API" },
       { label: "Lookup mode", value: "On demand" },
     ],
     rows: [
       { label: "OAuth connection", value: "Required", status: "Ready" },
-      { label: "Spark authorization", value: "Required", status: "Ready" },
-      { label: "Creator paid lookup", value: "Live page", status: "Ready" },
+      { label: "Revenue overlay", value: "Singular", status: "Ready" },
+      { label: "Ad dashboard", value: "Live page", status: "Ready" },
     ],
   },
   "tracking-options": {

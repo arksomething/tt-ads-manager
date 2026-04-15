@@ -132,7 +132,7 @@ export default async function IntegrationsPage({
   const error = getErrorLabel(getSearchParamValue(resolvedSearchParams, "error"));
   const primaryTikTokAccount = workspace.tiktokAccounts[0] ?? null;
   const connectTikTokHref = `/api/org/${organizationSlug}/integrations/tiktok/oauth/start`;
-  const paidViewsHref = `/org/${organizationSlug}/tiktok-paid-views`;
+  const paidViewsHref = `/org/${organizationSlug}/tiktok-paid-views?sort=profit&matchMode=best_effort`;
 
   async function saveTwilioConfigAction(formData: FormData) {
     "use server";
@@ -377,7 +377,7 @@ export default async function IntegrationsPage({
                   TikTok Business
                 </p>
                 <h2 className="mt-2 text-xl font-medium tracking-[-0.04em] text-foreground">
-                  Connect advertiser access and launch paid-view lookups.
+                  Connect advertiser access and open the ad profitability dashboard.
                 </h2>
                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
                   OAuth is the fastest path. Manual advertiser credentials remain
@@ -389,7 +389,7 @@ export default async function IntegrationsPage({
                   className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-white/[0.08] bg-white/[0.04] px-4 text-sm font-medium text-foreground transition hover:border-white/[0.14] hover:bg-white/[0.07]"
                   href={paidViewsHref}
                 >
-                  View top ads
+                  Open ad dashboard
                 </Link>
                 <Link
                   className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68]"

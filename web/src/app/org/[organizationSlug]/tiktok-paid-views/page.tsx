@@ -159,8 +159,9 @@ function normalizeMatchMode(
   return value === "exact" ? "exact" : "best_effort";
 }
 
-function normalizeSortKey(value: string | undefined): TopAdsSortKey {
+function normalizeSortKey(value: string | undefined): TopAdsSortKey | null {
   switch (value) {
+    case "performance":
     case "paidMetric":
     case "profit":
     case "revenue":
@@ -168,7 +169,7 @@ function normalizeSortKey(value: string | undefined): TopAdsSortKey {
     case "installs":
       return value;
     default:
-      return "performance";
+      return null;
   }
 }
 
@@ -529,7 +530,9 @@ export default async function TikTokPaidViewsPage({
   const matchMode = normalizeMatchMode(
     getSearchParamValue(resolvedSearchParams, "matchMode"),
   );
-  const sortKey = normalizeSortKey(getSearchParamValue(resolvedSearchParams, "sort"));
+  const requestedSortKey = normalizeSortKey(
+    getSearchParamValue(resolvedSearchParams, "sort"),
+  );
   const connectHref = `/api/org/${organizationSlug}/integrations/tiktok/oauth/start?next=${encodeURIComponent(
     `/org/${organizationSlug}/tiktok-paid-views`,
   )}`;
@@ -569,6 +572,9 @@ export default async function TikTokPaidViewsPage({
   }
 
   const metricCopy = getMetricDisplayCopy(result?.metric ?? metric);
+  const sortKey =
+    requestedSortKey ??
+    (result?.singular.configured === false ? "performance" : "profit");
   const sortedAds = result ? sortAds(result.ads, sortKey) : [];
   const reportCurrency = getSingleCurrency(sortedAds);
   const topByPaidMetric = result ? sortAds(result.ads, "paidMetric")[0] ?? null : null;
@@ -600,15 +606,15 @@ export default async function TikTokPaidViewsPage({
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-3xl">
             <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
-              TikTok Spark Ads
+              Ad profitability
             </p>
             <h1 className="mt-2 text-2xl font-medium tracking-[-0.045em] text-foreground">
-              See the highest-performing ads in one view.
+              See your most profitable TikTok ads.
             </h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              This report ranks every paid TikTok ad for the connected advertiser,
-              then layers in Singular revenue, profit, ROAS, and installs when a
-              trustworthy match exists.
+              This dashboard ranks paid TikTok ads for the connected advertiser by
+              attributed profit when revenue data exists, then falls back to paid
+              delivery when it does not.
             </p>
           </div>
 
@@ -617,7 +623,7 @@ export default async function TikTokPaidViewsPage({
               className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-white/[0.12] bg-black/[0.24] px-4 text-sm font-medium text-foreground transition hover:border-white/[0.2]"
               href={`/org/${organizationSlug}/integrations`}
             >
-              Open Integrations
+              Manage connections
             </Link>
             <Link
               className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68]"
@@ -664,19 +670,20 @@ export default async function TikTokPaidViewsPage({
       <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
         <div className="flex flex-col gap-2">
           <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
-            Filters
+            Dashboard
           </p>
           <h2 className="text-lg font-medium tracking-[-0.03em] text-foreground">
-            Adjust the ranking logic.
+            Most teams only need a date range.
           </h2>
           <p className="text-sm leading-6 text-muted-foreground">
-            Use smart sort when you want the best answer fast. Switch to a single
-            metric when you need a stricter leaderboard.
+            The default view uses best-effort attribution and ranks by profit when
+            Singular is available. Open the advanced options only when you need a
+            stricter lookup.
           </p>
         </div>
 
         <form className="mt-5 space-y-4" method="get">
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(0,1.2fr)_auto]">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
             <label className="block">
               <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
                 Start date
@@ -757,49 +764,77 @@ export default async function TikTokPaidViewsPage({
                 className="inline-flex min-h-11 w-full items-center justify-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68]"
                 type="submit"
               >
-                Refresh report
+                Refresh dashboard
               </button>
             </div>
           </div>
+          <details className="rounded-[1rem] border border-white/[0.08] bg-black/[0.2] p-4">
+            <summary className="cursor-pointer list-none text-sm font-medium text-foreground marker:content-none">
+              Advanced ranking options
+              <span className="ml-2 text-xs font-normal uppercase tracking-[0.18em] text-muted-foreground">
+                {selectedSortOption.label} · {selectedMatchModeOption.label} ·{" "}
+                {selectedMetricOption.label}
+              </span>
+            </summary>
+
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              {selectedSortOption.hint} {selectedMatchModeOption.hint}
+            </p>
+
+            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+              <label className="block">
+                <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Metric
+                </span>
+                <select
+                  className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
+                  defaultValue={metric}
+                  name="metric"
+                >
+                  {metricOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Match mode
+                </span>
+                <select
+                  className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
+                  defaultValue={matchMode}
+                  name="matchMode"
+                >
+                  {matchModeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Sort ads by
+                </span>
+                <select
+                  className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
+                  defaultValue={sortKey}
+                  name="sort"
+                >
+                  {sortOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </details>
         </form>
-
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <div className="rounded-[1rem] border border-white/[0.08] bg-black/[0.2] p-4">
-            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              Sort logic
-            </p>
-            <p className="mt-2 text-sm font-medium text-foreground">
-              {selectedSortOption.label}
-            </p>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              {selectedSortOption.hint}
-            </p>
-          </div>
-
-          <div className="rounded-[1rem] border border-white/[0.08] bg-black/[0.2] p-4">
-            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              Selected metric
-            </p>
-            <p className="mt-2 text-sm font-medium text-foreground">
-              {selectedMetricOption.label}
-            </p>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              {selectedMetricOption.hint}
-            </p>
-          </div>
-
-          <div className="rounded-[1rem] border border-white/[0.08] bg-black/[0.2] p-4">
-            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              Attribution mode
-            </p>
-            <p className="mt-2 text-sm font-medium text-foreground">
-              {selectedMatchModeOption.label}
-            </p>
-            <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              {selectedMatchModeOption.hint}
-            </p>
-          </div>
-        </div>
       </section>
 
       {errorMessage ? (
@@ -872,13 +907,6 @@ export default async function TikTokPaidViewsPage({
 
           <section className="grid gap-4 xl:grid-cols-3">
             <TopAdHighlightCard
-              description="The ad pulling the most paid delivery in the selected date window."
-              highlight="paidMetric"
-              metric={metric}
-              row={topByPaidMetric}
-              title={`Top ${metricCopy.shortLabel.toLowerCase()}`}
-            />
-            <TopAdHighlightCard
               description="The matched ad with the strongest attributed profit."
               highlight="profit"
               metric={metric}
@@ -892,6 +920,13 @@ export default async function TikTokPaidViewsPage({
               row={topByRoas}
               title="Top ROAS"
             />
+            <TopAdHighlightCard
+              description="The ad pulling the most paid delivery in the selected date window."
+              highlight="paidMetric"
+              metric={metric}
+              row={topByPaidMetric}
+              title={`Top ${metricCopy.shortLabel.toLowerCase()}`}
+            />
           </section>
 
           <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
@@ -901,7 +936,7 @@ export default async function TikTokPaidViewsPage({
                   Ranked ads
                 </p>
                 <h2 className="mt-2 text-xl font-medium tracking-[-0.04em] text-foreground">
-                  Full ad leaderboard
+                  Most profitable ads
                 </h2>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
                   Sorted by {selectedSortOption.label.toLowerCase()}. Each row combines
