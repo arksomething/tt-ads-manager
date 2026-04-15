@@ -133,11 +133,7 @@ export function AdProfitTableClient({
 
     if (existingState?.status === "ready" && existingState.result) {
       if (existingState.result.candidates.length === 1) {
-        window.open(
-          existingState.result.candidates[0]!.adsManagerUrl,
-          "_blank",
-          "noopener,noreferrer",
-        );
+        window.location.assign(existingState.result.candidates[0]!.adsManagerUrl);
         return;
       }
 
@@ -152,8 +148,6 @@ export function AdProfitTableClient({
         return;
       }
     }
-
-    const pendingWindow = window.open("", "_blank");
 
     setResolveStates((current) => ({
       ...current,
@@ -210,20 +204,10 @@ export function AdProfitTableClient({
       }));
 
       if (hasSingleCandidate) {
-        const targetUrl = result.candidates[0]!.adsManagerUrl;
-
-        if (pendingWindow) {
-          pendingWindow.location.href = targetUrl;
-        } else {
-          window.open(targetUrl, "_blank", "noopener,noreferrer");
-        }
-
+        window.location.assign(result.candidates[0]!.adsManagerUrl);
         return;
       }
-
-      pendingWindow?.close();
     } catch (error) {
-      pendingWindow?.close();
       setResolveStates((current) => ({
         ...current,
         [row.id]: {
