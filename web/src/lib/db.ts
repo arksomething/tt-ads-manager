@@ -248,6 +248,417 @@ function serializeFieldValue(field: FieldMeta | undefined, value: unknown): unkn
   return value;
 }
 
+function isPushdownPrimitive(value: unknown) {
+  return (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    isDate(value)
+  );
+}
+
+function isPushdownPrimitiveArray(value: unknown): value is unknown[] {
+  return Array.isArray(value) && value.every((entry) => isPushdownPrimitive(entry));
+}
+
+function canPushDownScalarCondition(condition: unknown): boolean {
+  if (!isRecord(condition) || !isOperatorObject(condition)) {
+    return isPushdownPrimitive(condition);
+  }
+
+  for (const [operator, operand] of Object.entries(condition)) {
+    switch (operator) {
+      case "mode":
+        if (operand !== "insensitive") {
+          return false;
+        }
+        break;
+      case "equals":
+      case "gt":
+      case "gte":
+      case "lt":
+      case "lte":
+        if (!isPushdownPrimitive(operand)) {
+          return false;
+        }
+        break;
+      case "in":
+      case "notIn":
+        if (!isPushdownPrimitiveArray(operand)) {
+          return false;
+        }
+        break;
+      case "contains":
+      case "startsWith":
+      case "endsWith":
+        if (typeof operand !== "string") {
+          return false;
+        }
+        break;
+      default:
+        return false;
+    }
+  }
+
+  return true;
+}
+
+function canPushDownWhere(modelName: ModelName, where: unknown): boolean {
+  if (!where) {
+    return true;
+  }
+
+  if (!isRecord(where)) {
+    return false;
+  }
+
+  const andConditions = Array.isArray(where.AND)
+    ? where.AND
+    : where.AND
+      ? [where.AND]
+      : [];
+  const orConditions = Array.isArray(where.OR)
+    ? where.OR
+    : where.OR
+      ? [where.OR]
+      : [];
+  const notConditions = Array.isArray(where.NOT)
+    ? where.NOT
+    : where.NOT
+      ? [where.NOT]
+      : [];
+
+  if (orConditions.length > 0 || notConditions.length > 0) {
+    return false;
+  }
+
+  if (!andConditions.every((condition) => canPushDownWhere(modelName, condition))) {
+    return false;
+  }
+
+  return Object.entries(where).every(([key, condition]) => {
+    if (key === "AND" || key === "OR" || key === "NOT") {
+      return true;
+    }
+
+    if (getRelationMeta(modelName, key)) {
+      return false;
+    }
+
+    return canPushDownScalarCondition(condition);
+  });
+}
+
+function getPushdownSelectColumns(modelName: ModelName, args: QueryArgs | undefined) {
+  if (args?.include) {
+    return null;
+  }
+
+  if (!args?.select) {
+    return "*";
+  }
+
+  const columns: string[] = [];
+
+  for (const [fieldName, fieldSelection] of Object.entries(args.select)) {
+    if (!fieldSelection) {
+      continue;
+    }
+
+    if (fieldName === "_count") {
+      return null;
+    }
+
+    const field = getFieldMeta(modelName, fieldName);
+
+    if (!field || field.kind === "relation" || fieldSelection !== true) {
+      return null;
+    }
+
+    columns.push(fieldName);
+  }
+
+  return columns.length > 0 ? columns.join(",") : "*";
+}
+
+function getPushdownOrderSpecs(
+  modelName: ModelName,
+  orderBy: RecordValue | RecordValue[] | undefined,
+) {
+  const orderSpecs = Array.isArray(orderBy) ? orderBy : orderBy ? [orderBy] : [];
+
+  return orderSpecs.map((orderSpec) => {
+    const [fieldName, direction] = Object.entries(orderSpec)[0] ?? [];
+
+    if (
+      !fieldName ||
+      getRelationMeta(modelName, fieldName) ||
+      (direction !== "asc" && direction !== "desc")
+    ) {
+      return null;
+    }
+
+    const field = getFieldMeta(modelName, fieldName);
+
+    if (!field || field.kind === "relation") {
+      return null;
+    }
+
+    return {
+      fieldName,
+      ascending: direction === "asc",
+    };
+  });
+}
+
+function escapeLikePattern(value: string) {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
+function applyPushdownEquals(
+  query: any,
+  fieldName: string,
+  field: FieldMeta | undefined,
+  value: unknown,
+  insensitive = false,
+) {
+  if (value === null) {
+    return query.is(fieldName, null);
+  }
+
+  const serialized = serializeFieldValue(field, value);
+
+  if (insensitive && typeof serialized === "string") {
+    return query.ilike(fieldName, escapeLikePattern(serialized));
+  }
+
+  return query.eq(fieldName, serialized);
+}
+
+function applyPushdownScalarCondition(
+  query: any,
+  modelName: ModelName,
+  fieldName: string,
+  condition: unknown,
+) {
+  const field = getFieldMeta(modelName, fieldName);
+
+  if (!isRecord(condition) || !isOperatorObject(condition)) {
+    return applyPushdownEquals(query, fieldName, field, condition);
+  }
+
+  const insensitive = condition.mode === "insensitive";
+  let nextQuery = query;
+
+  for (const [operator, operand] of Object.entries(condition)) {
+    switch (operator) {
+      case "mode":
+        break;
+      case "equals":
+        nextQuery = applyPushdownEquals(nextQuery, fieldName, field, operand, insensitive);
+        break;
+      case "in":
+        nextQuery = nextQuery.in(
+          fieldName,
+          (operand as unknown[]).map((value) => serializeFieldValue(field, value)),
+        );
+        break;
+      case "notIn":
+        nextQuery = nextQuery.not(
+          fieldName,
+          "in",
+          `(${(operand as unknown[])
+            .map((value) => JSON.stringify(serializeFieldValue(field, value)))
+            .join(",")})`,
+        );
+        break;
+      case "contains":
+        nextQuery = insensitive
+          ? nextQuery.ilike(fieldName, `%${escapeLikePattern(String(operand))}%`)
+          : nextQuery.like(fieldName, `%${escapeLikePattern(String(operand))}%`);
+        break;
+      case "startsWith":
+        nextQuery = insensitive
+          ? nextQuery.ilike(fieldName, `${escapeLikePattern(String(operand))}%`)
+          : nextQuery.like(fieldName, `${escapeLikePattern(String(operand))}%`);
+        break;
+      case "endsWith":
+        nextQuery = insensitive
+          ? nextQuery.ilike(fieldName, `%${escapeLikePattern(String(operand))}`)
+          : nextQuery.like(fieldName, `%${escapeLikePattern(String(operand))}`);
+        break;
+      case "gt":
+        nextQuery = nextQuery.gt(fieldName, serializeFieldValue(field, operand));
+        break;
+      case "gte":
+        nextQuery = nextQuery.gte(fieldName, serializeFieldValue(field, operand));
+        break;
+      case "lt":
+        nextQuery = nextQuery.lt(fieldName, serializeFieldValue(field, operand));
+        break;
+      case "lte":
+        nextQuery = nextQuery.lte(fieldName, serializeFieldValue(field, operand));
+        break;
+      default:
+        return null;
+    }
+  }
+
+  return nextQuery;
+}
+
+function applyPushdownWhere(
+  query: any,
+  modelName: ModelName,
+  where: unknown,
+) {
+  if (!where) {
+    return query;
+  }
+
+  if (!isRecord(where)) {
+    return null;
+  }
+
+  let nextQuery = query;
+  const andConditions = Array.isArray(where.AND)
+    ? where.AND
+    : where.AND
+      ? [where.AND]
+      : [];
+
+  for (const condition of andConditions) {
+    nextQuery = applyPushdownWhere(nextQuery, modelName, condition);
+
+    if (!nextQuery) {
+      return null;
+    }
+  }
+
+  for (const [key, condition] of Object.entries(where)) {
+    if (key === "AND" || key === "OR" || key === "NOT") {
+      continue;
+    }
+
+    nextQuery = applyPushdownScalarCondition(nextQuery, modelName, key, condition);
+
+    if (!nextQuery) {
+      return null;
+    }
+  }
+
+  return nextQuery;
+}
+
+async function tryExecuteFindManyViaSupabase(
+  modelName: ModelName,
+  args: QueryArgs | undefined,
+  context: QueryContext,
+  baseRows?: RecordValue[],
+) {
+  if (baseRows || !canPushDownWhere(modelName, args?.where)) {
+    return null;
+  }
+
+  const selectColumns = getPushdownSelectColumns(modelName, args);
+
+  if (!selectColumns) {
+    return null;
+  }
+
+  const orderSpecs = getPushdownOrderSpecs(modelName, args?.orderBy);
+
+  if (orderSpecs.some((orderSpec) => !orderSpec)) {
+    return null;
+  }
+
+  if ((args?.skip ?? 0) > 0 && typeof args?.take !== "number") {
+    return null;
+  }
+
+  if (args?.take === 0) {
+    context.tableStatus.set(modelName, "ready");
+    return [];
+  }
+
+  const client = getSupabaseDbClient();
+
+  if (!client) {
+    return null;
+  }
+
+  let query: any = client.from(getModelMeta(modelName).table).select(selectColumns);
+  query = applyPushdownWhere(query, modelName, args?.where);
+
+  if (!query) {
+    return null;
+  }
+
+  for (const orderSpec of orderSpecs) {
+    query = query.order(orderSpec!.fieldName, { ascending: orderSpec!.ascending });
+  }
+
+  if (typeof args?.take === "number") {
+    const from = args?.skip ?? 0;
+    const to = Math.max(from, from + Math.max(args.take, 0) - 1);
+    query = query.range(from, to);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    if (isSupabaseMissingTableError(error)) {
+      context.tableStatus.set(modelName, "missing");
+      return [];
+    }
+
+    throw new Error(`Failed to read ${modelName}: ${error.message}`);
+  }
+
+  context.tableStatus.set(modelName, "ready");
+  return (data ?? []).map((row: unknown) => normalizeRow(modelName, row as RecordValue));
+}
+
+async function tryExecuteCountViaSupabase(
+  modelName: ModelName,
+  args: QueryArgs | undefined,
+  context: QueryContext,
+) {
+  if (!canPushDownWhere(modelName, args?.where)) {
+    return null;
+  }
+
+  const client = getSupabaseDbClient();
+
+  if (!client) {
+    return null;
+  }
+
+  let query: any = client
+    .from(getModelMeta(modelName).table)
+    .select("*", { count: "exact", head: true });
+  query = applyPushdownWhere(query, modelName, args?.where);
+
+  if (!query) {
+    return null;
+  }
+
+  const { count, error } = await query;
+
+  if (error) {
+    if (isSupabaseMissingTableError(error)) {
+      context.tableStatus.set(modelName, "missing");
+      return 0;
+    }
+
+    throw new Error(`Failed to count ${modelName}: ${error.message}`);
+  }
+
+  context.tableStatus.set(modelName, "ready");
+  return count ?? 0;
+}
+
 async function loadRows(modelName: ModelName, context: QueryContext): Promise<RecordValue[]> {
   const cachedRows = context.rowCache.get(modelName);
 
@@ -864,6 +1275,17 @@ async function executeFindMany(
   context: QueryContext,
   baseRows?: RecordValue[],
 ) {
+  const pushedDownRows = await tryExecuteFindManyViaSupabase(
+    modelName,
+    args,
+    context,
+    baseRows,
+  );
+
+  if (pushedDownRows) {
+    return pushedDownRows;
+  }
+
   const filteredRows = await getFilteredRows(modelName, args, context, baseRows);
   const orderedRows = await applyOrderBy(modelName, filteredRows, args?.orderBy, context);
   const skippedRows = args?.skip ? orderedRows.slice(args.skip) : orderedRows;
@@ -1235,6 +1657,12 @@ async function executeUpsert(modelName: ModelName, args: QueryArgs, context: Que
 }
 
 async function executeCount(modelName: ModelName, args: QueryArgs | undefined, context: QueryContext) {
+  const pushedDownCount = await tryExecuteCountViaSupabase(modelName, args, context);
+
+  if (typeof pushedDownCount === "number") {
+    return pushedDownCount;
+  }
+
   const rows = await getFilteredRows(modelName, args, context);
   return rows.length;
 }
