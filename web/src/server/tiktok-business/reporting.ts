@@ -3,6 +3,11 @@ import { Platform, SparkAuthorizationStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
 
+import {
+  getAdProfitabilityReportForAdvertiser,
+  type TikTokAdAttributionMatchMode,
+  type TikTokAdProfitabilityReport,
+} from "./ad-profitability";
 import { requestTikTokBusinessApi } from "./client";
 
 const MAX_REPORT_PAGES = 20;
@@ -632,4 +637,28 @@ export async function getPaidViewsForCreatorByNameForOrganization(
     endDate: args.endDate,
     metric: args.metric,
   });
+}
+
+export async function getTopAdsForOrganization(args: {
+  organizationSlug: string;
+  startDate: QueryDateInput;
+  endDate: QueryDateInput;
+  metric?: TikTokPaidViewMetric;
+  matchMode?: TikTokAdAttributionMatchMode;
+}): Promise<TikTokAdProfitabilityReport> {
+  const membership = await requireOrganizationMembership(args.organizationSlug);
+  const { account, warnings } = await getOrgTikTokAccount(membership.organizationId);
+  const report = await getAdProfitabilityReportForAdvertiser({
+    advertiserId: account.advertiserId,
+    accessToken: account.accessToken,
+    startDate: args.startDate,
+    endDate: args.endDate,
+    metric: args.metric,
+    matchMode: args.matchMode,
+  });
+
+  return {
+    ...report,
+    warnings: [...warnings, ...report.warnings],
+  };
 }

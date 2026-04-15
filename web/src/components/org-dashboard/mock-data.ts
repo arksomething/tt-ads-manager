@@ -184,7 +184,7 @@ export const dashboardNavGroups: DashboardNavGroup[] = [
       },
       {
         key: "tiktok-paid-views",
-        label: "TikTok Paid Views",
+        label: "Top Ads",
         segment: "tiktok-paid-views",
         icon: "integrations",
       },
@@ -263,10 +263,10 @@ export const dashboardRouteMeta: Record<DashboardSectionKey, DashboardRouteMeta>
   },
   "tiktok-paid-views": {
     groupLabel: "Analytics",
-    navLabel: "TikTok Paid Views",
-    title: "Look up paid Spark Ads delivery for a creator without leaving the organization workspace.",
+    navLabel: "Top Ads",
+    title: "See the highest-performing TikTok ads without leaving the organization workspace.",
     description:
-      "This route connects TikTok Business advertiser access, Spark item IDs, and live reporting into one simple operator surface.",
+      "This route connects TikTok Business reporting with revenue overlays so operators can quickly rank ads by delivery, profit, and ROAS.",
   },
   "tracking-options": {
     groupLabel: "Analytics",

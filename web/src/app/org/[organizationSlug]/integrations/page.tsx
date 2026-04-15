@@ -389,7 +389,7 @@ export default async function IntegrationsPage({
                   className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-white/[0.08] bg-white/[0.04] px-4 text-sm font-medium text-foreground transition hover:border-white/[0.14] hover:bg-white/[0.07]"
                   href={paidViewsHref}
                 >
-                  Open paid views
+                  View top ads
                 </Link>
                 <Link
                   className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68]"
