@@ -153,7 +153,7 @@ export function AdProfitTableClient({
       }
     }
 
-    const pendingWindow = window.open("", "_blank", "noopener,noreferrer");
+    const pendingWindow = window.open("", "_blank");
 
     setResolveStates((current) => ({
       ...current,
