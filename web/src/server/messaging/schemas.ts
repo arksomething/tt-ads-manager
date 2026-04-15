@@ -1,4 +1,4 @@
-import { MessagingChannel } from "@prisma/client";
+import { MessagingChannel } from "@/lib/prisma-shim";
 import { z } from "zod";
 
 const e164PhoneSchema = z

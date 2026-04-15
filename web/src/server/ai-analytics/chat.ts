@@ -1,4 +1,4 @@
-import { Platform, type Prisma } from "@prisma/client";
+import { Platform, type Prisma } from "@/lib/prisma-shim";
 import { z } from "zod";
 
 import { getAiEnv } from "@/lib/server-env";

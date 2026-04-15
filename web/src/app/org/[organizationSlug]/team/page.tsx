@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CampaignRole, OrganizationRole } from "@prisma/client";
+import { CampaignRole, OrganizationRole } from "@/lib/prisma-shim";
 import { redirect } from "next/navigation";
 
 import { CampaignBadge } from "@/components/org-dashboard/campaign-badge";
@@ -536,7 +536,7 @@ export default async function OrganizationTeamPage({
                               </div>
                             ) : invitation.campaignAccess.length > 0 ? (
                               <div className="flex max-w-2xl flex-wrap gap-2">
-                                {invitation.campaignAccess.map((campaignAccess) => (
+                                {invitation.campaignAccess.map((campaignAccess: any) => (
                                   <div
                                     key={`${invitation.id}-${campaignAccess.id}`}
                                     className="flex max-w-full items-center gap-2"

@@ -8,7 +8,7 @@ This directory contains the actual Billion Views product app.
 - React 19
 - TypeScript
 - Tailwind CSS v4
-- Prisma + PostgreSQL
+- Supabase REST + server-side data client
 - Auth.js with Google OAuth
 - Zod for validation
 
@@ -16,7 +16,8 @@ This directory contains the actual Billion Views product app.
 
 Copy `.env.example` to `.env.local` and fill in:
 
-- `DATABASE_URL`
+- `SUPABASE_URL`
+- `SUPABASE_SK` or `SUPABASE_SERVICE_ROLE_KEY`
 - `AUTH_SECRET`
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
@@ -30,10 +31,7 @@ Copy `.env.example` to `.env.local` and fill in:
 npm run dev
 npm run lint
 npm run typecheck
-npm run db:generate
-npm run db:push
-npm run db:migrate
-npm run db:studio
+npm run db:generate-shim
 ```
 
 ## Structure
@@ -42,7 +40,7 @@ npm run db:studio
 - `src/lib/`: shared runtime utilities
 - `src/server/`: server-side domain modules and integrations
 - `src/types/`: shared type augmentation
-- `prisma/`: database schema
+- `prisma/`: model source used to generate the local shim and relation metadata
 
 ## Notes
 

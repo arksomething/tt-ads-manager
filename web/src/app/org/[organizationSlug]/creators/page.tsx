@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CreatorStatus, MessagingChannel } from "@prisma/client";
+import { CreatorStatus, MessagingChannel } from "@/lib/prisma-shim";
 import { redirect } from "next/navigation";
 
 import { CampaignBadge } from "@/components/org-dashboard/campaign-badge";
@@ -638,7 +638,7 @@ export default async function CreatorsPage({
                         </p>
                         {creator.contactPoints.length > 0 ? (
                           <div className="space-y-2">
-                            {creator.contactPoints.map((contactPoint) => (
+                            {creator.contactPoints.map((contactPoint: any) => (
                               <div
                                 key={contactPoint.id}
                                 className="flex flex-wrap items-center gap-2 rounded-[0.9rem] border border-white/[0.08] bg-white/[0.03] px-2.5 py-2"
@@ -730,7 +730,7 @@ export default async function CreatorsPage({
                     <td className="px-4 py-4">
                       {creator.platformAccounts.length > 0 ? (
                         <div className="space-y-2">
-                          {creator.platformAccounts.slice(0, 3).map((account) => (
+                          {creator.platformAccounts.slice(0, 3).map((account: any) => (
                             <div
                               key={account.id}
                               className="rounded-[0.95rem] border border-white/[0.08] bg-white/[0.03] px-3 py-2.5"
@@ -781,7 +781,7 @@ export default async function CreatorsPage({
                     </td>
                     <td className="px-4 py-4">
                       <div className="flex max-w-[16rem] flex-wrap gap-2 text-[0.68rem] uppercase tracking-[0.18em] text-muted-foreground">
-                        {creator.campaignLinks.map((link) => (
+                        {creator.campaignLinks.map((link: any) => (
                             <CampaignBadge
                               key={link.campaign.id}
                               campaignId={link.campaign.id}
@@ -804,7 +804,7 @@ export default async function CreatorsPage({
                             {creator.language}
                           </span>
                         ) : null}
-                        {creator.customTags.map((tag) => (
+                        {creator.customTags.map((tag: any) => (
                           <span
                             key={tag}
                             className="rounded-full border border-[#90FF4D]/20 bg-[#90FF4D]/[0.08] px-2.5 py-1 text-[#C7FFA4]"
@@ -842,7 +842,7 @@ export default async function CreatorsPage({
                                 name="videoId"
                               >
                                 <option value="">No specific video</option>
-                                {creator.videos.map((video) => (
+                                {creator.videos.map((video: any) => (
                                   <option key={video.id} value={video.id}>
                                     {video.sourceVideoId ??
                                       video.titleOrCaption ??

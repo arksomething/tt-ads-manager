@@ -1,4 +1,4 @@
-import { Platform, SparkAuthorizationStatus } from "@prisma/client";
+import { Platform, SparkAuthorizationStatus } from "@/lib/prisma-shim";
 
 import { prisma } from "@/lib/db";
 import { requireOrganizationMembership } from "@/server/auth/organizations";

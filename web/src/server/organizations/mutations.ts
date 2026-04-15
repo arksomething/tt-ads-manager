@@ -1,4 +1,4 @@
-import { CampaignRole, OrganizationRole } from "@prisma/client";
+import { CampaignRole, OrganizationRole } from "@/lib/prisma-shim";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 

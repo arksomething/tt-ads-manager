@@ -4,7 +4,7 @@ import {
   Platform,
   SourceEntityType,
   type Prisma,
-} from "@prisma/client";
+} from "@/lib/prisma-shim";
 import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/db";

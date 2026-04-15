@@ -1,4 +1,4 @@
-import { OrganizationRole } from "@prisma/client";
+import { OrganizationRole } from "@/lib/prisma-shim";
 
 import {
   getOrganizationMembers,

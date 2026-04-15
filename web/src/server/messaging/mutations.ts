@@ -7,7 +7,7 @@ import {
   MessagingChannel,
   type Prisma,
   SparkCodeRequestStatus,
-} from "@prisma/client";
+} from "@/lib/prisma-shim";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
@@ -583,7 +583,9 @@ export async function sendSparkCodeRequestForOrganization(args: {
   }
 
   const selectedContactPoint = values.contactPointId
-    ? creator.contactPoints.find((contactPoint) => contactPoint.id === values.contactPointId)
+    ? creator.contactPoints.find(
+        (contactPoint: any) => contactPoint.id === values.contactPointId,
+      )
     : creator.contactPoints[0];
 
   if (!selectedContactPoint) {

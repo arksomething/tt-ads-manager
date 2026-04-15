@@ -1,4 +1,4 @@
-import { CampaignRole, type OrganizationMembership } from "@prisma/client";
+import { CampaignRole, type OrganizationMembership } from "@/lib/prisma-shim";
 
 import { prisma } from "@/lib/db";
 import { requireOrganizationMembership } from "@/server/auth/organizations";

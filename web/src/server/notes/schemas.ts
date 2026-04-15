@@ -1,4 +1,4 @@
-import { NoteEntityType } from "@prisma/client";
+import { NoteEntityType } from "@/lib/prisma-shim";
 import { z } from "zod";
 
 export const createNoteSchema = z.object({

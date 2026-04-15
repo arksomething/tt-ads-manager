@@ -7,7 +7,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/lib/prisma-shim";
 
 import { getTikTokBusinessOauthEnv } from "@/lib/server-env";
 import { prisma } from "@/lib/db";
@@ -34,6 +34,13 @@ type TikTokOauthTokenResponse = {
 
 export type TikTokAuthorizedAdvertiser = {
   advertiserId: string;
+  advertiserName: string | null;
+  businessCenterId: string | null;
+  rawPayload: QueryPrimitiveRecord;
+};
+
+type TikTokAuthorizedAdvertiserCandidate = {
+  advertiserId: string | null;
   advertiserName: string | null;
   businessCenterId: string | null;
   rawPayload: QueryPrimitiveRecord;
@@ -466,7 +473,7 @@ export async function getAuthorizedTikTokAdvertisers(args: {
 
   return listValue
     .filter(isRecord)
-    .map((advertiser) => ({
+    .map((advertiser: QueryPrimitiveRecord) => ({
       advertiserId: getFirstString(advertiser, ["advertiser_id", "advertiserId"]),
       advertiserName: getFirstString(advertiser, [
         "advertiser_name",
@@ -478,8 +485,8 @@ export async function getAuthorizedTikTokAdvertisers(args: {
     }))
     .filter(
       (
-        advertiser,
-      ): advertiser is TikTokAuthorizedAdvertiser & { advertiserId: string } =>
+        advertiser: TikTokAuthorizedAdvertiserCandidate,
+      ): advertiser is TikTokAuthorizedAdvertiser =>
         Boolean(advertiser.advertiserId),
     );
 }

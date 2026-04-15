@@ -1,4 +1,4 @@
-import { CampaignRole } from "@prisma/client";
+import { CampaignRole } from "@/lib/prisma-shim";
 
 import {
   getCampaignWorkspaceDetail,
@@ -255,7 +255,7 @@ export async function CampaignDetailPanel({
           </p>
           <div className="mt-3 space-y-2.5">
             {activeCampaignDetails.memberships.length > 0 ? (
-              activeCampaignDetails.memberships.map((member) => (
+              activeCampaignDetails.memberships.map((member: any) => (
                 <div
                   key={member.id}
                   className="rounded-[1.05rem] border border-white/[0.08] bg-black/[0.18] px-4 py-3"
@@ -421,7 +421,7 @@ export async function CampaignDetailPanel({
 
           <div className="mt-4 space-y-2.5">
             {activeCampaignDetails.invitations.length > 0 ? (
-              activeCampaignDetails.invitations.map((invitation) => (
+              activeCampaignDetails.invitations.map((invitation: any) => (
                 <div
                   key={invitation.id}
                   className="rounded-[1.05rem] border border-white/[0.08] bg-black/[0.18] px-4 py-3"
@@ -494,7 +494,7 @@ export async function CampaignDetailPanel({
           ) : null}
           <div className="mt-3 space-y-2.5">
             {activeCampaignDetails.creators.length > 0 ? (
-              activeCampaignDetails.creators.map((campaignCreator) => (
+              activeCampaignDetails.creators.map((campaignCreator: any) => (
                 <div
                   key={campaignCreator.id}
                   className="rounded-[1.05rem] border border-white/[0.08] bg-black/[0.18] px-4 py-3"
@@ -527,7 +527,7 @@ export async function CampaignDetailPanel({
           ) : null}
           <div className="mt-3 space-y-2.5">
             {activeCampaignDetails.videos.length > 0 ? (
-              activeCampaignDetails.videos.map((video) => (
+              activeCampaignDetails.videos.map((video: any) => (
                 <a
                   key={video.id}
                   className="block rounded-[1.05rem] border border-white/[0.08] bg-black/[0.18] px-4 py-3 transition hover:border-white/[0.14] hover:bg-black/[0.22]"

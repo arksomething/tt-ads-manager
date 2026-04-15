@@ -2,7 +2,7 @@ import {
   ExternalSource,
   SourceEntityType,
   type Prisma,
-} from "@prisma/client";
+} from "@/lib/prisma-shim";
 
 import { prisma } from "@/lib/db";
 import { requireOrganizationMembership } from "@/server/auth/organizations";

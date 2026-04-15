@@ -1,4 +1,4 @@
-import { Platform } from "@prisma/client";
+import { Platform } from "@/lib/prisma-shim";
 import { z } from "zod";
 
 export const createVideoSchema = z.object({

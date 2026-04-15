@@ -1,4 +1,4 @@
-import { PayoutStatus } from "@prisma/client";
+import { PayoutStatus } from "@/lib/prisma-shim";
 
 import { prisma } from "@/lib/db";
 

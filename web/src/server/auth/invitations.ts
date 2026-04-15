@@ -1,4 +1,4 @@
-import { OrganizationRole } from "@prisma/client";
+import { OrganizationRole } from "@/lib/prisma-shim";
 
 import { prisma } from "@/lib/db";
 
@@ -30,7 +30,7 @@ export async function applyPendingInvitationsForUser({
   const campaignInvitationDelegate =
     prismaWithOptionalInvitationDelegates.campaignInvitation;
 
-  // During local schema/client churn, the dev server can hold a stale Prisma
+  // During local schema@/lib/prisma-shim churn, the dev server can hold a stale Prisma
   // runtime. Skip invitation auto-claiming rather than blocking org access.
   if (!organizationInvitationDelegate || !campaignInvitationDelegate) {
     if (process.env.NODE_ENV !== "production") {

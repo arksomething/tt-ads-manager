@@ -1,4 +1,4 @@
-import { type Prisma } from "@prisma/client";
+import { type Prisma } from "@/lib/prisma-shim";
 
 import { prisma } from "@/lib/db";
 import { hasAiEnv } from "@/lib/server-env";

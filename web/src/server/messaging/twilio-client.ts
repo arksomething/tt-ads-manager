@@ -1,5 +1,5 @@
 import twilio, { type Twilio } from "twilio";
-import { MessagingChannel } from "@prisma/client";
+import { MessagingChannel } from "@/lib/prisma-shim";
 
 import { getTwilioEnv } from "@/lib/server-env";
 

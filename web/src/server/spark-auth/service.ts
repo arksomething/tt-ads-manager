@@ -1,4 +1,4 @@
-import { SparkAuthorizationStatus } from "@prisma/client";
+import { SparkAuthorizationStatus } from "@/lib/prisma-shim";
 
 import { prisma } from "@/lib/db";
 import { hashSparkCode } from "@/server/messaging/parser";

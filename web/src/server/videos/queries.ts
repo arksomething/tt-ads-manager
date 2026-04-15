@@ -1,4 +1,4 @@
-import { type Platform, type Prisma } from "@prisma/client";
+import { type Platform, type Prisma } from "@/lib/prisma-shim";
 
 import { prisma } from "@/lib/db";
 import { canManageOrganization } from "@/server/auth/roles";

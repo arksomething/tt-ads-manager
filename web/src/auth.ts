@@ -3,6 +3,7 @@ import Google from "next-auth/providers/google";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 
+import { SchemaUnavailableError, db } from "@/lib/db";
 import { getAuthEnv, isGoogleAuthDisabled } from "@/lib/server-env";
 
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
@@ -70,9 +71,103 @@ function getAuthCookieConfig(authUrl: string | undefined) {
   };
 }
 
+function getAuthFallbackUserId(token: { sub?: unknown; email?: unknown }) {
+  if (typeof token.sub === "string" && token.sub.length > 0) {
+    return token.sub;
+  }
+
+  if (typeof token.email === "string" && token.email.length > 0) {
+    return token.email;
+  }
+
+  return null;
+}
+
+async function syncAuthUserRecord(args: {
+  email?: unknown;
+  image?: unknown;
+  name?: unknown;
+}) {
+  const authDb = db as any;
+  const email =
+    typeof args.email === "string" && args.email.trim().length > 0
+      ? args.email.trim().toLowerCase()
+      : null;
+
+  if (!email) {
+    return null;
+  }
+
+  const nextName =
+    typeof args.name === "string" && args.name.trim().length > 0
+      ? args.name.trim()
+      : null;
+  const nextImage =
+    typeof args.image === "string" && args.image.trim().length > 0
+      ? args.image.trim()
+      : null;
+
+  try {
+    const existingUser = await authDb.user.findFirst({
+      where: {
+        email,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+      },
+    });
+
+    if (existingUser) {
+      const needsUpdate =
+        existingUser.name !== nextName || existingUser.image !== nextImage;
+
+      if (needsUpdate) {
+        const updatedUser = await authDb.user.update({
+          where: {
+            id: existingUser.id,
+          },
+          data: {
+            name: nextName,
+            image: nextImage,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        return updatedUser?.id ?? existingUser.id;
+      }
+
+      return existingUser.id;
+    }
+
+    const createdUser = await authDb.user.create({
+      data: {
+        email,
+        name: nextName,
+        image: nextImage,
+        emailVerified: new Date(),
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    return createdUser?.id ?? null;
+  } catch (error) {
+    if (error instanceof SchemaUnavailableError) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
 export const isAuthConfigured = Boolean(
   !isGoogleAuthDisabled() &&
-    process.env.DATABASE_URL &&
     hasMinLength(process.env.AUTH_SECRET, 32) &&
     process.env.GOOGLE_CLIENT_ID &&
     process.env.GOOGLE_CLIENT_SECRET,
@@ -107,15 +202,9 @@ function createDisabledAuth() {
 const authModule = isAuthConfigured
   ? await (async () => {
       const authEnv = getAuthEnv();
-      // Keep Billion Views sessions separate from other Auth.js apps on localhost.
       const authCookies = getAuthCookieConfig(authEnv.AUTH_URL);
-      const [{ PrismaAdapter }, { prisma }] = await Promise.all([
-        import("@auth/prisma-adapter"),
-        import("@/lib/db"),
-      ]);
 
       return NextAuth({
-        adapter: PrismaAdapter(prisma),
         providers: [
           Google({
             clientId: authEnv.GOOGLE_CLIENT_ID,
@@ -127,15 +216,31 @@ const authModule = isAuthConfigured
           signIn: "/login",
         },
         session: {
-          strategy: "database",
+          strategy: "jwt",
           maxAge: SESSION_MAX_AGE_SECONDS,
           updateAge: 60 * 60 * 24,
         },
         cookies: authCookies,
         callbacks: {
-          session({ session, user }) {
+          async jwt({ token, user }) {
+            if (user || !token.userId) {
+              const syncedUserId = await syncAuthUserRecord({
+                email: user?.email ?? token.email,
+                image: user?.image ?? token.picture,
+                name: user?.name ?? token.name,
+              });
+
+              token.userId = syncedUserId ?? getAuthFallbackUserId(token);
+            }
+
+            return token;
+          },
+          session({ session, token }) {
             if (session.user) {
-              session.user.id = user.id;
+              session.user.id =
+                typeof token.userId === "string" && token.userId.length > 0
+                  ? token.userId
+                  : getAuthFallbackUserId(token) ?? "";
             }
 
             return session;

@@ -1,4 +1,4 @@
-import { OrganizationRole, type Organization, type OrganizationMembership } from "@prisma/client";
+import { OrganizationRole, type Organization, type OrganizationMembership } from "@/lib/prisma-shim";
 import { cache } from "react";
 
 import { prisma } from "@/lib/db";

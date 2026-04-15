@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CampaignRole } from "@prisma/client";
+import { CampaignRole } from "@/lib/prisma-shim";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 

@@ -1,4 +1,4 @@
-import { CampaignRole, OrganizationRole } from "@prisma/client";
+import { CampaignRole, OrganizationRole } from "@/lib/prisma-shim";
 
 const organizationRoleWeight: Record<OrganizationRole, number> = {
   MEMBER: 0,

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MessagingChannel } from "@prisma/client";
+import { MessagingChannel } from "@/lib/prisma-shim";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 

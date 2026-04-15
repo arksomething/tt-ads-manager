@@ -24,7 +24,6 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const googleAuthDisabled = isGoogleAuthDisabled();
   const googleAuthConfigured = Boolean(
     !googleAuthDisabled &&
-      process.env.DATABASE_URL &&
       process.env.AUTH_SECRET &&
       process.env.AUTH_SECRET.length >= 32 &&
       process.env.GOOGLE_CLIENT_ID &&

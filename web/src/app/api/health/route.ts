@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { hasSingularEnv, isGoogleAuthDisabled } from "@/lib/server-env";
+import {
+  hasSingularEnv,
+  hasSupabaseDatabaseEnv,
+  isGoogleAuthDisabled,
+} from "@/lib/server-env";
 
 export function GET() {
   const hasGenericProviderConfig =
@@ -11,11 +15,11 @@ export function GET() {
     Boolean(process.env.VIRAL_APP_API_KEY ?? process.env.DATA_PROVIDER_API_KEY);
 
   return NextResponse.json({
-    ok: true,
-    service: "billion-views-web",
-    timestamp: new Date().toISOString(),
-    configured: {
-      database: Boolean(process.env.DATABASE_URL),
+      ok: true,
+      service: "billion-views-web",
+      timestamp: new Date().toISOString(),
+      configured: {
+      database: hasSupabaseDatabaseEnv(),
       googleAuth:
         !isGoogleAuthDisabled() &&
         Boolean(process.env.GOOGLE_CLIENT_ID) &&

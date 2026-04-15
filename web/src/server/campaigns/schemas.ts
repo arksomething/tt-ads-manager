@@ -1,4 +1,4 @@
-import { CampaignRole } from "@prisma/client";
+import { CampaignRole } from "@/lib/prisma-shim";
 import { z } from "zod";
 
 export const createCampaignSchema = z.object({

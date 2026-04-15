@@ -1,4 +1,4 @@
-import { CreatorStatus, Platform } from "@prisma/client";
+import { CreatorStatus, Platform } from "@/lib/prisma-shim";
 import { z } from "zod";
 
 export const trackedAccountMaxVideoOptions = [

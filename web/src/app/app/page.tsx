@@ -3,6 +3,7 @@ import { Cormorant_Garamond } from "next/font/google";
 import { redirect } from "next/navigation";
 
 import { AppAccountMenu } from "@/components/app-account-menu";
+import { isWorkspaceSchemaAvailable } from "@/lib/db";
 import { publicEnv } from "@/lib/env";
 import { isGoogleAuthDisabled } from "@/lib/server-env";
 import { getViewerOrganizations } from "@/server/auth/organizations";
@@ -50,6 +51,12 @@ export default async function AppHomePage({
   }
 
   if (organizations.length === 0) {
+    const workspaceSchemaAvailable = await isWorkspaceSchemaAvailable();
+
+    if (!workspaceSchemaAvailable) {
+      redirect("/tiktok-paid-views?notice=workspace-backend-unavailable");
+    }
+
     if (publicAccessEnabled) {
       redirect("/tiktok-paid-views");
     }
@@ -118,6 +125,10 @@ export default async function AppHomePage({
 
   async function handleCreateOrganization(formData: FormData) {
     "use server";
+
+    if (!(await isWorkspaceSchemaAvailable())) {
+      redirect("/tiktok-paid-views?notice=workspace-backend-unavailable");
+    }
 
     const organization = await createOrganizationForCurrentUser({
       name: formData.get("name"),

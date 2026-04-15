@@ -1,12 +1,42 @@
 import { z } from "zod";
 
 const authEnvSchema = z.object({
-  DATABASE_URL: z.url(),
   AUTH_SECRET: z.string().min(32),
   AUTH_URL: z.url().optional(),
   GOOGLE_CLIENT_ID: z.string().min(1),
   GOOGLE_CLIENT_SECRET: z.string().min(1),
 });
+
+const supabaseDatabaseEnvSchema = z
+  .object({
+    SUPABASE_URL: z.url(),
+    SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+    SUPABASE_SK: z.string().min(1).optional(),
+    SUPABASE_ANON_KEY: z.string().min(1).optional(),
+    SUPABASE_PK: z.string().min(1).optional(),
+  })
+  .refine(
+    (value) =>
+      Boolean(
+        value.SUPABASE_SERVICE_ROLE_KEY ??
+          value.SUPABASE_SK ??
+          value.SUPABASE_ANON_KEY ??
+          value.SUPABASE_PK,
+      ),
+    {
+      message:
+        "Provide a Supabase server key or publishable key alongside SUPABASE_URL.",
+    },
+  )
+  .transform((value) => ({
+    SUPABASE_URL: value.SUPABASE_URL,
+    SUPABASE_SERVER_KEY:
+      value.SUPABASE_SERVICE_ROLE_KEY ??
+      value.SUPABASE_SK ??
+      value.SUPABASE_ANON_KEY ??
+      value.SUPABASE_PK ??
+      "",
+  }));
 
 const dataProviderEnvSchema = z.object({
   DATA_PROVIDER_BASE_URL: z.url(),
@@ -48,6 +78,7 @@ const singularEnvSchema = z.object({
 });
 
 type AuthEnv = z.infer<typeof authEnvSchema>;
+type SupabaseDatabaseEnv = z.infer<typeof supabaseDatabaseEnvSchema>;
 type DataProviderEnv = z.infer<typeof dataProviderEnvSchema>;
 type AiEnv = z.infer<typeof aiEnvSchema>;
 type TwilioEnv = z.infer<typeof twilioEnvSchema>;
@@ -56,6 +87,7 @@ type TikTokBusinessOauthEnv = z.infer<typeof tikTokBusinessOauthEnvSchema>;
 type SingularEnv = z.infer<typeof singularEnvSchema>;
 
 let cachedAuthEnv: AuthEnv | undefined;
+let cachedSupabaseDatabaseEnv: SupabaseDatabaseEnv | undefined;
 let cachedDataProviderEnv: DataProviderEnv | undefined;
 let cachedAiEnv: AiEnv | undefined;
 let cachedTwilioEnv: TwilioEnv | undefined;
@@ -66,7 +98,6 @@ let cachedSingularEnv: SingularEnv | undefined;
 export function getAuthEnv() {
   if (!cachedAuthEnv) {
     cachedAuthEnv = authEnvSchema.parse({
-      DATABASE_URL: process.env.DATABASE_URL,
       AUTH_SECRET: process.env.AUTH_SECRET,
       AUTH_URL: process.env.AUTH_URL,
       GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
@@ -75,6 +106,31 @@ export function getAuthEnv() {
   }
 
   return cachedAuthEnv;
+}
+
+export function hasSupabaseDatabaseEnv() {
+  return Boolean(
+    process.env.SUPABASE_URL &&
+      (process.env.SUPABASE_SERVICE_ROLE_KEY ??
+        process.env.SUPABASE_SK ??
+        process.env.SUPABASE_ANON_KEY ??
+        process.env.SUPABASE_PK),
+  );
+}
+
+export function getSupabaseDatabaseEnv() {
+  if (!cachedSupabaseDatabaseEnv) {
+    cachedSupabaseDatabaseEnv = supabaseDatabaseEnvSchema.parse({
+      SUPABASE_URL: process.env.SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY:
+        process.env.SUPABASE_SERVICE_ROLE_KEY || undefined,
+      SUPABASE_SK: process.env.SUPABASE_SK || undefined,
+      SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || undefined,
+      SUPABASE_PK: process.env.SUPABASE_PK || undefined,
+    });
+  }
+
+  return cachedSupabaseDatabaseEnv;
 }
 
 export function getDataProviderEnv() {
