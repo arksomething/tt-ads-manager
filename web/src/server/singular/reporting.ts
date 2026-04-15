@@ -21,6 +21,7 @@ const SINGULAR_REPORT_DIMENSIONS = [
   "sub_campaign_name",
   "adn_creative_id",
   "adn_creative_name",
+  "creative_reported_url",
 ] as const;
 const SINGULAR_REPORT_METRICS = [
   "adn_cost",
@@ -359,7 +360,7 @@ function normalizeReportRow(record: Record<string, unknown>, cohortPeriod: strin
     subCampaignName: getFirstString(record, ["sub_campaign_name", "adn_sub_campaign_name"]),
     creativeId: getFirstString(record, ["adn_creative_id", "asset_id"]),
     creativeName: getFirstString(record, ["adn_creative_name", "asset_name"]),
-    creativeUrl: getFirstString(record, ["creative_url"]),
+    creativeUrl: getFirstString(record, ["creative_reported_url", "creative_url"]),
     creativeImage: getFirstString(record, ["creative_image"]),
     creativeIsVideo: getFirstBoolean(record, ["creative_is_video"]),
     currency: getFirstString(record, ["adn_original_currency"]),
