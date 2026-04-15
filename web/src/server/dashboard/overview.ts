@@ -32,6 +32,11 @@ const shortDateFormatter = new Intl.DateTimeFormat("en-US", {
   month: "short",
   day: "numeric",
 });
+const connectionDateFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
 
 function formatCompactNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
@@ -307,7 +312,7 @@ export async function getOrganizationOverviewData(args: {
     },
   };
 
-  const [videos, topVideoRows] = await Promise.all([
+  const [videos, topVideoRows, tiktokAccount] = await Promise.all([
     prisma.video.findMany({
       where: videoWindowWhere,
       select: {
@@ -352,7 +357,25 @@ export async function getOrganizationOverviewData(args: {
       orderBy: [{ views: "desc" }, { publishedAt: "desc" }, { createdAt: "desc" }],
       take: 5,
     }),
+    prisma.organizationTikTokAccount.findFirst({
+      where: {
+        organizationId: shellData.membership.organizationId,
+      },
+      orderBy: [{ updatedAt: "desc" }],
+      select: {
+        advertiserId: true,
+        advertiserName: true,
+        status: true,
+        lastValidatedAt: true,
+      },
+    }),
   ]);
+
+  const advertiserLabel = tiktokAccount
+    ? tiktokAccount.advertiserName
+      ? `${tiktokAccount.advertiserName} (${tiktokAccount.advertiserId})`
+      : tiktokAccount.advertiserId
+    : null;
 
   const currentVideos = videos.filter(
     (video) => video.publishedAt && video.publishedAt >= rangeStart,
@@ -537,6 +560,14 @@ export async function getOrganizationOverviewData(args: {
     accountOptions,
     campaignOptions,
     dateRangeOptions: [...dashboardDateRangeOptions],
+    tiktokConnection: {
+      connected: Boolean(tiktokAccount),
+      advertiserLabel,
+      statusLabel: tiktokAccount?.status ?? "Not connected",
+      lastValidatedLabel: tiktokAccount?.lastValidatedAt
+        ? connectionDateFormatter.format(tiktokAccount.lastValidatedAt)
+        : null,
+    },
     metricCards: [
       createMetricCard({
         label: "Published Videos",

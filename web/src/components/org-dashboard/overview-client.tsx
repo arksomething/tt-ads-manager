@@ -141,6 +141,11 @@ export function OverviewClient({ data, organizationSlug }: OverviewClientProps) 
         showUtilityButtons={false}
       />
 
+      <TikTokConnectionCard
+        connection={data.tiktokConnection}
+        organizationSlug={organizationSlug}
+      />
+
       <section className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-6">
         {data.metricCards.map((card) => (
           <MetricCard key={card.label} card={card} />
@@ -174,6 +179,87 @@ export function OverviewClient({ data, organizationSlug }: OverviewClientProps) 
         />
       </section>
     </div>
+  );
+}
+
+function TikTokConnectionCard({
+  connection,
+  organizationSlug,
+}: {
+  connection: OverviewClientProps["data"]["tiktokConnection"];
+  organizationSlug: string;
+}) {
+  const connectHref = `/api/org/${organizationSlug}/integrations/tiktok/oauth/start`;
+  const integrationsHref = `/org/${organizationSlug}/integrations`;
+  const adProfitHref = `/org/${organizationSlug}/tiktok-paid-views?sort=profit&matchMode=best_effort`;
+
+  return (
+    <article className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur sm:p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="max-w-3xl">
+          <p className="text-[0.68rem] uppercase tracking-[0.26em] text-muted-foreground">
+            TikTok Business
+          </p>
+          <h2 className="mt-2 text-xl font-medium tracking-[-0.04em] text-foreground">
+            {connection.connected
+              ? "Advertiser access is connected."
+              : "Connect TikTok from the dashboard."}
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            {connection.connected
+              ? "Open Ad Profit to run the live paid ranking, or reconnect TikTok here if this workspace should use a different advertiser."
+              : "This overview only summarizes workspace video data. To see paid ad performance, connect a TikTok advertiser account here and then open Ad Profit."}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Link
+            className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-white/[0.12] bg-black/[0.24] px-4 text-sm font-medium text-foreground transition hover:border-white/[0.2]"
+            href={adProfitHref}
+          >
+            Open Ad Profit
+          </Link>
+          <Link
+            className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68]"
+            href={connectHref}
+          >
+            {connection.connected ? "Reconnect TikTok" : "Connect TikTok"}
+          </Link>
+          <Link
+            className="inline-flex min-h-11 items-center rounded-[0.95rem] border border-white/[0.12] bg-black/[0.24] px-4 text-sm font-medium text-foreground transition hover:border-white/[0.2]"
+            href={integrationsHref}
+          >
+            Manage connections
+          </Link>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <ConnectionStat
+          label="Connection"
+          meta={
+            connection.connected
+              ? "Saved at the workspace level."
+              : "No advertiser is saved for this org yet."
+          }
+          value={connection.connected ? "Connected" : "Missing"}
+        />
+        <ConnectionStat
+          label="Advertiser"
+          meta="The saved advertiser account this workspace will query."
+          value={connection.advertiserLabel ?? "None saved"}
+        />
+        <ConnectionStat
+          label="Status"
+          meta={
+            connection.lastValidatedLabel
+              ? `Last validated ${connection.lastValidatedLabel}`
+              : "No validation timestamp has been recorded yet."
+          }
+          value={connection.statusLabel}
+        />
+      </div>
+    </article>
   );
 }
 
@@ -220,6 +306,26 @@ function MetricCard({ card }: { card: MetricCardData }) {
         {card.delta}
       </div>
     </article>
+  );
+}
+
+function ConnectionStat({
+  label,
+  value,
+  meta,
+}: {
+  label: string;
+  value: string;
+  meta: string;
+}) {
+  return (
+    <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.22] p-4">
+      <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-2 text-sm font-medium text-foreground">{value}</p>
+      <p className="mt-2 text-xs leading-5 text-muted-foreground">{meta}</p>
+    </div>
   );
 }
 

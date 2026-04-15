@@ -107,6 +107,12 @@ export type OverviewMockData = {
     id: string;
     label: string;
   }>;
+  tiktokConnection: {
+    connected: boolean;
+    advertiserLabel: string | null;
+    statusLabel: string;
+    lastValidatedLabel: string | null;
+  };
   metricCards: MetricCardData[];
   metricChartSeries: MetricChartSeries[];
   engagementSeries: {
@@ -388,6 +394,12 @@ export function createOverviewMockData({
       { id: "30d", label: "Last 30 days" },
       { id: "qtd", label: "Quarter to date" },
     ],
+    tiktokConnection: {
+      connected: false,
+      advertiserLabel: null,
+      statusLabel: "Not connected",
+      lastValidatedLabel: null,
+    },
     metricCards: [
       {
         label: "Published Videos",
