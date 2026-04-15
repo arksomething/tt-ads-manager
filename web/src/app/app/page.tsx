@@ -26,23 +26,24 @@ function getSearchParamValue(value: string | string[] | undefined) {
 export default async function AppHomePage({
   searchParams,
 }: PageProps<"/app">) {
-  if (isGoogleAuthDisabled()) {
-    redirect("/tiktok-paid-views");
-  }
-
+  const publicAccessEnabled = isGoogleAuthDisabled();
   const resolvedSearchParams = await searchParams;
   const manageMode =
     getSearchParamValue(resolvedSearchParams.manage) === "workspaces";
   const currentWorkspaceSlug = getSearchParamValue(resolvedSearchParams.from);
   const user = await getCurrentUser();
 
-  if (!user?.id) {
+  if (!user?.id && !publicAccessEnabled) {
     redirect("/login");
   }
 
   const organizations = await getViewerOrganizations();
 
   if (organizations.length === 0) {
+    if (publicAccessEnabled) {
+      redirect("/tiktok-paid-views");
+    }
+
     const organization = await ensureOrganizationForCurrentUser();
     redirect(`/org/${organization.slug}`);
   }
@@ -51,7 +52,8 @@ export default async function AppHomePage({
     redirect(`/org/${organizations[0].organization.slug}`);
   }
 
-  const signedInAs = user.email ?? user.name ?? "your account";
+  const canCreateWorkspaces = Boolean(user?.id) && !publicAccessEnabled;
+  const signedInAs = user?.email ?? user?.name ?? "Public access";
   const currentWorkspace = currentWorkspaceSlug
     ? organizations.find(
         ({ organization }) => organization.slug === currentWorkspaceSlug,
@@ -65,20 +67,30 @@ export default async function AppHomePage({
             ({ organization }) => organization.slug === currentWorkspaceSlug,
           ),
           ...organizations.filter(
-        ({ organization }) => organization.slug !== currentWorkspaceSlug,
-      ),
+            ({ organization }) => organization.slug !== currentWorkspaceSlug,
+          ),
         ];
   const pageEyebrow = manageMode
     ? "Workspace hub"
-    : "New workspace";
+    : canCreateWorkspaces
+      ? "New workspace"
+      : "Workspace hub";
   const pageTitle = manageMode
-    ? "Manage your workspaces."
-    : "Name the next workspace.";
+    ? publicAccessEnabled
+      ? "Open a workspace."
+      : "Manage your workspaces."
+    : canCreateWorkspaces
+      ? "Name the next workspace."
+      : "Open a workspace.";
   const pageDescription = manageMode
-    ? currentWorkspace
-      ? `Open ${currentWorkspace.name}, jump into workspace settings, or create another top-level workspace without losing your place.`
-      : "Open any workspace you already have access to, jump into workspace settings, or create another top-level workspace."
-    : "Create another top-level workspace without losing the calm structure of the current one.";
+    ? publicAccessEnabled
+      ? "Public access is enabled in this deployment. Open one of the configured workspaces directly."
+      : currentWorkspace
+        ? `Open ${currentWorkspace.name}, jump into workspace settings, or create another top-level workspace without losing your place.`
+        : "Open any workspace you already have access to, jump into workspace settings, or create another top-level workspace."
+    : canCreateWorkspaces
+      ? "Create another top-level workspace without losing the calm structure of the current one."
+      : "Public access is enabled in this deployment. Choose one of the configured workspaces below.";
 
   async function handleSignOut() {
     "use server";
@@ -235,23 +247,68 @@ export default async function AppHomePage({
                   </section>
                 ) : null}
 
-                <section className="mt-8 rounded-[1.8rem] border border-white/[0.08] bg-white/[0.03] p-6 shadow-[0_30px_90px_rgba(0,0,0,0.28)] backdrop-blur sm:p-7">
-                  <div className="space-y-3">
-                    <p className="text-[0.62rem] uppercase tracking-[0.28em] text-muted-foreground">
-                      New workspace
-                    </p>
-                    <h2
-                      className={`${appSerif.className} text-[1.8rem] leading-none tracking-[-0.04em] text-foreground sm:text-[2rem]`}
-                    >
-                      Create another workspace.
-                    </h2>
-                    <p className="max-w-xl text-sm leading-6 text-muted-foreground">
-                      Separate brands, clients, or teams into their own
-                      top-level workspace without leaving this account.
-                    </p>
-                  </div>
+                {canCreateWorkspaces ? (
+                  <section className="mt-8 rounded-[1.8rem] border border-white/[0.08] bg-white/[0.03] p-6 shadow-[0_30px_90px_rgba(0,0,0,0.28)] backdrop-blur sm:p-7">
+                    <div className="space-y-3">
+                      <p className="text-[0.62rem] uppercase tracking-[0.28em] text-muted-foreground">
+                        New workspace
+                      </p>
+                      <h2
+                        className={`${appSerif.className} text-[1.8rem] leading-none tracking-[-0.04em] text-foreground sm:text-[2rem]`}
+                      >
+                        Create another workspace.
+                      </h2>
+                      <p className="max-w-xl text-sm leading-6 text-muted-foreground">
+                        Separate brands, clients, or teams into their own
+                        top-level workspace without leaving this account.
+                      </p>
+                    </div>
 
-                  <form action={handleCreateOrganization} className="mt-8">
+                    <form action={handleCreateOrganization} className="mt-8">
+                      <label className="block">
+                        <span className="sr-only">Organization name</span>
+                        <input
+                          className="w-full rounded-full border border-white/[0.08] bg-black/[0.22] px-5 py-4 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/62 focus:border-white/[0.18] focus:bg-black/[0.3]"
+                          name="name"
+                          placeholder="North Star Labs"
+                          required
+                          type="text"
+                        />
+                      </label>
+
+                      <div className="mt-8 flex flex-col items-center gap-3">
+                        <button
+                          aria-label="Create organization"
+                          className="inline-flex h-14 w-14 items-center justify-center rounded-full border border-[#90FF4D]/24 bg-[#90FF4D]/90 text-black shadow-[0_24px_60px_rgba(144,255,77,0.24)] transition hover:scale-[1.02] hover:bg-[#A4FF68]"
+                          type="submit"
+                        >
+                          <svg
+                            aria-hidden="true"
+                            className="h-4 w-4"
+                            fill="none"
+                            viewBox="0 0 16 16"
+                          >
+                            <path
+                              d="M5 3.5L9.5 8L5 12.5"
+                              stroke="currentColor"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth="1.6"
+                            />
+                          </svg>
+                        </button>
+                        <p className="text-[0.62rem] uppercase tracking-[0.22em] text-muted-foreground/72">
+                          Press Enter
+                        </p>
+                      </div>
+                    </form>
+                  </section>
+                ) : null}
+              </>
+            ) : (
+              <>
+                {canCreateWorkspaces ? (
+                  <form action={handleCreateOrganization} className="mt-10">
                     <label className="block">
                       <span className="sr-only">Organization name</span>
                       <input
@@ -289,48 +346,12 @@ export default async function AppHomePage({
                       </p>
                     </div>
                   </form>
-                </section>
-              </>
-            ) : (
-              <>
-                <form action={handleCreateOrganization} className="mt-10">
-                  <label className="block">
-                    <span className="sr-only">Organization name</span>
-                    <input
-                      className="w-full rounded-full border border-white/[0.08] bg-black/[0.22] px-5 py-4 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/62 focus:border-white/[0.18] focus:bg-black/[0.3]"
-                      name="name"
-                      placeholder="North Star Labs"
-                      required
-                      type="text"
-                    />
-                  </label>
-
-                  <div className="mt-8 flex flex-col items-center gap-3">
-                    <button
-                      aria-label="Create organization"
-                      className="inline-flex h-14 w-14 items-center justify-center rounded-full border border-[#90FF4D]/24 bg-[#90FF4D]/90 text-black shadow-[0_24px_60px_rgba(144,255,77,0.24)] transition hover:scale-[1.02] hover:bg-[#A4FF68]"
-                      type="submit"
-                    >
-                      <svg
-                        aria-hidden="true"
-                        className="h-4 w-4"
-                        fill="none"
-                        viewBox="0 0 16 16"
-                      >
-                        <path
-                          d="M5 3.5L9.5 8L5 12.5"
-                          stroke="currentColor"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="1.6"
-                        />
-                      </svg>
-                    </button>
-                    <p className="text-[0.62rem] uppercase tracking-[0.22em] text-muted-foreground/72">
-                      Press Enter
-                    </p>
+                ) : (
+                  <div className="mt-10 rounded-[1.4rem] border border-white/[0.08] bg-black/[0.18] p-5 text-sm leading-6 text-muted-foreground">
+                    Public access is enabled here, so `/app` acts as a workspace
+                    chooser. Open one of the workspaces below.
                   </div>
-                </form>
+                )}
               </>
             )}
           </section>

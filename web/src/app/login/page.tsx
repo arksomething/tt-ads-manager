@@ -32,7 +32,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   );
 
   if (googleAuthDisabled) {
-    redirect("/tiktok-paid-views");
+    redirect("/app");
   }
 
   if (googleAuthConfigured) {
