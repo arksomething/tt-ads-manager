@@ -17,6 +17,7 @@ type TikTokPaidViewsPageProps = {
 };
 
 type SingularSortKey =
+  | "composite"
   | "roas"
   | "profit"
   | "revenue"
@@ -28,11 +29,25 @@ type SingularCreativeRow = TikTokSingularReportRow & {
   profit: number;
 };
 
+type RankedSingularCreativeRow = SingularCreativeRow & {
+  revenueRank: number;
+  roasRank: number;
+  compositeScore: number;
+  overallRank: number;
+};
+
+type MetricSortKey = Exclude<SingularSortKey, "composite">;
+
 const sortOptions: Array<{
   value: SingularSortKey;
   label: string;
   hint: string;
 }> = [
+  {
+    value: "composite",
+    label: "Composite",
+    hint: "Average revenue rank and ROAS rank, matching the manual spreadsheet.",
+  },
   {
     value: "roas",
     label: "ROAS",
@@ -177,6 +192,7 @@ function formatRoas(value: number | null) {
 
 function normalizeSortKey(value: string | undefined): SingularSortKey {
   switch (value) {
+    case "composite":
     case "profit":
     case "revenue":
     case "spend":
@@ -185,7 +201,7 @@ function normalizeSortKey(value: string | undefined): SingularSortKey {
     case "roas":
       return value;
     default:
-      return "roas";
+      return "profit";
   }
 }
 
@@ -219,6 +235,14 @@ function getCampaignLabel(row: SingularCreativeRow) {
   return campaignName ?? subCampaignName ?? "No campaign label";
 }
 
+function getCreativeContextLabel(row: SingularCreativeRow) {
+  return uniqueNonEmptyStrings([
+    row.app,
+    row.source,
+    row.creativeId ? `Creative ID ${row.creativeId}` : null,
+  ]).join(" · ");
+}
+
 function getCreativeTitle(row: SingularCreativeRow) {
   const creativeName = row.creativeName?.trim();
 
@@ -236,16 +260,14 @@ function getCreativeTitle(row: SingularCreativeRow) {
 function getCreativeSubtitle(row: SingularCreativeRow) {
   return uniqueNonEmptyStrings([
     getCampaignLabel(row),
-    row.app,
-    row.source,
-    row.creativeId ? `Creative ID ${row.creativeId}` : null,
+    getCreativeContextLabel(row),
   ]).join(" · ");
 }
 
-function compareRows(
+function compareMetricRows(
   left: SingularCreativeRow,
   right: SingularCreativeRow,
-  sortKey: SingularSortKey,
+  sortKey: MetricSortKey,
 ) {
   const finish = () =>
     getCreativeTitle(left).localeCompare(getCreativeTitle(right));
@@ -272,8 +294,32 @@ function compareRows(
   }
 }
 
+function compareCompositeRows(
+  left: RankedSingularCreativeRow,
+  right: RankedSingularCreativeRow,
+) {
+  return (
+    left.compositeScore - right.compositeScore ||
+    left.revenueRank - right.revenueRank ||
+    left.roasRank - right.roasRank ||
+    compareMetricRows(left, right, "profit")
+  );
+}
+
+function compareRows(
+  left: RankedSingularCreativeRow,
+  right: RankedSingularCreativeRow,
+  sortKey: SingularSortKey,
+) {
+  if (sortKey === "composite") {
+    return compareCompositeRows(left, right);
+  }
+
+  return compareMetricRows(left, right, sortKey);
+}
+
 function sortRows(
-  rows: readonly SingularCreativeRow[],
+  rows: readonly RankedSingularCreativeRow[],
   sortKey: SingularSortKey,
 ) {
   return [...rows].sort((left, right) => compareRows(left, right, sortKey));
@@ -302,6 +348,45 @@ function aggregateSingularRows(rows: readonly TikTokSingularReportRow[]) {
   }
 
   return [...groupedRows.values()];
+}
+
+// Use ordinal ranks so every row gets a deterministic spreadsheet-style position.
+function buildRankMap(
+  rows: readonly SingularCreativeRow[],
+  sortKey: MetricSortKey,
+) {
+  return new Map(
+    [...rows]
+      .sort((left, right) => compareMetricRows(left, right, sortKey))
+      .map((row, index) => [row.rowKey, index + 1] as const),
+  );
+}
+
+function rankRows(rows: readonly SingularCreativeRow[]) {
+  const revenueRankMap = buildRankMap(rows, "revenue");
+  const roasRankMap = buildRankMap(rows, "roas");
+  const rowsWithMetricRanks: RankedSingularCreativeRow[] = rows.map((row) => {
+    const revenueRank = revenueRankMap.get(row.rowKey) ?? rows.length + 1;
+    const roasRank = roasRankMap.get(row.rowKey) ?? rows.length + 1;
+
+    return {
+      ...row,
+      revenueRank,
+      roasRank,
+      compositeScore: (revenueRank + roasRank) / 2,
+      overallRank: 0,
+    };
+  });
+  const overallRankMap = new Map(
+    [...rowsWithMetricRanks]
+      .sort((left, right) => compareCompositeRows(left, right))
+      .map((row, index) => [row.rowKey, index + 1] as const),
+  );
+
+  return rowsWithMetricRanks.map((row) => ({
+    ...row,
+    overallRank: overallRankMap.get(row.rowKey) ?? rows.length + 1,
+  }));
 }
 
 function getBackgroundImageStyle(imageUrl: string) {
@@ -475,7 +560,7 @@ export default async function TikTokPaidViewsPage({
         : "Could not load Singular creative performance for this date window.";
   }
 
-  const rows = aggregateSingularRows(overlay.rows);
+  const rows = rankRows(aggregateSingularRows(overlay.rows));
   const sortedRows = sortRows(rows, sortKey);
   const reportCurrency = getSingleCurrency(sortedRows);
   const topByRoas = sortRows(
@@ -518,13 +603,12 @@ export default async function TikTokPaidViewsPage({
               Ad profitability
             </p>
             <h1 className="mt-2 text-2xl font-medium tracking-[-0.045em] text-foreground">
-              See Singular creatives ranked by ROAS.
+              See every returned creative and sort it however you want.
             </h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              This page now reads Singular creative performance directly instead of
-              guessing how TikTok ad rows map back to revenue. Use it as the
-              source-of-truth ROAS table, then open TikTok only when you need native
-              delivery detail.
+              This page reads Singular creative performance directly, keeps every
+              returned row visible, and lets you switch between profit, ROAS,
+              revenue, spend, volume, and spreadsheet-style composite ranking.
             </p>
           </div>
 
@@ -587,7 +671,7 @@ export default async function TikTokPaidViewsPage({
           <p className="text-sm leading-6 text-muted-foreground">
             No match mode. No TikTok-first fallback. The table below is just the
             Singular creative report, aggregated across the selected date range and
-            ranked by {selectedSortOption.label.toLowerCase()}.
+            sorted by {selectedSortOption.label.toLowerCase()}.
           </p>
         </div>
 
@@ -729,11 +813,12 @@ export default async function TikTokPaidViewsPage({
                   Ranked creatives
                 </p>
                 <h2 className="mt-2 text-xl font-medium tracking-[-0.04em] text-foreground">
-                  Singular-first ROAS leaderboard
+                  Singular-first creative table
                 </h2>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-                  Sorted by {selectedSortOption.label.toLowerCase()}. Every row comes
-                  directly from the Singular creative report instead of a TikTok join.
+                  Sorted by {selectedSortOption.label.toLowerCase()}. Every returned
+                  row stays visible, with direct metric sorts plus the same
+                  revenue-and-ROAS composite logic your spreadsheet uses.
                 </p>
               </div>
               <div className="rounded-full border border-white/[0.08] bg-black/[0.2] px-3 py-2 text-xs uppercase tracking-[0.18em] text-muted-foreground">
@@ -743,11 +828,14 @@ export default async function TikTokPaidViewsPage({
 
             {sortedRows.length > 0 ? (
               <div className="mt-5 overflow-x-auto rounded-[1.2rem] border border-white/[0.08] bg-black/[0.18]">
-                <table className="min-w-[1180px] w-full border-collapse text-left">
+                <table className="min-w-[1660px] w-full border-collapse text-left">
                   <thead className="bg-white/[0.03]">
                     <tr>
                       <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
                         Creative
+                      </th>
+                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
+                        Campaign
                       </th>
                       <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
                         Spend
@@ -760,6 +848,18 @@ export default async function TikTokPaidViewsPage({
                       </th>
                       <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
                         ROAS
+                      </th>
+                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
+                        Revenue rank
+                      </th>
+                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
+                        ROAS rank
+                      </th>
+                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
+                        Composite
+                      </th>
+                      <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
+                        Overall rank
                       </th>
                       <th className="px-4 py-3 text-[0.62rem] font-normal uppercase tracking-[0.22em] text-muted-foreground">
                         Volume
@@ -790,10 +890,9 @@ export default async function TikTokPaidViewsPage({
                                   {getCreativeTitle(row)}
                                 </p>
                                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                                  {getCreativeSubtitle(row)}
+                                  {getCreativeContextLabel(row)}
                                 </p>
                                 <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                                  <span>{getCampaignLabel(row)}</span>
                                   {row.creativeUrl ? (
                                     <a
                                       className="text-foreground transition hover:text-white"
@@ -807,6 +906,16 @@ export default async function TikTokPaidViewsPage({
                                 </div>
                               </div>
                             </div>
+                          </td>
+                          <td className="px-4 py-4">
+                            <p className="font-medium text-foreground">
+                              {getCampaignLabel(row)}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {row.creativeId
+                                ? `Creative ID ${row.creativeId}`
+                                : "Creative ID unavailable"}
+                            </p>
                           </td>
                           <td className="px-4 py-4">
                             <p className="font-medium text-foreground">
@@ -830,6 +939,29 @@ export default async function TikTokPaidViewsPage({
                           <td className="px-4 py-4">
                             <p className="font-medium text-foreground">
                               {formatRoas(row.roas)}
+                            </p>
+                          </td>
+                          <td className="px-4 py-4">
+                            <p className="font-medium text-foreground">
+                              {integerFormatter.format(row.revenueRank)}
+                            </p>
+                          </td>
+                          <td className="px-4 py-4">
+                            <p className="font-medium text-foreground">
+                              {integerFormatter.format(row.roasRank)}
+                            </p>
+                          </td>
+                          <td className="px-4 py-4">
+                            <p className="font-medium text-foreground">
+                              {decimalFormatter.format(row.compositeScore)}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Avg revenue rank and ROAS rank
+                            </p>
+                          </td>
+                          <td className="px-4 py-4">
+                            <p className="font-medium text-foreground">
+                              {integerFormatter.format(row.overallRank)}
                             </p>
                           </td>
                           <td className="px-4 py-4">
