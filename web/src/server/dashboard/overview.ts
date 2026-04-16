@@ -218,50 +218,73 @@ function buildMetricSeries(args: {
 }
 
 function buildVideoScope(args: {
-  organizationId: string;
+  creatorIds: string[];
   canSeeAllOrganizationData: boolean;
   accessibleCampaignIds: string[];
   selectedCampaignIds: string[];
-}): Prisma.VideoWhereInput {
-  const baseScope: Prisma.VideoWhereInput = args.canSeeAllOrganizationData
-    ? {
-        creator: {
-          organizationId: args.organizationId,
-        },
-      }
-    : args.accessibleCampaignIds.length > 0
-      ? {
-          creator: {
-            organizationId: args.organizationId,
-          },
-          campaignId: {
-            in: args.accessibleCampaignIds,
-          },
-        }
-      : {
-          id: {
-            in: [],
-          },
-        };
-
-  if (args.accessibleCampaignIds.length > 0 && args.selectedCampaignIds.length === 0) {
+}): { empty: boolean; where: Prisma.VideoWhereInput } {
+  if (args.creatorIds.length === 0) {
     return {
-      id: {
-        in: [],
+      empty: true,
+      where: {
+        id: {
+          in: [],
+        },
       },
     };
   }
+
+  if (!args.canSeeAllOrganizationData) {
+    if (args.accessibleCampaignIds.length === 0 || args.selectedCampaignIds.length === 0) {
+      return {
+        empty: true,
+        where: {
+          id: {
+            in: [],
+          },
+        },
+      };
+    }
+
+    return {
+      empty: false,
+      where: {
+        creatorId: {
+          in: args.creatorIds,
+        },
+        campaignId: {
+          in:
+            args.selectedCampaignIds.length < args.accessibleCampaignIds.length
+              ? args.selectedCampaignIds
+              : args.accessibleCampaignIds,
+        },
+      },
+    };
+  }
+
+  const where: Prisma.VideoWhereInput = {
+    creatorId: {
+      in: args.creatorIds,
+    },
+  };
 
   if (
     args.accessibleCampaignIds.length > 0 &&
     args.selectedCampaignIds.length < args.accessibleCampaignIds.length
   ) {
-    baseScope.campaignId = {
+    where.campaignId = {
       in: args.selectedCampaignIds,
     };
   }
 
-  return baseScope;
+  return {
+    empty: false,
+    where,
+  };
+}
+
+function uniqueNonEmptyStrings(values: Array<string | null | undefined>) {
+  return [...new Set(values.filter((value): value is string => Boolean(value && value.trim())))];
 }
 
 export async function getOrganizationOverviewData(args: {
@@ -290,72 +313,14 @@ export async function getOrganizationOverviewData(args: {
   const previousWindowEnd = new Date(rangeStart);
   previousWindowEnd.setMilliseconds(previousWindowEnd.getMilliseconds() - 1);
   const canSeeAllOrganizationData = canManageOrganization(shellData.membership.role);
-  const videoScope = buildVideoScope({
-    organizationId: shellData.membership.organizationId,
-    canSeeAllOrganizationData,
-    accessibleCampaignIds: campaignOptions.map((campaign) => campaign.id),
-    selectedCampaignIds,
-  });
-  const dateKeys = buildDateKeys(rangeStart, rangeEnd);
-  const videoWindowWhere: Prisma.VideoWhereInput = {
-    ...videoScope,
-    publishedAt: {
-      gte: previousWindowStart,
-      lte: rangeEnd,
-    },
-  };
-  const currentWindowWhere: Prisma.VideoWhereInput = {
-    ...videoScope,
-    publishedAt: {
-      gte: rangeStart,
-      lte: rangeEnd,
-    },
-  };
-
-  const [videos, topVideoRows, tiktokAccount] = await Promise.all([
-    prisma.video.findMany({
-      where: videoWindowWhere,
+  const [organizationCreators, tiktokAccount] = await Promise.all([
+    prisma.creator.findMany({
+      where: {
+        organizationId: shellData.membership.organizationId,
+      },
       select: {
         id: true,
-        creatorId: true,
-        creatorPlatformAccountId: true,
-        publishedAt: true,
-        views: true,
-        likes: true,
-        engagementRate: true,
       },
-      orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
-      take: 500,
-    }),
-    prisma.video.findMany({
-      where: currentWindowWhere,
-      select: {
-        id: true,
-        titleOrCaption: true,
-        platform: true,
-        views: true,
-        engagementRate: true,
-        rawPayload: true,
-        campaign: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        creator: {
-          select: {
-            displayName: true,
-          },
-        },
-        creatorPlatformAccount: {
-          select: {
-            handle: true,
-            rawPayload: true,
-          },
-        },
-      },
-      orderBy: [{ views: "desc" }, { publishedAt: "desc" }, { createdAt: "desc" }],
-      take: 5,
     }),
     prisma.organizationTikTokAccount.findFirst({
       where: {
@@ -370,6 +335,62 @@ export async function getOrganizationOverviewData(args: {
       },
     }),
   ]);
+  const videoScope = buildVideoScope({
+    creatorIds: organizationCreators.map((creator) => creator.id),
+    canSeeAllOrganizationData,
+    accessibleCampaignIds: campaignOptions.map((campaign) => campaign.id),
+    selectedCampaignIds,
+  });
+  const dateKeys = buildDateKeys(rangeStart, rangeEnd);
+  const videoWindowWhere: Prisma.VideoWhereInput = {
+    ...videoScope.where,
+    publishedAt: {
+      gte: previousWindowStart,
+      lte: rangeEnd,
+    },
+  };
+  const currentWindowWhere: Prisma.VideoWhereInput = {
+    ...videoScope.where,
+    publishedAt: {
+      gte: rangeStart,
+      lte: rangeEnd,
+    },
+  };
+
+  const [videos, topVideoRows] = videoScope.empty
+    ? [[], []]
+    : await Promise.all([
+        prisma.video.findMany({
+          where: videoWindowWhere,
+          select: {
+            id: true,
+            creatorId: true,
+            creatorPlatformAccountId: true,
+            publishedAt: true,
+            views: true,
+            likes: true,
+            engagementRate: true,
+          },
+          orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+          take: 500,
+        }),
+        prisma.video.findMany({
+          where: currentWindowWhere,
+          select: {
+            id: true,
+            titleOrCaption: true,
+            platform: true,
+            views: true,
+            engagementRate: true,
+            rawPayload: true,
+            campaignId: true,
+            creatorId: true,
+            creatorPlatformAccountId: true,
+          },
+          orderBy: [{ views: "desc" }, { publishedAt: "desc" }, { createdAt: "desc" }],
+          take: 5,
+        }),
+      ]);
 
   const advertiserLabel = tiktokAccount
     ? tiktokAccount.advertiserName
@@ -446,12 +467,31 @@ export async function getOrganizationOverviewData(args: {
     .sort((left, right) => right[1].currentViews - left[1].currentViews)
     .slice(0, 5)
     .map(([accountId]) => accountId);
-  const topAccountDetails =
-    topAccountIds.length > 0
-      ? await prisma.creatorPlatformAccount.findMany({
+  const topVideoCreatorIds = uniqueNonEmptyStrings(topVideoRows.map((video) => video.creatorId));
+  const topVideoAccountIds = uniqueNonEmptyStrings(
+    topVideoRows.map((video) => video.creatorPlatformAccountId),
+  );
+  const topVideoCampaignIds = uniqueNonEmptyStrings(topVideoRows.map((video) => video.campaignId));
+  const accountIdsToLoad = uniqueNonEmptyStrings([...topVideoAccountIds, ...topAccountIds]);
+  const [topVideoCreators, accountDetails, topVideoCampaigns] = await Promise.all([
+    topVideoCreatorIds.length > 0
+      ? prisma.creator.findMany({
           where: {
             id: {
-              in: topAccountIds,
+              in: topVideoCreatorIds,
+            },
+          },
+          select: {
+            id: true,
+            displayName: true,
+          },
+        })
+      : [],
+    accountIdsToLoad.length > 0
+      ? prisma.creatorPlatformAccount.findMany({
+          where: {
+            id: {
+              in: accountIdsToLoad,
             },
           },
           select: {
@@ -462,9 +502,29 @@ export async function getOrganizationOverviewData(args: {
             rawPayload: true,
           },
         })
-      : [];
-  const topAccountDetailsById = new Map(
-    topAccountDetails.map((account) => [account.id, account]),
+      : [],
+    topVideoCampaignIds.length > 0
+      ? prisma.campaign.findMany({
+          where: {
+            id: {
+              in: topVideoCampaignIds,
+            },
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+        })
+      : [],
+  ]);
+  const topVideoCreatorsById = new Map(
+    topVideoCreators.map((creator) => [creator.id, creator]),
+  );
+  const accountDetailsById = new Map(
+    accountDetails.map((account) => [account.id, account]),
+  );
+  const topVideoCampaignsById = new Map(
+    topVideoCampaigns.map((campaign) => [campaign.id, campaign]),
   );
 
   const currentActiveAccounts = [...currentVideosPerAccount.values()].filter(
@@ -513,26 +573,36 @@ export async function getOrganizationOverviewData(args: {
 
     return Number((bucket.engagementTotal / bucket.engagementCount).toFixed(1));
   });
-  const topVideos: TopVideoItem[] = topVideoRows.map((video) => ({
+  const topVideos: TopVideoItem[] = topVideoRows.map((video) => {
+    const creator = topVideoCreatorsById.get(video.creatorId);
+    const creatorPlatformAccount = video.creatorPlatformAccountId
+      ? accountDetailsById.get(video.creatorPlatformAccountId)
+      : null;
+    const campaign = video.campaignId
+      ? topVideoCampaignsById.get(video.campaignId)
+      : null;
+
+    return {
       id: video.id,
-      title: video.titleOrCaption ?? `${video.creator.displayName} video`,
+      title: video.titleOrCaption ?? `${creator?.displayName ?? "Unknown creator"} video`,
       account:
-        video.creatorPlatformAccount?.handle ?? video.creator.displayName,
-      handle: video.creatorPlatformAccount
-        ? `@${video.creatorPlatformAccount.handle}`
-        : video.creator.displayName,
+        creatorPlatformAccount?.handle ?? creator?.displayName ?? "Unknown creator",
+      handle: creatorPlatformAccount
+        ? `@${creatorPlatformAccount.handle}`
+        : creator?.displayName ?? "Unknown creator",
       platform: formatPlatformLabel(video.platform),
       views: formatCompactNumber(video.views ?? 0),
       engagement: formatPercent(video.engagementRate ?? 0),
-      badge: video.campaign?.name ?? "Unassigned",
-      campaignId: video.campaign?.id ?? null,
+      badge: campaign?.name ?? "Unassigned",
+      campaignId: campaign?.id ?? null,
       thumbnailUrl:
         getVideoThumbnailUrl(video.rawPayload) ??
         getAccountImageUrl(video.rawPayload) ??
-        getAccountImageUrl(video.creatorPlatformAccount?.rawPayload),
-    }));
+        getAccountImageUrl(creatorPlatformAccount?.rawPayload),
+    };
+  });
   const topAccounts: TopAccountItem[] = topAccountIds.flatMap((accountId, index) => {
-    const account = topAccountDetailsById.get(accountId);
+    const account = accountDetailsById.get(accountId);
     const stats = currentVideosPerAccount.get(accountId);
 
     if (!account || !stats) {
