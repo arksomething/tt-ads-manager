@@ -40,18 +40,26 @@ const basePaidReportDimensions = ["stat_time_day", "ad_id", "item_id"] as const;
 const campaignPaidReportDimensions = [
   "stat_time_day",
   "campaign_id",
+  "adgroup_id",
   "ad_id",
   "item_id",
 ] as const;
 const adCampaignFieldCandidates: Array<readonly string[] | undefined> = [
-  ["ad_id", "ad_name", "campaign_id", "tiktok_item_id", "item_id"],
-  ["ad_id", "campaign_id", "tiktok_item_id"],
+  ["ad_id", "ad_name", "campaign_id", "adgroup_id", "tiktok_item_id", "item_id"],
+  ["ad_id", "ad_name", "campaign_id", "adgroup_id", "tiktok_item_id"],
+  ["ad_id", "campaign_id", "adgroup_id", "tiktok_item_id"],
   ["ad_id", "campaign_id"],
   undefined,
 ] as const;
 const campaignFieldCandidates: Array<readonly string[] | undefined> = [
   ["campaign_id", "campaign_name"],
   ["campaign_id"],
+  undefined,
+] as const;
+const adgroupFieldCandidates: Array<readonly string[] | undefined> = [
+  ["adgroup_id", "adgroup_name", "campaign_id"],
+  ["adgroup_id", "adgroup_name"],
+  ["adgroup_id"],
   undefined,
 ] as const;
 
@@ -104,6 +112,8 @@ type TikTokListData = Record<string, unknown> & {
 type TikTokPaidViewsRow = {
   campaignId?: string | null;
   campaignName?: string | null;
+  adgroupId?: string | null;
+  adgroupName?: string | null;
   adId: string | null;
   itemId: string | null;
   statDate: string | null;
@@ -115,6 +125,7 @@ type TikTokPaidViewsRow = {
 type TikTokAdCampaignMetadata = {
   adId: string;
   campaignId: string | null;
+  adgroupId: string | null;
   tiktokItemId: string | null;
   adName: string | null;
 };
@@ -122,6 +133,12 @@ type TikTokAdCampaignMetadata = {
 type TikTokCampaignMetadata = {
   campaignId: string;
   campaignName: string | null;
+};
+
+type TikTokAdgroupMetadata = {
+  adgroupId: string;
+  adgroupName: string | null;
+  campaignId: string | null;
 };
 
 export type TikTokCreatorPaidViewsResult = {
@@ -213,6 +230,10 @@ export type TikTokCampaignVideoViewRow = {
   adsManagerUrl: string | null;
   tiktokCampaignId: string | null;
   tiktokCampaignName: string | null;
+  tiktokAdgroupId: string | null;
+  tiktokAdgroupName: string | null;
+  tiktokAdId: string | null;
+  tiktokAdName: string | null;
   paidViews: number;
   spend: number;
   clicks: number;
@@ -516,6 +537,8 @@ function normalizeReportRow(row: TikTokIntegratedReportRow, apiMetricName: strin
   return {
     campaignId: getFirstString([dimensions, row], ["campaign_id", "campaignId"]),
     campaignName: getFirstString([dimensions, row], ["campaign_name", "campaignName"]),
+    adgroupId: getFirstString([dimensions, row], ["adgroup_id", "adgroupId"]),
+    adgroupName: getFirstString([dimensions, row], ["adgroup_name", "adgroupName"]),
     adId: getFirstString([dimensions, row], ["ad_id", "adId"]),
     itemId: getFirstString([dimensions, row], ["item_id", "itemId"]),
     statDate: getFirstString([dimensions, row], ["stat_time_day", "statTimeDay"]),
@@ -550,6 +573,11 @@ function normalizeReportMetricsRow(args: {
       "campaignName",
     ]),
     adId: getFirstString([dimensions, args.row], ["ad_id", "adId"]),
+    adgroupId: getFirstString([dimensions, args.row], ["adgroup_id", "adgroupId"]),
+    adgroupName: getFirstString([dimensions, args.row], [
+      "adgroup_name",
+      "adgroupName",
+    ]),
     itemId: getFirstString([dimensions, args.row], ["item_id", "itemId"]),
     statDate: getFirstString([dimensions, args.row], [
       "stat_time_day",
@@ -583,6 +611,7 @@ function normalizeAdCampaignMetadata(
   return {
     adId,
     campaignId: getFirstString(candidates, ["campaign_id", "campaignId"]),
+    adgroupId: getFirstString(candidates, ["adgroup_id", "adgroupId"]),
     tiktokItemId: getFirstString(candidates, [
       "tiktok_item_id",
       "tiktokItemId",
@@ -590,6 +619,26 @@ function normalizeAdCampaignMetadata(
       "itemId",
     ]),
     adName: getFirstString(candidates, ["ad_name", "adName"]),
+  };
+}
+
+function normalizeAdgroupMetadata(
+  record: Record<string, unknown>,
+): TikTokAdgroupMetadata | null {
+  const adgroupId = getFirstString([record], ["adgroup_id", "adgroupId"]);
+
+  if (!adgroupId) {
+    return null;
+  }
+
+  return {
+    adgroupId,
+    adgroupName: getFirstString([record], [
+      "adgroup_name",
+      "adgroupName",
+      "name",
+    ]),
+    campaignId: getFirstString([record], ["campaign_id", "campaignId"]),
   };
 }
 
@@ -1874,6 +1923,87 @@ async function fetchAdvertiserCampaignMetadataBestEffort(args: {
   };
 }
 
+async function fetchAdvertiserAdgroupMetadataWithFields(args: {
+  advertiserId: string;
+  accessToken: string;
+  fields?: readonly string[];
+}) {
+  const adgroups: TikTokAdgroupMetadata[] = [];
+  let totalPages = 1;
+
+  for (let page = 1; page <= totalPages && page <= MAX_LIST_PAGES; page += 1) {
+    const payload = await requestTikTokBusinessApi<TikTokListData>({
+      accessToken: args.accessToken,
+      method: "GET",
+      path: "/open_api/v1.3/adgroup/get/",
+      query: {
+        advertiser_id: args.advertiserId,
+        page,
+        page_size: LIST_PAGE_SIZE,
+        ...(args.fields ? { fields: args.fields } : {}),
+      },
+    });
+
+    const pageAdgroups = getRecordArray(payload, ["list"])
+      .map(normalizeAdgroupMetadata)
+      .filter(
+        (adgroup): adgroup is TikTokAdgroupMetadata => Boolean(adgroup),
+      );
+
+    adgroups.push(...pageAdgroups);
+    totalPages = getTotalPages(
+      payload,
+      pageAdgroups.length,
+      LIST_PAGE_SIZE,
+      MAX_LIST_PAGES,
+    );
+
+    if (pageAdgroups.length < LIST_PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return adgroups;
+}
+
+async function fetchAdvertiserAdgroupMetadataBestEffort(args: {
+  advertiserId: string;
+  accessToken: string;
+}) {
+  let lastError: unknown = null;
+
+  for (const [index, fields] of adgroupFieldCandidates.entries()) {
+    try {
+      const adgroups = await fetchAdvertiserAdgroupMetadataWithFields({
+        advertiserId: args.advertiserId,
+        accessToken: args.accessToken,
+        fields,
+      });
+
+      return {
+        adgroups,
+        warnings:
+          index > 0
+            ? [
+                "TikTok rejected the richer ad group field set, so ad group labels may fall back to raw ad group IDs.",
+              ]
+            : [],
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  return {
+    adgroups: [] as TikTokAdgroupMetadata[],
+    warnings: [
+      lastError instanceof Error
+        ? `Could not load TikTok ad group metadata: ${lastError.message}`
+        : "Could not load TikTok ad group metadata.",
+    ],
+  };
+}
+
 async function fetchCampaignAwarePaidReportRows(args: {
   advertiserId: string;
   accessToken: string;
@@ -2042,9 +2172,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       primaryMetric: metric,
     }),
   );
-  const rowsNeedAdMetadata = normalizedRows.some(
-    (row) => row.adId && (!row.itemId || !row.campaignId),
-  );
+  const rowsNeedAdMetadata = normalizedRows.some((row) => Boolean(row.adId));
   const adMetadata = rowsNeedAdMetadata
     ? await fetchAdvertiserAdCampaignMetadataBestEffort({
         advertiserId,
@@ -2058,6 +2186,10 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
   const campaignIds = uniqueNonEmptyStrings([
     ...normalizedRows.map((row) => row.campaignId),
     ...adMetadata.ads.map((ad) => ad.campaignId),
+  ]);
+  const adgroupIds = uniqueNonEmptyStrings([
+    ...normalizedRows.map((row) => row.adgroupId),
+    ...adMetadata.ads.map((ad) => ad.adgroupId),
   ]);
   const campaignMetadata =
     campaignIds.length > 0
@@ -2074,6 +2206,22 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
     campaignMetadata.campaigns
       .filter((campaign) => campaignIdSet.has(campaign.campaignId))
       .map((campaign) => [campaign.campaignId, campaign] as const),
+  );
+  const adgroupMetadata =
+    adgroupIds.length > 0
+      ? await fetchAdvertiserAdgroupMetadataBestEffort({
+          advertiserId,
+          accessToken,
+        })
+      : {
+          adgroups: [] as TikTokAdgroupMetadata[],
+          warnings: [] as string[],
+        };
+  const adgroupIdSet = new Set(adgroupIds);
+  const adgroupsById = new Map(
+    adgroupMetadata.adgroups
+      .filter((adgroup) => adgroupIdSet.has(adgroup.adgroupId))
+      .map((adgroup) => [adgroup.adgroupId, adgroup] as const),
   );
   const paidViewsBySourceVideoId = new Map<string, number>();
 
@@ -2146,6 +2294,10 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       resolvedPostCoverUrl: string | null;
       tiktokCampaignId: string | null;
       tiktokCampaignName: string | null;
+      tiktokAdgroupId: string | null;
+      tiktokAdgroupName: string | null;
+      tiktokAdId: string | null;
+      tiktokAdName: string | null;
       paidViews: number;
       spend: number;
       clicks: number;
@@ -2178,9 +2330,17 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       (tiktokCampaignId
         ? (campaignsById.get(tiktokCampaignId)?.campaignName ?? null)
         : null);
+    const tiktokAdgroupId = row.adgroupId ?? ad?.adgroupId ?? null;
+    const tiktokAdgroupName =
+      row.adgroupName ??
+      (tiktokAdgroupId
+        ? (adgroupsById.get(tiktokAdgroupId)?.adgroupName ?? null)
+        : null);
     const groupKey = [
       sourceVideoId ?? row.adId ?? "unknown-paid-video",
       tiktokCampaignId ?? tiktokCampaignName ?? "unknown-campaign",
+      tiktokAdgroupId ?? tiktokAdgroupName ?? "unknown-adgroup",
+      row.adId ?? "unknown-ad",
     ].join("::");
     const group =
       groupedRows.get(groupKey) ??
@@ -2192,6 +2352,10 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
         resolvedPostCoverUrl: resolvedPost?.coverUrl ?? null,
         tiktokCampaignId,
         tiktokCampaignName,
+        tiktokAdgroupId,
+        tiktokAdgroupName,
+        tiktokAdId: row.adId,
+        tiktokAdName: ad?.adName ?? null,
         paidViews: 0,
         spend: 0,
         clicks: 0,
@@ -2215,6 +2379,8 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
     }
 
     group.tiktokCampaignName ??= tiktokCampaignName;
+    group.tiktokAdgroupName ??= tiktokAdgroupName;
+    group.tiktokAdName ??= ad?.adName ?? null;
     group.paidViews += row.metricValue;
     group.spend += row.metricValues?.spend ?? 0;
     group.clicks += row.metricValues?.clicks ?? 0;
@@ -2255,6 +2421,10 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
           : null,
         tiktokCampaignId: row.tiktokCampaignId,
         tiktokCampaignName: row.tiktokCampaignName,
+        tiktokAdgroupId: row.tiktokAdgroupId,
+        tiktokAdgroupName: row.tiktokAdgroupName,
+        tiktokAdId: row.tiktokAdId,
+        tiktokAdName: row.tiktokAdName,
         paidViews: row.paidViews,
         spend: row.spend,
         clicks: row.clicks,
@@ -2290,6 +2460,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       ...report.warnings,
       ...adMetadata.warnings,
       ...campaignMetadata.warnings,
+      ...adgroupMetadata.warnings,
       ...resolvedPostLookup.warnings,
       ...(paidViewsBySourceVideoId.size > postLinkLookupItemIds.length
         ? [

@@ -26,7 +26,7 @@ export type CampaignTikTokReconciliationRow = {
   localVideoId: string | null;
   sourceVideoId: string | null;
   videoUrl: string | null;
-  videoUrlSource: "tiktok_share" | "ads_manager" | "local" | null;
+  videoUrlSource: "preview" | "tiktok_share" | "ads_manager" | "local" | null;
   titleOrCaption: string | null;
   publishedAt: Date | null;
   createdAt: Date | null;
@@ -39,6 +39,10 @@ export type CampaignTikTokReconciliationRow = {
   hasLocalVideoMatch: boolean;
   tiktokCampaignId: string | null;
   tiktokCampaignName: string | null;
+  tiktokAdgroupId: string | null;
+  tiktokAdgroupName: string | null;
+  tiktokAdId: string | null;
+  tiktokAdName: string | null;
   tiktokImpressions: number;
   tiktokSpend: number;
   tiktokClicks: number;
@@ -311,10 +315,18 @@ function getVideoThumbnailUrl(payload: Prisma.JsonValue | null | undefined) {
 }
 
 function getCampaignVideoLink(args: {
+  previewUrl: string | null | undefined;
   localVideoUrl: string | null | undefined;
   resolvedPostUrl: string | null | undefined;
   adsManagerUrl: string | null | undefined;
 }) {
+  if (args.previewUrl) {
+    return {
+      href: args.previewUrl,
+      source: "preview" as const,
+    };
+  }
+
   if (args.resolvedPostUrl) {
     return {
       href: args.resolvedPostUrl,
@@ -411,6 +423,50 @@ export async function getCampaignTikTokVideoReconciliation(args: {
   const sourceVideoIds = uniqueNonEmptyStrings(
     tiktokReport.rows.map((row) => row.sourceVideoId),
   );
+  const tiktokAdIds = uniqueNonEmptyStrings(
+    tiktokReport.rows.flatMap((row) => row.matchedAdIds),
+  );
+  const previewWarnings: string[] = [];
+  const previewUrls = await (async () => {
+    if (!tiktokReport.advertiserId || tiktokAdIds.length === 0) {
+      return [];
+    }
+
+    try {
+      return await prisma.tikTokAdPreviewUrl.findMany({
+        where: {
+          organizationId: membership.organizationId,
+          advertiserId: tiktokReport.advertiserId,
+          adId: {
+            in: tiktokAdIds,
+          },
+          OR: [
+            {
+              expiresAt: null,
+            },
+            {
+              expiresAt: {
+                gte: new Date(),
+              },
+            },
+          ],
+        },
+        select: {
+          adId: true,
+          previewUrl: true,
+        },
+        orderBy: [{ importedAt: "desc" }],
+      });
+    } catch {
+      previewWarnings.push(
+        "TikTok preview URL storage is not available yet, so rows fall back to public post URLs or Ads Manager ad links.",
+      );
+      return [];
+    }
+  })();
+  const previewUrlsByAdId = new Map(
+    previewUrls.map((previewUrl) => [previewUrl.adId, previewUrl] as const),
+  );
   const videos = await prisma.video.findMany({
     where: {
       platform: Platform.TIKTOK,
@@ -472,7 +528,12 @@ export async function getCampaignTikTokVideoReconciliation(args: {
     const video = tiktokRow.sourceVideoId
       ? (videosBySourceVideoId.get(tiktokRow.sourceVideoId) ?? null)
       : null;
+    const previewUrl =
+      tiktokRow.matchedAdIds
+        .map((adId) => previewUrlsByAdId.get(adId)?.previewUrl ?? null)
+        .find((url): url is string => Boolean(url)) ?? null;
     const videoLink = getCampaignVideoLink({
+      previewUrl,
       localVideoUrl: video?.videoUrl,
       resolvedPostUrl: tiktokRow.resolvedPostUrl,
       adsManagerUrl: tiktokRow.adsManagerUrl,
@@ -501,6 +562,10 @@ export async function getCampaignTikTokVideoReconciliation(args: {
       rowKey: tiktokRow.rowKey,
       tiktokCampaignId: tiktokRow.tiktokCampaignId,
       tiktokCampaignName: tiktokRow.tiktokCampaignName,
+      tiktokAdgroupId: tiktokRow.tiktokAdgroupId,
+      tiktokAdgroupName: tiktokRow.tiktokAdgroupName,
+      tiktokAdId: tiktokRow.tiktokAdId,
+      tiktokAdName: tiktokRow.tiktokAdName,
       tiktokImpressions: tiktokRow.paidViews,
       tiktokSpend: tiktokRow.spend,
       tiktokClicks: tiktokRow.clicks,
@@ -557,7 +622,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
     endDate: tiktokReport.endDate,
     advertiserId: tiktokReport.advertiserId,
     reportRowCount: tiktokReport.reportRowCount,
-    warnings: tiktokReport.warnings,
+    warnings: [...tiktokReport.warnings, ...previewWarnings],
     rows,
     campaignTotals,
     totals: {

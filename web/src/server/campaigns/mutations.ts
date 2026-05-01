@@ -20,10 +20,213 @@ import {
   updateCampaignMemberRoleSchema,
 } from "./schemas";
 
+type TikTokPreviewCsvRecord = {
+  adId: string;
+  adName: string | null;
+  previewUrl: string;
+  expiresAt: Date | null;
+  rawPayload: Record<string, string>;
+};
+
 function revalidateCampaignWorkspace(organizationSlug: string) {
   revalidatePath("/app");
   revalidatePath(`/org/${organizationSlug}`);
   revalidatePath(`/org/${organizationSlug}/campaigns`);
+}
+
+function parseCsvRows(csvText: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let value = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < csvText.length; index += 1) {
+    const char = csvText[index];
+    const nextChar = csvText[index + 1];
+
+    if (char === '"' && inQuotes && nextChar === '"') {
+      value += '"';
+      index += 1;
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      row.push(value);
+      value = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && nextChar === "\n") {
+        index += 1;
+      }
+
+      row.push(value);
+      if (row.some((entry) => entry.trim().length > 0)) {
+        rows.push(row);
+      }
+      row = [];
+      value = "";
+      continue;
+    }
+
+    value += char;
+  }
+
+  row.push(value);
+  if (row.some((entry) => entry.trim().length > 0)) {
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function normalizeCsvHeader(value: string) {
+  return value
+    .replace(/^\uFEFF/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function findCsvColumn(headers: string[], candidates: string[]) {
+  const normalizedHeaders = headers.map(normalizeCsvHeader);
+
+  for (const candidate of candidates) {
+    const index = normalizedHeaders.indexOf(candidate);
+
+    if (index >= 0) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function parsePreviewExpiry(value: string | undefined) {
+  const trimmed = value?.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function normalizePreviewUrl(value: string | undefined) {
+  const trimmed = value?.trim();
+
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseTikTokPreviewCsv(csvText: string) {
+  const rows = parseCsvRows(csvText);
+  const [headers, ...dataRows] = rows;
+
+  if (!headers || dataRows.length === 0) {
+    throw new Error("The TikTok preview export is empty.");
+  }
+
+  const adIdIndex = findCsvColumn(headers, ["adid", "adidv2"]);
+  const adNameIndex = findCsvColumn(headers, ["adname"]);
+  const previewUrlIndex = findCsvColumn(headers, [
+    "urlqrcode",
+    "previewurl",
+    "shareurl",
+    "url",
+    "qrcode",
+  ]);
+  const expiryIndex = findCsvColumn(headers, [
+    "expirationdate",
+    "expirydate",
+    "expiresat",
+    "expiretime",
+    "expiration",
+  ]);
+
+  if (adIdIndex < 0 || previewUrlIndex < 0) {
+    throw new Error(
+      "The TikTok preview export must include Ad ID and URL/QR code columns.",
+    );
+  }
+
+  const records: TikTokPreviewCsvRecord[] = [];
+  let skipped = 0;
+
+  for (const dataRow of dataRows) {
+    const adId = dataRow[adIdIndex]?.trim() ?? "";
+    const previewUrl = normalizePreviewUrl(dataRow[previewUrlIndex]);
+
+    if (!adId || !previewUrl) {
+      skipped += 1;
+      continue;
+    }
+
+    records.push({
+      adId,
+      adName: dataRow[adNameIndex]?.trim() || null,
+      previewUrl,
+      expiresAt: parsePreviewExpiry(dataRow[expiryIndex]),
+      rawPayload: Object.fromEntries(
+        headers.map((header, index) => [header.trim(), dataRow[index]?.trim() ?? ""]),
+      ),
+    });
+  }
+
+  return {
+    records,
+    skipped,
+  };
+}
+
+async function getActiveTikTokAccountForOrganization(organizationId: string) {
+  const account = await prisma.organizationTikTokAccount.findFirst({
+    where: {
+      organizationId,
+      status: "ACTIVE",
+    },
+    orderBy: [{ updatedAt: "desc" }],
+    select: {
+      advertiserId: true,
+    },
+  });
+
+  if (account) {
+    return account;
+  }
+
+  const latestAccount = await prisma.organizationTikTokAccount.findFirst({
+    where: {
+      organizationId,
+    },
+    orderBy: [{ updatedAt: "desc" }],
+    select: {
+      advertiserId: true,
+    },
+  });
+
+  if (!latestAccount) {
+    throw new Error("Connect a TikTok advertiser account before importing previews.");
+  }
+
+  return latestAccount;
 }
 
 export async function createCampaignForOrganization(
@@ -55,6 +258,63 @@ export async function createCampaignForOrganization(
   revalidateCampaignWorkspace(organizationSlug);
 
   return campaign;
+}
+
+export async function importTikTokAdPreviewUrlsForOrganization(args: {
+  organizationSlug: string;
+  csvText: string;
+  sourceFileName?: string | null;
+}) {
+  const membership = await requireOrganizationMembership(args.organizationSlug);
+
+  if (!canManageOrganization(membership.role)) {
+    throw new Error("Only organization admins and owners can import TikTok previews.");
+  }
+
+  const account = await getActiveTikTokAccountForOrganization(membership.organizationId);
+  const parsed = parseTikTokPreviewCsv(args.csvText);
+
+  if (parsed.records.length === 0) {
+    throw new Error("No usable TikTok preview URLs were found in the export.");
+  }
+
+  for (const record of parsed.records) {
+    await prisma.tikTokAdPreviewUrl.upsert({
+      where: {
+        organizationId_advertiserId_adId: {
+          organizationId: membership.organizationId,
+          advertiserId: account.advertiserId,
+          adId: record.adId,
+        },
+      },
+      update: {
+        adName: record.adName,
+        previewUrl: record.previewUrl,
+        expiresAt: record.expiresAt,
+        importedAt: new Date(),
+        sourceFileName: args.sourceFileName ?? null,
+        rawPayload: record.rawPayload,
+      },
+      create: {
+        organizationId: membership.organizationId,
+        advertiserId: account.advertiserId,
+        adId: record.adId,
+        adName: record.adName,
+        previewUrl: record.previewUrl,
+        expiresAt: record.expiresAt,
+        importedAt: new Date(),
+        sourceFileName: args.sourceFileName ?? null,
+        rawPayload: record.rawPayload,
+      },
+    });
+  }
+
+  revalidateCampaignWorkspace(args.organizationSlug);
+
+  return {
+    imported: parsed.records.length,
+    skipped: parsed.skipped,
+  };
 }
 
 export async function updateCampaignForOrganization(args: {

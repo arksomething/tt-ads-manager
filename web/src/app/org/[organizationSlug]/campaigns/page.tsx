@@ -18,6 +18,7 @@ import {
 import {
   createCampaignForOrganization,
   deleteCampaignForOrganization,
+  importTikTokAdPreviewUrlsForOrganization,
   inviteCampaignMember,
   removeCampaignMember,
   revokeCampaignInvitation,
@@ -283,10 +284,36 @@ function getTikTokCampaignLabel(row: CampaignTikTokReconciliationRow) {
   return "Unknown TikTok campaign";
 }
 
+function getTikTokAdgroupLabel(row: CampaignTikTokReconciliationRow) {
+  if (row.tiktokAdgroupName) {
+    return row.tiktokAdgroupName;
+  }
+
+  if (row.tiktokAdgroupId) {
+    return `TikTok ad group ${row.tiktokAdgroupId}`;
+  }
+
+  return "Unknown ad group";
+}
+
+function getTikTokAdLabel(row: CampaignTikTokReconciliationRow) {
+  if (row.tiktokAdName) {
+    return row.tiktokAdName;
+  }
+
+  if (row.tiktokAdId) {
+    return `TikTok ad ${row.tiktokAdId}`;
+  }
+
+  return "Unknown ad";
+}
+
 function getVideoLinkSourceLabel(
   source: CampaignTikTokReconciliationRow["videoUrlSource"],
 ) {
   switch (source) {
+    case "preview":
+      return "Preview URL";
     case "tiktok_share":
       return "TikTok share link";
     case "ads_manager":
@@ -392,6 +419,8 @@ function getNoticeLabel(value: string | undefined) {
       return "Campaign member removed";
     case "campaign-invite-revoked":
       return "Campaign invite revoked";
+    case "tiktok-preview-imported":
+      return "TikTok preview URLs imported";
     default:
       return undefined;
   }
@@ -452,6 +481,7 @@ export default async function CampaignsPage({
   const campaignRoleOptions = [CampaignRole.MANAGER, CampaignRole.MEMBER];
   const activeCampaignViewerMembership = activeCampaignSummary?.memberships[0] ?? null;
   const canCreateCampaign = workspace.canManageOrganizationCampaigns;
+  const canImportPreviewUrls = workspace.canManageOrganizationCampaigns;
   const canManageActiveCampaign = activeCampaignSummary
     ? workspace.canManageOrganizationCampaigns ||
       activeCampaignSummary.owner?.id === workspace.membership.userId ||
@@ -498,6 +528,32 @@ export default async function CampaignsPage({
     }
 
     redirect(`/org/${organizationSlug}/campaigns?notice=campaign-created`);
+  }
+
+  async function importTikTokPreviewUrlsAction(formData: FormData) {
+    "use server";
+
+    try {
+      const file = formData.get("previewFile");
+
+      if (!(file instanceof File) || file.size === 0) {
+        throw new Error("Choose the TikTok preview URL CSV first.");
+      }
+
+      await importTikTokAdPreviewUrlsForOrganization({
+        organizationSlug,
+        csvText: await file.text(),
+        sourceFileName: file.name,
+      });
+    } catch (importError) {
+      redirect(
+        `/org/${organizationSlug}/campaigns?error=${encodeURIComponent(
+          getActionErrorMessage(importError),
+        )}`,
+      );
+    }
+
+    redirect(`/org/${organizationSlug}/campaigns?notice=tiktok-preview-imported`);
   }
 
   async function updateCampaignAction(formData: FormData) {
@@ -764,7 +820,7 @@ export default async function CampaignsPage({
               {formatCampaignMetric(reconciliation.totals.videos)}
             </p>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              TikTok paid video/campaign matches in this date window
+              TikTok paid ad/post/campaign rows in this date window
             </p>
           </article>
           <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
@@ -857,7 +913,7 @@ export default async function CampaignsPage({
                       : ""}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {formatCampaignMetric(campaignTotal.videos)} video
+                    {formatCampaignMetric(campaignTotal.videos)} paid row
                     {campaignTotal.videos === 1 ? "" : "s"}
                     {campaignTotal.tiktokCampaignId
                       ? ` / ID ${campaignTotal.tiktokCampaignId}`
@@ -890,14 +946,42 @@ export default async function CampaignsPage({
           </div>
         ) : null}
 
+        {canImportPreviewUrls && reconciliation.advertiserId ? (
+          <form
+            action={importTikTokPreviewUrlsAction}
+            className="mt-5 flex flex-col gap-3 rounded-[1.15rem] border border-white/[0.08] bg-black/[0.18] p-4 lg:flex-row lg:items-end lg:justify-between"
+            encType="multipart/form-data"
+          >
+            <label className="block min-w-0 flex-1">
+              <span className="mb-2 block text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+                TikTok preview URL CSV
+              </span>
+              <input
+                accept=".csv,text/csv"
+                className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 py-2 text-sm text-foreground file:mr-3 file:rounded-full file:border-0 file:bg-white/[0.08] file:px-3 file:py-1.5 file:text-xs file:text-foreground"
+                name="previewFile"
+                type="file"
+              />
+            </label>
+            <button
+              className="inline-flex min-h-11 items-center justify-center rounded-[0.95rem] border border-white/[0.1] bg-white/[0.06] px-4 text-sm font-medium text-foreground transition hover:bg-white/[0.1]"
+              type="submit"
+            >
+              Import previews
+            </button>
+          </form>
+        ) : null}
+
         <div className="mt-5 overflow-hidden rounded-[1.15rem] border border-white/[0.08] bg-black/[0.16]">
           {reconciliation.rows.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="min-w-[1500px] w-full border-collapse text-left text-sm">
+              <table className="min-w-[1780px] w-full border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-white/[0.08] text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
                     <th className="px-4 py-3 font-medium">Paid video</th>
                     <th className="px-4 py-3 font-medium">TikTok campaign</th>
+                    <th className="px-4 py-3 font-medium">Ad group</th>
+                    <th className="px-4 py-3 font-medium">Ad</th>
                     <th className="px-4 py-3 text-right font-medium">TikTok impressions</th>
                     <th className="px-4 py-3 text-right font-medium">Cost</th>
                     <th className="px-4 py-3 text-right font-medium">Clicks / CTR</th>
@@ -997,6 +1081,26 @@ export default async function CampaignsPage({
                           {row.tiktokCampaignId ? (
                             <p className="mt-2 text-xs text-muted-foreground">
                               ID {row.tiktokCampaignId}
+                            </p>
+                          ) : null}
+                        </td>
+                        <td className="px-4 py-4">
+                          <p className="max-w-[16rem] truncate font-medium text-foreground">
+                            {getTikTokAdgroupLabel(row)}
+                          </p>
+                          {row.tiktokAdgroupId ? (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              ID {row.tiktokAdgroupId}
+                            </p>
+                          ) : null}
+                        </td>
+                        <td className="px-4 py-4">
+                          <p className="max-w-[18rem] truncate font-medium text-foreground">
+                            {getTikTokAdLabel(row)}
+                          </p>
+                          {row.tiktokAdId ? (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              ID {row.tiktokAdId}
                             </p>
                           ) : null}
                         </td>

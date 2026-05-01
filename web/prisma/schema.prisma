@@ -260,6 +260,7 @@ model Organization {
   sparkAuthorizations       SparkAuthorization[]
   creatorDeals              CampaignCreatorDeal[]
   tiktokPaidMetricSnapshots TikTokPaidMetricSnapshot[]
+  tiktokAdPreviewUrls       TikTokAdPreviewUrl[]
 }
 
 model OrganizationMembership {
@@ -716,6 +717,25 @@ model TikTokPaidMetricSnapshot {
   @@index([organizationId, creatorId, statDate])
   @@index([organizationId, advertiserId, tiktokItemId])
   @@index([videoId, statDate])
+}
+
+model TikTokAdPreviewUrl {
+  id             String       @id @default(cuid())
+  organizationId String
+  advertiserId   String
+  adId           String
+  adName         String?
+  previewUrl     String
+  expiresAt      DateTime?
+  importedAt     DateTime     @default(now())
+  sourceFileName String?
+  rawPayload     Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, advertiserId, adId])
+  @@index([organizationId, advertiserId, expiresAt])
 }
 
 model Note {

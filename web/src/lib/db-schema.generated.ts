@@ -551,6 +551,12 @@ export const modelSchema = {
         "type": "TikTokPaidMetricSnapshot",
         "isList": true,
         "isOptional": false
+      },
+      "tiktokAdPreviewUrls": {
+        "kind": "relation",
+        "type": "TikTokAdPreviewUrl",
+        "isList": true,
+        "isOptional": false
       }
     },
     "relations": {
@@ -666,6 +672,16 @@ export const modelSchema = {
       },
       "tiktokPaidMetricSnapshots": {
         "model": "TikTokPaidMetricSnapshot",
+        "isList": true,
+        "localFields": [
+          "id"
+        ],
+        "remoteFields": [
+          "organizationId"
+        ]
+      },
+      "tiktokAdPreviewUrls": {
+        "model": "TikTokAdPreviewUrl",
         "isList": true,
         "localFields": [
           "id"
@@ -3638,6 +3654,101 @@ export const modelSchema = {
         "isList": false,
         "localFields": [
           "videoId"
+        ],
+        "remoteFields": [
+          "id"
+        ]
+      }
+    }
+  },
+  "TikTokAdPreviewUrl": {
+    "table": "TikTokAdPreviewUrl",
+    "fields": {
+      "id": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "organizationId": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "advertiserId": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "adId": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "adName": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "previewUrl": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "expiresAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": true
+      },
+      "importedAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "sourceFileName": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "rawPayload": {
+        "kind": "scalar",
+        "type": "Json",
+        "isList": false,
+        "isOptional": true
+      },
+      "createdAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "updatedAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "organization": {
+        "kind": "relation",
+        "type": "Organization",
+        "isList": false,
+        "isOptional": false
+      }
+    },
+    "relations": {
+      "organization": {
+        "model": "Organization",
+        "isList": false,
+        "localFields": [
+          "organizationId"
         ],
         "remoteFields": [
           "id"

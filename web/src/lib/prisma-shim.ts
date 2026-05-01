@@ -529,6 +529,21 @@ export interface TikTokPaidMetricSnapshot {
   updatedAt: Date;
 }
 
+export interface TikTokAdPreviewUrl {
+  id: string;
+  organizationId: string;
+  advertiserId: string;
+  adId: string;
+  adName: string | null;
+  previewUrl: string;
+  expiresAt: Date | null;
+  importedAt: Date;
+  sourceFileName: string | null;
+  rawPayload: Prisma.JsonValue | null | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface Note {
   id: string;
   organizationId: string;
@@ -762,6 +777,11 @@ export namespace Prisma {
   export type TikTokPaidMetricSnapshotSelect = GenericSelect;
   export type TikTokPaidMetricSnapshotCreateInput = GenericInput;
   export type TikTokPaidMetricSnapshotUpdateInput = GenericInput;
+  export type TikTokAdPreviewUrlWhereInput = GenericWhereInput;
+  export type TikTokAdPreviewUrlOrderByWithRelationInput = GenericOrderByInput;
+  export type TikTokAdPreviewUrlSelect = GenericSelect;
+  export type TikTokAdPreviewUrlCreateInput = GenericInput;
+  export type TikTokAdPreviewUrlUpdateInput = GenericInput;
   export type NoteWhereInput = GenericWhereInput;
   export type NoteOrderByWithRelationInput = GenericOrderByInput;
   export type NoteSelect = GenericSelect;
@@ -824,6 +844,7 @@ export namespace Prisma {
     CreatorMessageEvent: "CreatorMessageEvent",
     SparkAuthorization: "SparkAuthorization",
     TikTokPaidMetricSnapshot: "TikTokPaidMetricSnapshot",
+    TikTokAdPreviewUrl: "TikTokAdPreviewUrl",
     Note: "Note",
     Tag: "Tag",
     CreatorTag: "CreatorTag",
