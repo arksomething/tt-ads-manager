@@ -9,6 +9,7 @@ import {
   resolvePaidAdGroupsForAdvertiser,
   type TikTokAdAttributionMatchMode,
   type TikTokAdProfitabilityReport,
+  type TikTokResolvedPost,
 } from "./ad-profitability";
 import { requestTikTokBusinessApi } from "./client";
 
@@ -16,6 +17,7 @@ const MAX_REPORT_PAGES = 20;
 const REPORT_PAGE_SIZE = 1_000;
 const MAX_LIST_PAGES = 20;
 const LIST_PAGE_SIZE = 100;
+const MAX_CAMPAIGN_POST_LINK_LOOKUPS = 20;
 const PAID_REPORT_CACHE_TTL_MS = 5 * 60 * 1_000;
 const AD_SPEND_REPORT_CACHE_TTL_MS = 5 * 60 * 1_000;
 
@@ -197,6 +199,9 @@ export type TikTokCampaignVideoMatchSource =
 export type TikTokCampaignVideoViewRow = {
   rowKey: string;
   sourceVideoId: string | null;
+  resolvedPostTitle: string | null;
+  resolvedPostUrl: string | null;
+  resolvedPostCoverUrl: string | null;
   tiktokCampaignId: string | null;
   tiktokCampaignName: string | null;
   paidViews: number;
@@ -1892,11 +1897,75 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       .filter((campaign) => campaignIdSet.has(campaign.campaignId))
       .map((campaign) => [campaign.campaignId, campaign] as const),
   );
+  const paidViewsBySourceVideoId = new Map<string, number>();
+
+  for (const row of normalizedRows) {
+    if (!Number.isFinite(row.metricValue) || row.metricValue <= 0) {
+      continue;
+    }
+
+    const ad = row.adId ? (adsById.get(row.adId) ?? null) : null;
+    const sourceVideoId = row.itemId ?? ad?.tiktokItemId ?? null;
+
+    if (!sourceVideoId || (itemIdSet && !itemIdSet.has(sourceVideoId))) {
+      continue;
+    }
+
+    paidViewsBySourceVideoId.set(
+      sourceVideoId,
+      (paidViewsBySourceVideoId.get(sourceVideoId) ?? 0) + row.metricValue,
+    );
+  }
+
+  const postLinkLookupItemIds = [...paidViewsBySourceVideoId.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, MAX_CAMPAIGN_POST_LINK_LOOKUPS)
+    .map(([itemId]) => itemId);
+  const postLinkLookupItemIdSet = new Set(postLinkLookupItemIds);
+  const postLinkLookupRows =
+    postLinkLookupItemIdSet.size > 0
+      ? normalizedRows.filter((row) => {
+          if (!Number.isFinite(row.metricValue) || row.metricValue <= 0) {
+            return false;
+          }
+
+          const ad = row.adId ? (adsById.get(row.adId) ?? null) : null;
+          const sourceVideoId = row.itemId ?? ad?.tiktokItemId ?? null;
+          return Boolean(sourceVideoId && postLinkLookupItemIdSet.has(sourceVideoId));
+        })
+      : [];
+  const resolvedPostLookup =
+    postLinkLookupRows.length > 0
+      ? await resolvePaidAdGroupsForAdvertiser({
+          advertiserId,
+          accessToken,
+          rows: postLinkLookupRows,
+          targetItemIds: postLinkLookupItemIds,
+        })
+      : {
+          groups: [],
+          warnings: [] as string[],
+        };
+  const resolvedPostsByItemId = new Map<string, TikTokResolvedPost>();
+
+  for (const group of resolvedPostLookup.groups) {
+    for (const post of group.resolvedPosts) {
+      const existingPost = resolvedPostsByItemId.get(post.itemId);
+
+      if (!existingPost || (!existingPost.shareUrl && post.shareUrl)) {
+        resolvedPostsByItemId.set(post.itemId, post);
+      }
+    }
+  }
+
   const groupedRows = new Map<
     string,
     {
       rowKey: string;
       sourceVideoId: string | null;
+      resolvedPostTitle: string | null;
+      resolvedPostUrl: string | null;
+      resolvedPostCoverUrl: string | null;
       tiktokCampaignId: string | null;
       tiktokCampaignName: string | null;
       paidViews: number;
@@ -1920,6 +1989,9 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
     }
 
     const tiktokCampaignId = row.campaignId ?? ad?.campaignId ?? null;
+    const resolvedPost = sourceVideoId
+      ? (resolvedPostsByItemId.get(sourceVideoId) ?? null)
+      : null;
     const tiktokCampaignName =
       row.campaignName ??
       (tiktokCampaignId
@@ -1934,6 +2006,9 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       {
         rowKey: groupKey,
         sourceVideoId,
+        resolvedPostTitle: resolvedPost?.title ?? null,
+        resolvedPostUrl: resolvedPost?.shareUrl ?? null,
+        resolvedPostCoverUrl: resolvedPost?.coverUrl ?? null,
         tiktokCampaignId,
         tiktokCampaignName,
         paidViews: 0,
@@ -1942,6 +2017,18 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
         statDates: new Set<string>(),
         matchSources: new Set<TikTokCampaignVideoMatchSource>(),
       };
+
+    if (!group.resolvedPostTitle && resolvedPost?.title) {
+      group.resolvedPostTitle = resolvedPost.title;
+    }
+
+    if (!group.resolvedPostUrl && resolvedPost?.shareUrl) {
+      group.resolvedPostUrl = resolvedPost.shareUrl;
+    }
+
+    if (!group.resolvedPostCoverUrl && resolvedPost?.coverUrl) {
+      group.resolvedPostCoverUrl = resolvedPost.coverUrl;
+    }
 
     group.tiktokCampaignName ??= tiktokCampaignName;
     group.paidViews += row.metricValue;
@@ -1970,6 +2057,9 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
     .map((row) => ({
       rowKey: row.rowKey,
       sourceVideoId: row.sourceVideoId,
+      resolvedPostTitle: row.resolvedPostTitle,
+      resolvedPostUrl: row.resolvedPostUrl,
+      resolvedPostCoverUrl: row.resolvedPostCoverUrl,
       tiktokCampaignId: row.tiktokCampaignId,
       tiktokCampaignName: row.tiktokCampaignName,
       paidViews: row.paidViews,
@@ -2000,6 +2090,12 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       ...report.warnings,
       ...adMetadata.warnings,
       ...campaignMetadata.warnings,
+      ...resolvedPostLookup.warnings,
+      ...(paidViewsBySourceVideoId.size > postLinkLookupItemIds.length
+        ? [
+            `TikTok post share URL lookup is limited to the top ${MAX_CAMPAIGN_POST_LINK_LOOKUPS} paid post IDs by views, so lower-volume rows may stay unlinked instead of using guessed URLs.`,
+          ]
+        : []),
     ]),
   };
 }

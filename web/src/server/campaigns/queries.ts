@@ -415,12 +415,8 @@ export async function getCampaignTikTokVideoReconciliation(args: {
     return {
       localVideoId: video?.id ?? null,
       sourceVideoId: tiktokRow.sourceVideoId,
-      videoUrl:
-        video?.videoUrl ??
-        (tiktokRow.sourceVideoId
-          ? `https://www.tiktok.com/video/${encodeURIComponent(tiktokRow.sourceVideoId)}`
-          : null),
-      titleOrCaption: video?.titleOrCaption ?? null,
+      videoUrl: video?.videoUrl ?? tiktokRow.resolvedPostUrl,
+      titleOrCaption: video?.titleOrCaption ?? tiktokRow.resolvedPostTitle,
       publishedAt: video?.publishedAt ?? null,
       createdAt: video?.createdAt ?? null,
       localViews: video?.views ?? null,
@@ -429,7 +425,9 @@ export async function getCampaignTikTokVideoReconciliation(args: {
       thumbnailUrl:
         getVideoThumbnailUrl(video?.rawPayload) ??
         getAccountImageUrl(video?.rawPayload) ??
-        getAccountImageUrl(video?.creatorPlatformAccount?.rawPayload),
+        getAccountImageUrl(video?.creatorPlatformAccount?.rawPayload) ??
+        tiktokRow.resolvedPostCoverUrl ??
+        undefined,
       localCampaignId: video?.campaign?.id ?? null,
       localCampaignName: video?.campaign?.name ?? null,
       hasLocalVideoMatch: Boolean(video),
