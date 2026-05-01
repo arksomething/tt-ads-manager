@@ -303,6 +303,33 @@ function getVideoThumbnailUrl(payload: Prisma.JsonValue | null | undefined) {
   );
 }
 
+function getCampaignVideoLink(args: {
+  localVideoUrl: string | null | undefined;
+  resolvedPostUrl: string | null | undefined;
+}) {
+  if (args.resolvedPostUrl) {
+    return args.resolvedPostUrl;
+  }
+
+  if (!args.localVideoUrl) {
+    return null;
+  }
+
+  try {
+    const url = new URL(args.localVideoUrl);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    const pathname = url.pathname.replace(/\/+$/, "");
+
+    if (host === "tiktok.com" && /^\/video\/\d+$/.test(pathname)) {
+      return null;
+    }
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 export async function getCampaignTikTokVideoReconciliation(args: {
   organizationSlug: string;
   campaignIds?: string[];
@@ -415,7 +442,10 @@ export async function getCampaignTikTokVideoReconciliation(args: {
     return {
       localVideoId: video?.id ?? null,
       sourceVideoId: tiktokRow.sourceVideoId,
-      videoUrl: video?.videoUrl ?? tiktokRow.resolvedPostUrl,
+      videoUrl: getCampaignVideoLink({
+        localVideoUrl: video?.videoUrl,
+        resolvedPostUrl: tiktokRow.resolvedPostUrl,
+      }),
       titleOrCaption: video?.titleOrCaption ?? tiktokRow.resolvedPostTitle,
       publishedAt: video?.publishedAt ?? null,
       createdAt: video?.createdAt ?? null,
