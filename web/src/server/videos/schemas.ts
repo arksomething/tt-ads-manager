@@ -2,9 +2,9 @@ import { Platform } from "@/lib/prisma-shim";
 import { z } from "zod";
 
 export const createVideoSchema = z.object({
-  creatorId: z.string().cuid(),
-  creatorPlatformAccountId: z.string().cuid().optional(),
-  campaignId: z.string().cuid().optional(),
+  creatorId: z.string().min(1).max(191),
+  creatorPlatformAccountId: z.string().min(1).max(191).optional(),
+  campaignId: z.string().min(1).max(191).optional(),
   sourceVideoId: z.string().max(255).optional(),
   platform: z.nativeEnum(Platform),
   videoUrl: z.url(),
@@ -19,9 +19,9 @@ export const createVideoSchema = z.object({
 });
 
 export const videoFiltersSchema = z.object({
-  organizationId: z.string().cuid(),
-  campaignId: z.string().cuid().optional(),
-  creatorId: z.string().cuid().optional(),
+  organizationId: z.string().min(1).max(191),
+  campaignId: z.string().min(1).max(191).optional(),
+  creatorId: z.string().min(1).max(191).optional(),
   platform: z.nativeEnum(Platform).optional(),
   publishedAfter: z.coerce.date().optional(),
   publishedBefore: z.coerce.date().optional(),
@@ -29,11 +29,11 @@ export const videoFiltersSchema = z.object({
 
 export const trackVideoSchema = z.object({
   videoUrl: z.string().trim().max(4096).url(),
-  campaignId: z.string().cuid("Choose a campaign you can access."),
+  campaignId: z.string().min(1, "Choose a campaign you can access.").max(191),
 });
 
 export const setVideoReviewSchema = z.object({
-  videoId: z.string().cuid(),
+  videoId: z.string().min(1).max(191),
   action: z.enum(["mark-reviewed", "clear-reviewed"]),
 });
 

@@ -10,6 +10,7 @@ import {
   getTikTokSingularOverlay,
   type TikTokSingularReportRow,
 } from "@/server/singular/reporting";
+import { getViralTikTokPostAttributionsForSingularRows } from "@/server/singular/viral-attribution";
 
 export const dynamic = "force-dynamic";
 
@@ -88,6 +89,10 @@ const decimalFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 const integerFormatter = new Intl.NumberFormat("en-US");
+const compactIntegerFormatter = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 1,
+  notation: "compact",
+});
 const ratioFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
@@ -243,7 +248,32 @@ function getCreativeContextLabel(row: SingularCreativeRow) {
   return uniqueNonEmptyStrings([
     row.app,
     row.source,
+    row.tiktokPostId ? `TikTok post ID ${row.tiktokPostId}` : null,
     row.creativeId ? `Creative ID ${row.creativeId}` : null,
+  ]).join(" · ");
+}
+
+function getViralPostContextLabel(args: {
+  accountUsername: string | null;
+  accountDisplayName: string | null;
+  viewCount: number | null;
+  platformVideoId: string;
+  singularCreativeId: string | null;
+  singularCreativeName: string | null;
+}) {
+  return uniqueNonEmptyStrings([
+    args.accountUsername
+      ? `@${args.accountUsername}`
+      : args.accountDisplayName,
+    typeof args.viewCount === "number"
+      ? `${compactIntegerFormatter.format(args.viewCount)} viral.app views`
+      : null,
+    `TikTok post ID ${args.platformVideoId}`,
+    args.singularCreativeName
+      ? `Singular ${args.singularCreativeName}`
+      : args.singularCreativeId
+        ? `Singular creative ${args.singularCreativeId}`
+        : null,
   ]).join(" · ");
 }
 
@@ -464,6 +494,9 @@ export default async function TikTokPaidViewsPage({
 
   const rows = rankRows(aggregateSingularRows(overlay.rows));
   const sortedRows = sortRows(rows, sortKey);
+  const viralAttribution = await getViralTikTokPostAttributionsForSingularRows(
+    rows,
+  );
   const reportCurrency = getSingleCurrency(sortedRows);
   const totalSpend = rows.reduce((total, row) => total + row.spend, 0);
   const totalRevenue = rows.reduce((total, row) => total + row.revenue, 0);
@@ -477,6 +510,7 @@ export default async function TikTokPaidViewsPage({
     sortOptions.find((option) => option.value === sortKey) ?? sortOptions[0];
   const warnings = uniqueNonEmptyStrings([
     ...overlay.warnings,
+    ...viralAttribution.warnings,
     ...(!process.env.SINGULAR_APP_NAMES?.trim()
       ? [
           "SINGULAR_APP_NAMES is not set, so this leaderboard may span more than one app.",
@@ -488,34 +522,52 @@ export default async function TikTokPaidViewsPage({
       ? `${appFilterNames.length} app${appFilterNames.length === 1 ? "" : "s"}`
       : "All apps";
   const sourceScopeLabel = `${overlay.sourceNames.length} TikTok source${overlay.sourceNames.length === 1 ? "" : "s"}`;
-  const tableRows: AdProfitTableClientRow[] = sortedRows.map((row) => ({
-    id: row.rowKey,
-    creativeId: row.creativeId,
-    creativeName: row.creativeName,
-    creativeTitle: getCreativeTitle(row),
-    creativeContextLabel: getCreativeContextLabel(row),
-    creativeIdLabel: row.creativeId
-      ? `Creative ID ${row.creativeId}`
-      : "Creative ID unavailable",
-    creativeImage: row.creativeImage,
-    creativeUrl: row.creativeUrl,
-    campaignLabel: getCampaignLabel(row),
-    campaignName: row.campaignName,
-    spendLabel: formatAmount(row.spend, row.currency),
-    revenueLabel: formatAmount(row.revenue, row.currency),
-    profitLabel: formatAmount(row.profit, row.currency),
-    profitPositive: row.profit > 0,
-    roasLabel: formatRoas(row.roas),
-    revenueRankLabel: integerFormatter.format(row.revenueRank),
-    roasRankLabel: integerFormatter.format(row.roasRank),
-    compositeLabel: decimalFormatter.format(row.compositeScore),
-    overallRankLabel: integerFormatter.format(row.overallRank),
-    volumePrimaryLabel: `${integerFormatter.format(row.installs)} installs`,
-    volumeSecondaryLabel: `${integerFormatter.format(row.conversions)} conversions`,
-    sourceLabel: row.source ?? "Unknown source",
-    appLabel: row.app ?? "Unknown app",
-    subCampaignName: row.subCampaignName,
-  }));
+  const tableRows: AdProfitTableClientRow[] = sortedRows.map((row) => {
+    const viralPost = row.tiktokPostId
+      ? viralAttribution.attributions.get(row.tiktokPostId)
+      : null;
+
+    return {
+      id: row.rowKey,
+      creativeId: row.creativeId,
+      creativeName: row.creativeName,
+      creativeTitle: viralPost?.caption ?? getCreativeTitle(row),
+      creativeContextLabel: viralPost
+        ? getViralPostContextLabel({
+            accountDisplayName: viralPost.accountDisplayName,
+            accountUsername: viralPost.accountUsername,
+            platformVideoId: viralPost.platformVideoId,
+            singularCreativeId: row.creativeId,
+            singularCreativeName: row.creativeName,
+            viewCount: viralPost.viewCount,
+          })
+        : getCreativeContextLabel(row),
+      creativeIdLabel: row.creativeId
+        ? `Creative ID ${row.creativeId}`
+        : "Creative ID unavailable",
+      creativeImage: row.creativeImage ?? viralPost?.thumbnailUrl ?? null,
+      creativeUrl: row.creativeUrl ?? viralPost?.videoUrl ?? null,
+      primaryLinkLabel: viralPost ? "Open viral post" : "Open creative",
+      tiktokPostId: row.tiktokPostId,
+      campaignLabel: getCampaignLabel(row),
+      campaignName: row.campaignName,
+      spendLabel: formatAmount(row.spend, row.currency),
+      revenueLabel: formatAmount(row.revenue, row.currency),
+      profitLabel: formatAmount(row.profit, row.currency),
+      profitPositive: row.profit > 0,
+      roasLabel: formatRoas(row.roas),
+      revenueRankLabel: integerFormatter.format(row.revenueRank),
+      roasRankLabel: integerFormatter.format(row.roasRank),
+      compositeLabel: decimalFormatter.format(row.compositeScore),
+      overallRankLabel: integerFormatter.format(row.overallRank),
+      volumePrimaryLabel: `${integerFormatter.format(row.installs)} installs`,
+      volumeSecondaryLabel: `${integerFormatter.format(row.conversions)} conversions`,
+      sourceLabel: row.source ?? "Unknown source",
+      appLabel: row.app ?? "Unknown app",
+      subCampaignName: row.subCampaignName,
+      viralPostMatched: Boolean(viralPost),
+    };
+  });
 
   return (
     <div className="space-y-4">
@@ -564,6 +616,9 @@ export default async function TikTokPaidViewsPage({
             label={`${formatDate(startDate)} to ${formatDate(endDate)}`}
           />
           <SummaryPill label={`${summaryScopeLabel} · ${sourceScopeLabel}`} />
+          <SummaryPill
+            label={`${integerFormatter.format(viralAttribution.matchedPostCount)}/${integerFormatter.format(viralAttribution.postIdCount)} viral.app post matches`}
+          />
         </div>
       </section>
 

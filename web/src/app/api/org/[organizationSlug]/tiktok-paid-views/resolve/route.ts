@@ -8,6 +8,7 @@ const requestSchema = z.object({
   endDate: z.string().trim().min(1),
   creativeId: z.string().trim().min(1).nullable().optional(),
   creativeName: z.string().trim().min(1).nullable().optional(),
+  tiktokPostId: z.string().trim().min(1).nullable().optional(),
   creativeUrl: z.string().trim().min(1).nullable().optional(),
   campaignName: z.string().trim().min(1).nullable().optional(),
   subCampaignName: z.string().trim().min(1).nullable().optional(),
@@ -32,6 +33,7 @@ export async function POST(
       singularRow: {
         creativeId: payload.creativeId ?? null,
         creativeName: payload.creativeName ?? null,
+        tiktokPostId: payload.tiktokPostId ?? null,
         creativeUrl: payload.creativeUrl ?? null,
         campaignName: payload.campaignName ?? null,
         subCampaignName: payload.subCampaignName ?? null,

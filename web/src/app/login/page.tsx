@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 
+import { auth, isAuthConfigured } from "@/auth";
 import { AuthInfoRow, AuthShell } from "@/components/auth/auth-shell";
-import { isGoogleAuthDisabled } from "@/lib/server-env";
+import { isAuthDisabled } from "@/lib/server-env";
 
 export const dynamic = "force-dynamic";
 
@@ -21,22 +22,16 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const resolvedSearchParams = await searchParams;
   const isSwitchAccountFlow =
     getSearchParamValue(resolvedSearchParams, "mode") === "switch-account";
-  const googleAuthDisabled = isGoogleAuthDisabled();
-  const googleAuthConfigured = Boolean(
-    !googleAuthDisabled &&
-      process.env.AUTH_SECRET &&
-      process.env.AUTH_SECRET.length >= 32 &&
-      process.env.GOOGLE_CLIENT_ID &&
-      process.env.GOOGLE_CLIENT_SECRET,
-  );
+  const authDisabled = isAuthDisabled();
+  const errorMessage = getSearchParamValue(resolvedSearchParams, "error");
+  const noticeMessage = getSearchParamValue(resolvedSearchParams, "notice");
 
-  if (googleAuthDisabled) {
+  if (authDisabled) {
     redirect("/app");
   }
 
-  if (googleAuthConfigured) {
+  if (isAuthConfigured) {
     try {
-      const { auth } = await import("@/auth");
       const session = await auth();
 
       if (session?.user?.id && !isSwitchAccountFlow) {
@@ -49,19 +44,20 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
 
   return (
     <AuthShell
+      cardClassName="max-w-[32rem]"
       description={
-        googleAuthConfigured
+        isAuthConfigured
           ? isSwitchAccountFlow
-            ? "Choose a different Google account to continue into your workspace."
-            : "Continue with Google to enter your workspace. If you do not have one yet, the app will create it automatically."
-          : "The auth surface is ready. Add the required environment variables to enable Google sign-in."
+            ? "Sign in with another email and password combination to continue into your workspace."
+            : "Use Supabase Auth email and password sign-in to enter your workspace. New users can create an account directly from this screen."
+          : "The auth surface is ready. Add the required Supabase Auth environment variables to enable sign-in."
       }
       footer={
-        googleAuthConfigured
+        isAuthConfigured
           ? isSwitchAccountFlow
-            ? "You will be prompted to pick another Google account before returning to the app."
-            : "By continuing, you agree to the product terms and privacy expectations for your workspace."
-          : "Google auth is currently disabled in this environment, so the page stays visible while setup is incomplete."
+            ? "After signing in, the app will return you to the workspace hub."
+            : "If email confirmation is enabled in Supabase, account creation will pause until the email link is confirmed."
+          : "Supabase Auth is currently disabled in this environment, so the page stays visible while setup is incomplete."
       }
       title="Welcome to Billion Views"
     >
@@ -69,11 +65,11 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <AuthInfoRow
           adornment={
             <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-3 py-1 text-[0.62rem] font-medium uppercase tracking-[0.18em] text-foreground/72">
-              Google
+              Supabase
             </span>
           }
           label="Access method"
-          value="Google-authenticated sign in"
+          value="Supabase Auth email and password"
         />
         <AuthInfoRow
           adornment={
@@ -97,39 +93,85 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
           label="Next step"
           value={
             isSwitchAccountFlow
-              ? "Pick the Google account you want to use"
-              : "Open your workspace or have one created for you"
+              ? "Enter the credentials for the account you want to use"
+              : "Sign in or create an account, then open your workspace"
           }
         />
       </div>
 
+      {errorMessage ? (
+        <div className="mt-8 rounded-[1.2rem] border border-[#ff8f7c]/30 bg-[#ff8f7c]/10 px-4 py-3 text-sm text-[#ffd3cb]">
+          {errorMessage}
+        </div>
+      ) : null}
+
+      {noticeMessage ? (
+        <div className="mt-8 rounded-[1.2rem] border border-[#90FF4D]/20 bg-[#90FF4D]/8 px-4 py-3 text-sm text-[#dff8c4]">
+          {noticeMessage}
+        </div>
+      ) : null}
+
       <form
-        action={async () => {
-          "use server";
-
-          if (!googleAuthConfigured) {
-            return;
-          }
-
-          const { signIn } = await import("@/auth");
-          if (isSwitchAccountFlow) {
-            await signIn("google", { redirectTo: "/app" }, { prompt: "select_account" });
-            return;
-          }
-
-          await signIn("google", { redirectTo: "/app" });
-        }}
-        className="mt-10"
+        action="/api/auth/password/sign-in"
+        className="mt-8 space-y-4"
+        method="post"
       >
-        <button
-          className="inline-flex w-full items-center justify-center rounded-full border border-[#90FF4D]/24 bg-[#90FF4D]/90 px-6 py-4 text-sm font-semibold text-black transition hover:bg-[#A4FF68] disabled:cursor-not-allowed disabled:border-white/[0.08] disabled:bg-white/16 disabled:text-white/55"
-          disabled={!googleAuthConfigured}
-          type="submit"
-        >
-          {isSwitchAccountFlow
-            ? "Choose a different Google account"
-            : "Continue with Google"}
-        </button>
+        {isSwitchAccountFlow ? (
+          <input name="mode" type="hidden" value="switch-account" />
+        ) : null}
+
+        <label className="block space-y-2">
+          <span className="text-[0.62rem] uppercase tracking-[0.24em] text-muted-foreground">
+            Email
+          </span>
+          <input
+            autoCapitalize="none"
+            autoComplete="email"
+            className="w-full rounded-[1.15rem] border border-white/[0.08] bg-black/[0.28] px-4 py-3.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/68 focus:border-[#90FF4D]/28 focus:bg-black/[0.36]"
+            defaultValue=""
+            name="email"
+            placeholder="you@company.com"
+            required
+            type="email"
+          />
+        </label>
+
+        <label className="block space-y-2">
+          <span className="text-[0.62rem] uppercase tracking-[0.24em] text-muted-foreground">
+            Password
+          </span>
+          <input
+            autoComplete="current-password"
+            className="w-full rounded-[1.15rem] border border-white/[0.08] bg-black/[0.28] px-4 py-3.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/68 focus:border-[#90FF4D]/28 focus:bg-black/[0.36]"
+            minLength={6}
+            name="password"
+            placeholder="At least 6 characters"
+            required
+            type="password"
+          />
+        </label>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <button
+            className="inline-flex w-full items-center justify-center rounded-full border border-[#90FF4D]/24 bg-[#90FF4D]/90 px-6 py-4 text-sm font-semibold text-black transition hover:bg-[#A4FF68] disabled:cursor-not-allowed disabled:border-white/[0.08] disabled:bg-white/16 disabled:text-white/55"
+            disabled={!isAuthConfigured}
+            formAction="/api/auth/password/sign-in"
+            formMethod="post"
+            type="submit"
+          >
+            {isSwitchAccountFlow ? "Sign in to switch" : "Sign in"}
+          </button>
+
+          <button
+            className="inline-flex w-full items-center justify-center rounded-full border border-white/[0.12] bg-white/[0.04] px-6 py-4 text-sm font-semibold text-foreground transition hover:border-white/[0.18] hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:border-white/[0.08] disabled:bg-white/6 disabled:text-white/45"
+            disabled={!isAuthConfigured}
+            formAction="/api/auth/password/sign-up"
+            formMethod="post"
+            type="submit"
+          >
+            Create account
+          </button>
+        </div>
       </form>
     </AuthShell>
   );

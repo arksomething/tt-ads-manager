@@ -14,20 +14,20 @@ export const inviteMemberSchema = z.object({
   email: z.email(),
   role: z.nativeEnum(OrganizationRole).default(OrganizationRole.MEMBER),
   campaignAccessScope: z.enum(["all", "selected"]).default("all"),
-  campaignIds: z.array(z.string().cuid()).default([]),
+  campaignIds: z.array(z.string().min(1).max(191)).default([]),
 });
 
 export const updateOrganizationMemberRoleSchema = z.object({
-  membershipId: z.string().cuid(),
+  membershipId: z.string().min(1).max(191),
   role: z.nativeEnum(OrganizationRole),
 });
 
 export const removeOrganizationMemberSchema = z.object({
-  membershipId: z.string().cuid(),
+  membershipId: z.string().min(1).max(191),
 });
 
 export const revokeOrganizationInvitationSchema = z.object({
-  invitationId: z.string().cuid(),
+  invitationId: z.string().min(1).max(191),
 });
 
 export type CreateOrganizationInput = z.infer<typeof createOrganizationSchema>;

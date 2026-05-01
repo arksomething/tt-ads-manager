@@ -9,6 +9,7 @@ import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/db";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
+import { canManageOrganization } from "@/server/auth/roles";
 import { getAccessibleCampaignOptionsForMembership } from "@/server/campaigns/queries";
 import {
   ViralAppApiError,
@@ -23,10 +24,12 @@ import {
 import {
   createCreatorSchema,
   createPlatformAccountSchema,
+  setCreatorStatusSchema,
   trackCreatorAccountFormSchema,
 } from "./schemas";
 
 const VIRAL_ACCOUNT_RESOURCE_TYPE_PREFIX = "viral-account";
+const AUTO_IMPORTED_TIKTOK_CAMPAIGN_NAME = "All Tracked Creators";
 
 type ProviderPlatform = "instagram" | "tiktok" | "youtube";
 type ParsedTrackedAccountUrl = {
@@ -39,12 +42,51 @@ type TrackAccountResponse = {
   eventIds: string[];
 };
 type ProviderAccountPayload = Prisma.InputJsonObject;
+type ProviderVideoPayload = Prisma.InputJsonObject;
+type PagedProviderRecordsResponse = {
+  data?: Array<Record<string, unknown>>;
+  pageCount?: number | string | null;
+};
+type TrackedTikTokAccountRecord = {
+  id: string;
+  platformAccountId: string | null;
+  username: string | null;
+  displayName: string | null;
+};
+type TrackedTikTokVideoRecord = {
+  id: string | null;
+  orgAccountId: string | null;
+  platformVideoId: string;
+  platformAccountId: string | null;
+  username: string | null;
+  accountDisplayName: string | null;
+  createdAt: string | null;
+  publishedAt: string | null;
+  viewCount: number | string | null;
+  likeCount: number | string | null;
+  commentCount: number | string | null;
+  engagementRate: number | string | null;
+  hashtags: string[] | null;
+};
 
 function revalidateCreatorWorkspace(organizationSlug: string) {
-  revalidatePath("/app");
-  revalidatePath(`/org/${organizationSlug}`);
-  revalidatePath(`/org/${organizationSlug}/campaigns`);
-  revalidatePath(`/org/${organizationSlug}/creators`);
+  const paths = [
+    "/app",
+    `/org/${organizationSlug}`,
+    `/org/${organizationSlug}/campaigns`,
+    `/org/${organizationSlug}/creators`,
+    `/org/${organizationSlug}/videos`,
+    `/org/${organizationSlug}/payouts`,
+    `/org/${organizationSlug}/view-tally`,
+  ];
+
+  for (const path of paths) {
+    try {
+      revalidatePath(path);
+    } catch {
+      // Allow CLI backfills to finish even when there is no request store.
+    }
+  }
 }
 
 function normalizeText(value: unknown) {
@@ -95,6 +137,29 @@ function getPayloadNumber(payload: ProviderAccountPayload, keys: string[]) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function getPayloadDate(payload: ProviderVideoPayload, keys: string[]) {
+  const value = getPayloadValue(payload, keys);
+
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const parsed = new Date(String(value));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getPayloadStringArray(payload: ProviderVideoPayload, keys: string[]) {
+  const value = getPayloadValue(payload, keys);
+
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => normalizeText(entry))
+    .filter((entry): entry is string => entry != null);
+}
+
 function toSafeInt(value: number | null) {
   if (value === null) {
     return null;
@@ -135,6 +200,28 @@ function buildProfileUrl(platform: ProviderPlatform, username: string) {
     default:
       return `https://www.tiktok.com/@${encodeURIComponent(username)}`;
   }
+}
+
+function buildVideoUrl(args: { platform: ProviderPlatform; videoId: string; username: string | null }) {
+  switch (args.platform) {
+    case "instagram":
+      return args.username
+        ? `https://www.instagram.com/reel/${encodeURIComponent(args.videoId)}/`
+        : `https://www.instagram.com/reel/${encodeURIComponent(args.videoId)}/`;
+    case "youtube":
+      return `https://www.youtube.com/watch?v=${encodeURIComponent(args.videoId)}`;
+    default:
+      return args.username
+        ? `https://www.tiktok.com/@${encodeURIComponent(args.username)}/video/${encodeURIComponent(args.videoId)}`
+        : `https://www.tiktok.com/video/${encodeURIComponent(args.videoId)}`;
+  }
+}
+
+function sanitizeTags(tags: string[]) {
+  return [...new Set(tags.map((tag) => tag.trim().replace(/^#+/, "")).filter(Boolean))].slice(
+    0,
+    25,
+  );
 }
 
 function parseTrackedAccountUrl(profileUrl: string): ParsedTrackedAccountUrl {
@@ -276,6 +363,110 @@ async function getTrackedAccountDetails(parsedAccount: ParsedTrackedAccountUrl) 
   }
 }
 
+async function getPagedProviderRecords(args: {
+  path: string;
+  perPage?: number;
+  extraQuery?: Record<string, string | number | boolean | undefined>;
+}) {
+  const records: Array<Record<string, unknown>> = [];
+  let page = 1;
+  let pageCount: number | null = null;
+
+  while (pageCount == null || page <= pageCount) {
+    const response = await viralAppClient.request<PagedProviderRecordsResponse>({
+      path: args.path,
+      query: {
+        ...(args.extraQuery ?? {}),
+        ...(args.perPage ? { perPage: args.perPage } : {}),
+        page,
+      },
+    });
+
+    records.push(...(response.data ?? []));
+    const resolvedPageCount = Number(response.pageCount ?? 1);
+    pageCount = Number.isFinite(resolvedPageCount)
+      ? Math.max(1, Math.trunc(resolvedPageCount))
+      : 1;
+
+    if ((response.data ?? []).length === 0) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return records;
+}
+
+async function getAllTrackedTikTokAccountsInViralApp() {
+  const records = await getPagedProviderRecords({
+    path: "/accounts/tracked",
+    perPage: 100,
+    extraQuery: {
+      platforms: "tiktok",
+      viewMode: "internal",
+    },
+  });
+
+  return records
+    .map((record) => ({
+      id: normalizeText(record.id) ?? "",
+      platformAccountId: normalizeText(record.platformAccountId),
+      username:
+        normalizeUsername(record.username) ?? normalizeUsername(record.initialUsername),
+      displayName: normalizeText(record.displayName),
+    }))
+    .filter((record) => record.id.length > 0);
+}
+
+async function getAllTrackedTikTokVideosInViralApp() {
+  const records = await getPagedProviderRecords({
+    path: "/videos",
+    perPage: 100,
+    extraQuery: {
+      sortCol: "publishedAt",
+      sortDir: "desc",
+      platforms: "tiktok",
+      viewMode: "internal",
+    },
+  });
+
+  return records
+    .map((record) => ({
+      id: normalizeText(record.id),
+      orgAccountId: normalizeText(record.orgAccountId),
+      platformVideoId: normalizeText(record.platformVideoId) ?? "",
+      platformAccountId: normalizeText(record.platformAccountId),
+      username: normalizeUsername(record.username),
+      accountDisplayName: normalizeText(record.accountDisplayName),
+      createdAt: normalizeText(record.createdAt),
+      publishedAt: normalizeText(record.publishedAt),
+      viewCount:
+        typeof record.viewCount === "number" || typeof record.viewCount === "string"
+          ? record.viewCount
+          : null,
+      likeCount:
+        typeof record.likeCount === "number" || typeof record.likeCount === "string"
+          ? record.likeCount
+          : null,
+      commentCount:
+        typeof record.commentCount === "number" || typeof record.commentCount === "string"
+          ? record.commentCount
+          : null,
+      engagementRate:
+        typeof record.engagementRate === "number" ||
+        typeof record.engagementRate === "string"
+          ? record.engagementRate
+          : null,
+      hashtags: Array.isArray(record.hashtags)
+        ? record.hashtags
+            .map((entry) => normalizeText(entry))
+            .filter((entry): entry is string => entry != null)
+        : null,
+    }))
+    .filter((record) => record.platformVideoId.length > 0);
+}
+
 async function upsertAccountSourceMapping(args: {
   organizationId: string;
   localEntityId: string;
@@ -314,6 +505,276 @@ async function upsertAccountSourceMapping(args: {
       rawPayload,
     },
   });
+}
+
+async function upsertCreatorSourceMapping(args: {
+  organizationId: string;
+  localEntityId: string;
+  externalId: string;
+  rawPayload: Prisma.InputJsonValue;
+  tx: Prisma.TransactionClient;
+}) {
+  const { organizationId, localEntityId, externalId, rawPayload, tx } = args;
+  const lastSyncedAt = new Date();
+
+  await tx.sourceMapping.upsert({
+    where: {
+      externalSource_externalResourceType_externalId: {
+        externalSource: ExternalSource.DATA_PROVIDER,
+        externalResourceType: "viral-creator",
+        externalId,
+      },
+    },
+    update: {
+      organizationId,
+      localEntityType: SourceEntityType.CREATOR,
+      localEntityId,
+      lastSyncedAt,
+      rawPayload,
+    },
+    create: {
+      organizationId,
+      localEntityType: SourceEntityType.CREATOR,
+      localEntityId,
+      externalSource: ExternalSource.DATA_PROVIDER,
+      externalResourceType: "viral-creator",
+      externalId,
+      lastSyncedAt,
+      rawPayload,
+    },
+  });
+}
+
+async function ensureAutoImportedTikTokCampaign(args: {
+  organizationId: string;
+  ownerUserId: string | null;
+}) {
+  const existingCampaign = await prisma.campaign.findFirst({
+    where: {
+      organizationId: args.organizationId,
+      name: AUTO_IMPORTED_TIKTOK_CAMPAIGN_NAME,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (existingCampaign) {
+    return existingCampaign.id;
+  }
+
+  const createdCampaign = await prisma.campaign.create({
+    data: {
+      organizationId: args.organizationId,
+      ownerUserId: args.ownerUserId,
+      name: AUTO_IMPORTED_TIKTOK_CAMPAIGN_NAME,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  return createdCampaign.id;
+}
+
+async function upsertTrackedTikTokAccountLocally(args: {
+  tx: Prisma.TransactionClient;
+  organizationId: string;
+  campaignId: string;
+  trackedAccountExternalId: string | null;
+  providerPayload: ProviderAccountPayload;
+}) {
+  const syncedAt = new Date();
+  const accountUsername = getPayloadUsername(args.providerPayload, [
+    "accountUsername",
+    "account_username",
+    "username",
+  ]);
+  const sourceAccountId = getPayloadString(args.providerPayload, [
+    "platformAccountId",
+    "platform_account_id",
+  ]);
+  const accountDisplayName = getPayloadString(args.providerPayload, [
+    "accountDisplayName",
+    "account_display_name",
+    "displayName",
+    "display_name",
+  ]);
+  const followerCount = toSafeInt(
+    getPayloadNumber(args.providerPayload, ["followerCount", "follower_count"]),
+  );
+  const averageViews = toSafeInt(
+    getPayloadNumber(args.providerPayload, [
+      "averageViews",
+      "average_views",
+      "averageViewsPerVideo",
+      "average_views_per_video",
+    ]),
+  );
+  const averageEngagementRate = toPercent(
+    getPayloadNumber(args.providerPayload, ["engagementRate", "engagement_rate"]),
+  );
+
+  if (!accountUsername && !sourceAccountId) {
+    return null;
+  }
+
+  const existingAccountSelect = {
+    id: true,
+    creatorId: true,
+    handle: true,
+    profileUrl: true,
+    sourceAccountId: true,
+    followerCount: true,
+    averageViews: true,
+    averageEngagementRate: true,
+    creator: {
+      select: {
+        internalStatus: true,
+      },
+    },
+  } satisfies Prisma.CreatorPlatformAccountSelect;
+
+  let existingAccount =
+    sourceAccountId != null
+      ? await args.tx.creatorPlatformAccount.findFirst({
+          where: {
+            platform: Platform.TIKTOK,
+            sourceAccountId,
+            creator: {
+              organizationId: args.organizationId,
+            },
+          },
+          select: existingAccountSelect,
+        })
+      : null;
+
+  if (!existingAccount && accountUsername) {
+    existingAccount = await args.tx.creatorPlatformAccount.findFirst({
+      where: {
+        platform: Platform.TIKTOK,
+        handle: {
+          equals: accountUsername,
+          mode: "insensitive",
+        },
+        creator: {
+          organizationId: args.organizationId,
+        },
+      },
+      select: existingAccountSelect,
+    });
+  }
+
+  const nextProfileUrl =
+    (accountUsername ? buildProfileUrl("tiktok", accountUsername) : null) ??
+    existingAccount?.profileUrl ??
+    null;
+  const nextSourceAccountId = sourceAccountId ?? existingAccount?.sourceAccountId ?? null;
+
+  const account =
+    existingAccount != null
+      ? await args.tx.creatorPlatformAccount.update({
+          where: {
+            id: existingAccount.id,
+          },
+          data: {
+            handle: accountUsername ?? existingAccount.handle,
+            sourceAccountId: nextSourceAccountId,
+            profileUrl: nextProfileUrl,
+            followerCount: followerCount ?? existingAccount.followerCount ?? null,
+            averageViews: averageViews ?? existingAccount.averageViews ?? null,
+            averageEngagementRate:
+              averageEngagementRate ?? existingAccount.averageEngagementRate ?? null,
+            lastSyncedAt: syncedAt,
+            rawPayload: args.providerPayload,
+          },
+          select: {
+            id: true,
+            creatorId: true,
+            handle: true,
+            sourceAccountId: true,
+          },
+        })
+      : await (async () => {
+          const creator = await args.tx.creator.create({
+            data: createCreatorSchema.parse({
+              organizationId: args.organizationId,
+              displayName: getCreatorDisplayName(
+                accountDisplayName,
+                accountUsername ?? sourceAccountId ?? "tracked-creator",
+              ),
+              internalStatus: CreatorStatus.NEW,
+            }),
+            select: {
+              id: true,
+            },
+          });
+
+          return args.tx.creatorPlatformAccount.create({
+            data: {
+              ...createPlatformAccountSchema.parse({
+                creatorId: creator.id,
+                platform: Platform.TIKTOK,
+                sourceAccountId: nextSourceAccountId ?? undefined,
+                handle: accountUsername ?? sourceAccountId ?? `tracked-${creator.id.slice(0, 10)}`,
+                profileUrl: nextProfileUrl ?? undefined,
+                followerCount: followerCount ?? undefined,
+                averageViews: averageViews ?? undefined,
+                averageEngagementRate: averageEngagementRate ?? undefined,
+              }),
+              lastSyncedAt: syncedAt,
+              rawPayload: args.providerPayload,
+            },
+            select: {
+              id: true,
+              creatorId: true,
+              handle: true,
+              sourceAccountId: true,
+            },
+          });
+        })();
+
+  if (nextSourceAccountId) {
+    await upsertAccountSourceMapping({
+      organizationId: args.organizationId,
+      localEntityId: account.id,
+      externalId: nextSourceAccountId,
+      platform: Platform.TIKTOK,
+      rawPayload: args.providerPayload,
+      tx: args.tx,
+    });
+  }
+
+  if (args.trackedAccountExternalId) {
+    await upsertCreatorSourceMapping({
+      organizationId: args.organizationId,
+      localEntityId: account.creatorId,
+      externalId: args.trackedAccountExternalId,
+      rawPayload: args.providerPayload,
+      tx: args.tx,
+    });
+  }
+
+  await args.tx.campaignCreator.upsert({
+    where: {
+      campaignId_creatorId: {
+        campaignId: args.campaignId,
+        creatorId: account.creatorId,
+      },
+    },
+    update: {},
+    create: {
+      campaignId: args.campaignId,
+      creatorId: account.creatorId,
+    },
+  });
+
+  return {
+    accountId: account.id,
+    creatorId: account.creatorId,
+    handle: account.handle,
+    sourceAccountId: account.sourceAccountId ?? null,
+  };
 }
 
 export async function trackCreatorAccountForOrganization(
@@ -549,6 +1010,443 @@ export async function trackCreatorAccountForOrganization(
   return {
     creator,
     eventIds: trackedAccount.eventIds,
+  };
+}
+
+function buildTrackedAccountFallbackPayload(record: TrackedTikTokAccountRecord) {
+  return {
+    accountDisplayName:
+      record.displayName ?? (record.username ? `@${record.username}` : "Tracked TikTok creator"),
+    accountUsername: record.username,
+    platform: "tiktok",
+    platformAccountId: record.platformAccountId,
+    username: record.username,
+  } satisfies ProviderAccountPayload;
+}
+
+function buildTrackedVideoFallbackPayload(record: TrackedTikTokVideoRecord) {
+  return {
+    accountDisplayName:
+      record.accountDisplayName ??
+      (record.username ? `@${record.username}` : "Tracked TikTok creator"),
+    accountUsername: record.username,
+    createdAt: record.createdAt,
+    engagementRate: record.engagementRate,
+    hashtags: record.hashtags,
+    likeCount: record.likeCount,
+    commentCount: record.commentCount,
+    platform: "tiktok",
+    platformAccountId: record.platformAccountId,
+    platformVideoId: record.platformVideoId,
+    publishedAt: record.publishedAt,
+    viewCount: record.viewCount,
+  } satisfies ProviderVideoPayload;
+}
+
+async function upsertTrackedTikTokVideoLocally(args: {
+  tx: Prisma.TransactionClient;
+  organizationId: string;
+  campaignId: string;
+  accountId: string;
+  creatorId: string;
+  providerPayload: ProviderVideoPayload;
+  platformVideoId: string;
+}) {
+  const lastSyncedAt =
+    getPayloadDate(args.providerPayload, [
+      "loadAt",
+      "load_at",
+      "analyticsLatestLoadAt",
+      "analytics_latest_load_at",
+      "updatedAt",
+      "updated_at",
+    ]) ?? new Date();
+  const accountUsername = getPayloadUsername(args.providerPayload, [
+    "accountUsername",
+    "account_username",
+    "username",
+  ]);
+  const titleOrCaption = getPayloadString(args.providerPayload, [
+    "caption",
+    "title",
+    "titleOrCaption",
+    "title_or_caption",
+  ]);
+  const publishedAt = getPayloadDate(args.providerPayload, [
+    "publishedAt",
+    "published_at",
+    "createdAt",
+    "created_at",
+  ]);
+  const views = toSafeInt(
+    getPayloadNumber(args.providerPayload, ["viewCount", "view_count"]),
+  );
+  const likes = toSafeInt(
+    getPayloadNumber(args.providerPayload, ["likeCount", "like_count"]),
+  );
+  const comments = toSafeInt(
+    getPayloadNumber(args.providerPayload, ["commentCount", "comment_count"]),
+  );
+  const engagementRate = toPercent(
+    getPayloadNumber(args.providerPayload, ["engagementRate", "engagement_rate"]),
+  );
+  const contentTags = sanitizeTags(
+    getPayloadStringArray(args.providerPayload, ["hashtags", "contentTags", "content_tags"]),
+  );
+  const videoUrl = buildVideoUrl({
+    platform: "tiktok",
+    videoId: args.platformVideoId,
+    username: accountUsername,
+  });
+
+  const existingVideo = await args.tx.video.findUnique({
+    where: {
+      platform_sourceVideoId: {
+        platform: Platform.TIKTOK,
+        sourceVideoId: args.platformVideoId,
+      },
+    },
+    select: {
+      id: true,
+      titleOrCaption: true,
+      publishedAt: true,
+      views: true,
+      likes: true,
+      comments: true,
+      engagementRate: true,
+      contentTags: true,
+    },
+  });
+
+  const video =
+    existingVideo != null
+      ? await args.tx.video.update({
+          where: {
+            id: existingVideo.id,
+          },
+          data: {
+            creatorId: args.creatorId,
+            creatorPlatformAccountId: args.accountId,
+            campaignId: args.campaignId,
+            sourceVideoId: args.platformVideoId,
+            platform: Platform.TIKTOK,
+            videoUrl,
+            titleOrCaption: titleOrCaption ?? existingVideo.titleOrCaption ?? null,
+            publishedAt: publishedAt ?? existingVideo.publishedAt ?? null,
+            views: views ?? existingVideo.views ?? null,
+            likes: likes ?? existingVideo.likes ?? null,
+            comments: comments ?? existingVideo.comments ?? null,
+            engagementRate: engagementRate ?? existingVideo.engagementRate ?? null,
+            contentTags: contentTags.length > 0 ? contentTags : existingVideo.contentTags,
+            rawPayload: args.providerPayload,
+            lastSyncedAt,
+          },
+          select: {
+            id: true,
+          },
+        })
+      : await args.tx.video.create({
+          data: {
+            creatorId: args.creatorId,
+            creatorPlatformAccountId: args.accountId,
+            campaignId: args.campaignId,
+            sourceVideoId: args.platformVideoId,
+            platform: Platform.TIKTOK,
+            videoUrl,
+            titleOrCaption,
+            publishedAt,
+            views,
+            likes,
+            comments,
+            engagementRate,
+            contentTags,
+            rawPayload: args.providerPayload,
+            lastSyncedAt,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+  await args.tx.videoMetricsSnapshot.create({
+    data: {
+      videoId: video.id,
+      capturedAt: lastSyncedAt,
+      views,
+      likes,
+      comments,
+      engagementRate,
+      sourcePayload: args.providerPayload,
+    },
+  });
+
+  await args.tx.sourceMapping.upsert({
+    where: {
+      externalSource_externalResourceType_externalId: {
+        externalSource: ExternalSource.DATA_PROVIDER,
+        externalResourceType: `viral-video:${Platform.TIKTOK}`,
+        externalId: args.platformVideoId,
+      },
+    },
+    update: {
+      organizationId: args.organizationId,
+      localEntityType: SourceEntityType.VIDEO,
+      localEntityId: video.id,
+      lastSyncedAt,
+      rawPayload: args.providerPayload,
+    },
+    create: {
+      organizationId: args.organizationId,
+      localEntityType: SourceEntityType.VIDEO,
+      localEntityId: video.id,
+      externalSource: ExternalSource.DATA_PROVIDER,
+      externalResourceType: `viral-video:${Platform.TIKTOK}`,
+      externalId: args.platformVideoId,
+      lastSyncedAt,
+      rawPayload: args.providerPayload,
+    },
+  });
+
+  return video.id;
+}
+
+export async function syncTrackedTikTokWorkspaceForOrganization(
+  organizationSlug: string,
+  options?: {
+    mode?: "full" | "videos-only";
+  },
+) {
+  const membership = await requireOrganizationMembership(organizationSlug);
+
+  if (!canManageOrganization(membership.role)) {
+    throw new Error("Creator sync access denied.");
+  }
+
+  const campaignId = await ensureAutoImportedTikTokCampaign({
+    organizationId: membership.organizationId,
+    ownerUserId: membership.userId === "public-access" ? null : membership.userId,
+  });
+  const syncMode = options?.mode ?? "full";
+  const localAccountsByTrackedAccountExternalId = new Map<
+    string,
+    { accountId: string; creatorId: string; handle: string; sourceAccountId: string | null }
+  >();
+  const localAccountsByUsername = new Map<
+    string,
+    { accountId: string; creatorId: string; handle: string; sourceAccountId: string | null }
+  >();
+  const localAccountsBySourceAccountId = new Map<
+    string,
+    { accountId: string; creatorId: string; handle: string; sourceAccountId: string | null }
+  >();
+  const syncedCreatorIds = new Set<string>();
+  const syncedVideoIds = new Set<string>();
+
+  const existingLocalAccounts = await prisma.creatorPlatformAccount.findMany({
+    where: {
+      platform: Platform.TIKTOK,
+      creator: {
+        organizationId: membership.organizationId,
+      },
+    },
+    select: {
+      id: true,
+      creatorId: true,
+      handle: true,
+      sourceAccountId: true,
+    },
+  });
+
+  for (const existingLocalAccount of existingLocalAccounts) {
+    localAccountsByUsername.set(
+      existingLocalAccount.handle.toLowerCase(),
+      existingLocalAccount,
+    );
+
+    if (existingLocalAccount.sourceAccountId) {
+      localAccountsBySourceAccountId.set(
+        existingLocalAccount.sourceAccountId,
+        existingLocalAccount,
+      );
+    }
+  }
+
+  if (syncMode === "full") {
+    const trackedAccounts = await getAllTrackedTikTokAccountsInViralApp();
+
+    for (const trackedAccount of trackedAccounts) {
+      const providerPayload =
+        trackedAccount.username != null
+          ? ((await getTrackedAccountDetails({
+              platform: "tiktok",
+              username: trackedAccount.username,
+              profileUrl: buildProfileUrl("tiktok", trackedAccount.username),
+            })) ?? buildTrackedAccountFallbackPayload(trackedAccount))
+          : buildTrackedAccountFallbackPayload(trackedAccount);
+
+      const localAccount = await prisma.$transaction((tx) =>
+        upsertTrackedTikTokAccountLocally({
+          tx,
+          organizationId: membership.organizationId,
+          campaignId,
+          trackedAccountExternalId: trackedAccount.id,
+          providerPayload,
+        }),
+      );
+
+      if (!localAccount) {
+        continue;
+      }
+
+      syncedCreatorIds.add(localAccount.creatorId);
+      localAccountsByTrackedAccountExternalId.set(trackedAccount.id, localAccount);
+      localAccountsByUsername.set(localAccount.handle.toLowerCase(), localAccount);
+
+      if (localAccount.sourceAccountId) {
+        localAccountsBySourceAccountId.set(localAccount.sourceAccountId, localAccount);
+      }
+    }
+  }
+
+  const trackedVideos = await getAllTrackedTikTokVideosInViralApp();
+
+  for (const trackedVideo of trackedVideos) {
+    const providerPayload = buildTrackedVideoFallbackPayload(trackedVideo);
+    const sourceAccountId = getPayloadString(providerPayload, [
+      "platformAccountId",
+      "platform_account_id",
+    ]);
+    const accountUsername =
+      getPayloadUsername(providerPayload, [
+        "accountUsername",
+        "account_username",
+        "username",
+      ]) ?? trackedVideo.username;
+    let localAccount =
+      (trackedVideo.orgAccountId
+        ? localAccountsByTrackedAccountExternalId.get(trackedVideo.orgAccountId)
+        : null) ??
+      (sourceAccountId ? localAccountsBySourceAccountId.get(sourceAccountId) : null) ??
+      (accountUsername ? localAccountsByUsername.get(accountUsername.toLowerCase()) : null) ??
+      null;
+
+    if (!localAccount) {
+      const syntheticAccountPayload = {
+        ...providerPayload,
+        accountDisplayName:
+          getPayloadString(providerPayload, [
+            "accountDisplayName",
+            "account_display_name",
+            "displayName",
+            "display_name",
+          ]) ??
+          trackedVideo.accountDisplayName ??
+          (accountUsername ? `@${accountUsername}` : "Tracked TikTok creator"),
+        accountUsername,
+        platformAccountId: sourceAccountId,
+        username: accountUsername,
+      } satisfies ProviderAccountPayload;
+
+      localAccount = await prisma.$transaction((tx) =>
+        upsertTrackedTikTokAccountLocally({
+          tx,
+          organizationId: membership.organizationId,
+          campaignId,
+          trackedAccountExternalId: null,
+          providerPayload: syntheticAccountPayload,
+        }),
+      );
+
+      if (!localAccount) {
+        continue;
+      }
+
+      localAccountsByUsername.set(localAccount.handle.toLowerCase(), localAccount);
+
+      if (localAccount.sourceAccountId) {
+        localAccountsBySourceAccountId.set(localAccount.sourceAccountId, localAccount);
+      }
+    }
+
+    syncedCreatorIds.add(localAccount.creatorId);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.campaignCreator.upsert({
+        where: {
+          campaignId_creatorId: {
+            campaignId,
+            creatorId: localAccount.creatorId,
+          },
+        },
+        update: {},
+        create: {
+          campaignId,
+          creatorId: localAccount.creatorId,
+        },
+      });
+
+      await upsertTrackedTikTokVideoLocally({
+        tx,
+        organizationId: membership.organizationId,
+        campaignId,
+        accountId: localAccount.accountId,
+        creatorId: localAccount.creatorId,
+        providerPayload,
+        platformVideoId: trackedVideo.platformVideoId,
+      });
+    });
+
+    syncedVideoIds.add(trackedVideo.platformVideoId);
+  }
+
+  revalidateCreatorWorkspace(organizationSlug);
+
+  return {
+    campaignId,
+    creatorCount: syncedCreatorIds.size,
+    videoCount: syncedVideoIds.size,
+  };
+}
+
+export async function setCreatorStatusForOrganization(args: {
+  organizationSlug: string;
+  input: unknown;
+}) {
+  const membership = await requireOrganizationMembership(args.organizationSlug);
+
+  if (!canManageOrganization(membership.role)) {
+    throw new Error("Creator status access denied.");
+  }
+
+  const values = setCreatorStatusSchema.parse(args.input);
+  const creator = await prisma.creator.findFirst({
+    where: {
+      id: values.creatorId,
+      organizationId: membership.organizationId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!creator) {
+    throw new Error("Creator not found in this organization.");
+  }
+
+  await prisma.creator.update({
+    where: {
+      id: creator.id,
+    },
+    data: {
+      internalStatus: values.internalStatus,
+    },
+  });
+
+  revalidateCreatorWorkspace(args.organizationSlug);
+
+  return {
+    creatorId: creator.id,
+    internalStatus: values.internalStatus,
   };
 }
 

@@ -103,6 +103,7 @@ const SCALAR_OPERATORS = new Set([
 
 const globalForDb = globalThis as typeof globalThis & {
   supabaseDbClient?: SupabaseClient;
+  supabaseDbTableRowsCache?: Map<ModelName, CachedTableRows>;
 };
 
 export class SchemaUnavailableError extends Error {
@@ -111,6 +112,20 @@ export class SchemaUnavailableError extends Error {
     this.name = "SchemaUnavailableError";
   }
 }
+
+type CachedTableRows = {
+  expiresAt: number;
+  promise: Promise<{
+    rows: RecordValue[];
+    status: "ready" | "missing";
+  }>;
+};
+
+const TABLE_ROWS_CACHE_TTL_MS = 10_000;
+const tableRowsCache =
+  globalForDb.supabaseDbTableRowsCache ?? new Map<ModelName, CachedTableRows>();
+
+globalForDb.supabaseDbTableRowsCache = tableRowsCache;
 
 function isRecord(value: unknown): value is RecordValue {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -666,12 +681,33 @@ async function loadRows(modelName: ModelName, context: QueryContext): Promise<Re
     return cachedRows;
   }
 
-  const loadPromise = (async () => {
+  const cachedTableRows = tableRowsCache.get(modelName);
+  const now = Date.now();
+
+  if (cachedTableRows && cachedTableRows.expiresAt > now) {
+    const contextRowsPromise = cachedTableRows.promise.then((result) => {
+      context.tableStatus.set(modelName, result.status);
+      return result.rows;
+    });
+    context.rowCache.set(modelName, contextRowsPromise);
+    return contextRowsPromise;
+  }
+
+  if (cachedTableRows) {
+    tableRowsCache.delete(modelName);
+  }
+
+  const loadPromise = (async (): Promise<{
+    rows: RecordValue[];
+    status: "ready" | "missing";
+  }> => {
     const client = getSupabaseDbClient();
 
     if (!client) {
-      context.tableStatus.set(modelName, "missing");
-      return [];
+      return {
+        rows: [],
+        status: "missing",
+      };
     }
 
     const rows: RecordValue[] = [];
@@ -685,14 +721,15 @@ async function loadRows(modelName: ModelName, context: QueryContext): Promise<Re
 
       if (error) {
         if (isSupabaseMissingTableError(error)) {
-          context.tableStatus.set(modelName, "missing");
-          return [];
+          return {
+            rows: [],
+            status: "missing",
+          };
         }
 
         throw new Error(`Failed to read ${modelName}: ${error.message}`);
       }
 
-      context.tableStatus.set(modelName, "ready");
       const normalizedRows = (data ?? []).map((row) => normalizeRow(modelName, row as RecordValue));
       rows.push(...normalizedRows);
 
@@ -701,11 +738,27 @@ async function loadRows(modelName: ModelName, context: QueryContext): Promise<Re
       }
     }
 
-    return rows;
-  })();
+    return {
+      rows,
+      status: "ready",
+    };
+  })().catch((error) => {
+    tableRowsCache.delete(modelName);
+    throw error;
+  });
 
-  context.rowCache.set(modelName, loadPromise);
-  return loadPromise;
+  tableRowsCache.set(modelName, {
+    expiresAt: now + TABLE_ROWS_CACHE_TTL_MS,
+    promise: loadPromise,
+  });
+
+  const contextRowsPromise = loadPromise.then((result) => {
+    context.tableStatus.set(modelName, result.status);
+    return result.rows;
+  });
+
+  context.rowCache.set(modelName, contextRowsPromise);
+  return contextRowsPromise;
 }
 
 async function ensureTableAvailable(modelName: ModelName, context: QueryContext) {
@@ -1377,6 +1430,7 @@ function getRowIdentifier(row: RecordValue) {
 function invalidateContext(context: QueryContext) {
   context.rowCache.clear();
   context.tableStatus.clear();
+  tableRowsCache.clear();
 }
 
 async function performUpdateByIdentifier(

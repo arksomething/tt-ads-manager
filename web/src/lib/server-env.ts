@@ -3,8 +3,11 @@ import { z } from "zod";
 const authEnvSchema = z.object({
   AUTH_SECRET: z.string().min(32),
   AUTH_URL: z.url().optional(),
-  GOOGLE_CLIENT_ID: z.string().min(1),
-  GOOGLE_CLIENT_SECRET: z.string().min(1),
+});
+
+const supabaseAuthEnvSchema = z.object({
+  SUPABASE_URL: z.url(),
+  SUPABASE_AUTH_KEY: z.string().min(1),
 });
 
 const supabaseDatabaseEnvSchema = z
@@ -77,7 +80,18 @@ const singularEnvSchema = z.object({
   SINGULAR_COHORT_PERIOD: z.string().min(1).default("7d"),
 });
 
+const viewsBaseEnvSchema = z.object({
+  VIEWSBASE_BASE_URL: z.url().default("https://www.viewsbase.com"),
+  VIEWSBASE_SESSION_COOKIE_NAME: z
+    .string()
+    .min(1)
+    .default("sb-euxaarvxbpiaipzmlesu-auth-token"),
+  VIEWSBASE_SESSION_COOKIE_VALUE: z.string().min(1),
+  VIEWSBASE_DEFAULT_ORG_SLUG: z.string().min(1).optional(),
+});
+
 type AuthEnv = z.infer<typeof authEnvSchema>;
+type SupabaseAuthEnv = z.infer<typeof supabaseAuthEnvSchema>;
 type SupabaseDatabaseEnv = z.infer<typeof supabaseDatabaseEnvSchema>;
 type DataProviderEnv = z.infer<typeof dataProviderEnvSchema>;
 type AiEnv = z.infer<typeof aiEnvSchema>;
@@ -85,8 +99,10 @@ type TwilioEnv = z.infer<typeof twilioEnvSchema>;
 type TikTokBusinessEnv = z.infer<typeof tikTokBusinessEnvSchema>;
 type TikTokBusinessOauthEnv = z.infer<typeof tikTokBusinessOauthEnvSchema>;
 type SingularEnv = z.infer<typeof singularEnvSchema>;
+type ViewsBaseEnv = z.infer<typeof viewsBaseEnvSchema>;
 
 let cachedAuthEnv: AuthEnv | undefined;
+let cachedSupabaseAuthEnv: SupabaseAuthEnv | undefined;
 let cachedSupabaseDatabaseEnv: SupabaseDatabaseEnv | undefined;
 let cachedDataProviderEnv: DataProviderEnv | undefined;
 let cachedAiEnv: AiEnv | undefined;
@@ -94,18 +110,47 @@ let cachedTwilioEnv: TwilioEnv | undefined;
 let cachedTikTokBusinessEnv: TikTokBusinessEnv | undefined;
 let cachedTikTokBusinessOauthEnv: TikTokBusinessOauthEnv | undefined;
 let cachedSingularEnv: SingularEnv | undefined;
+let cachedViewsBaseEnv: ViewsBaseEnv | undefined;
+
+function getSupabaseUrlEnv() {
+  return process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
+}
+
+function getSupabaseAuthKeyEnv() {
+  return (
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+    process.env.SUPABASE_PUBLISHABLE_KEY ??
+    process.env.SUPABASE_ANON_KEY ??
+    process.env.SUPABASE_PK ??
+    process.env.SUPABASE_SERVICE_ROLE_KEY ??
+    process.env.SUPABASE_SK
+  );
+}
 
 export function getAuthEnv() {
   if (!cachedAuthEnv) {
     cachedAuthEnv = authEnvSchema.parse({
       AUTH_SECRET: process.env.AUTH_SECRET,
       AUTH_URL: process.env.AUTH_URL,
-      GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
-      GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     });
   }
 
   return cachedAuthEnv;
+}
+
+export function hasSupabaseAuthEnv() {
+  return Boolean(getSupabaseUrlEnv() && getSupabaseAuthKeyEnv());
+}
+
+export function getSupabaseAuthEnv() {
+  if (!cachedSupabaseAuthEnv) {
+    cachedSupabaseAuthEnv = supabaseAuthEnvSchema.parse({
+      SUPABASE_URL: getSupabaseUrlEnv(),
+      SUPABASE_AUTH_KEY: getSupabaseAuthKeyEnv(),
+    });
+  }
+
+  return cachedSupabaseAuthEnv;
 }
 
 export function hasSupabaseDatabaseEnv() {
@@ -166,8 +211,14 @@ export function hasTwilioEnv() {
   return Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
 }
 
+export function isAuthDisabled() {
+  return process.env.DISABLE_AUTH?.trim() === "true";
+}
+
 export function isGoogleAuthDisabled() {
-  return process.env.DISABLE_GOOGLE_AUTH?.trim() === "true";
+  return (
+    isAuthDisabled() || process.env.DISABLE_GOOGLE_AUTH?.trim() === "true"
+  );
 }
 
 export function getTwilioEnv() {
@@ -230,7 +281,8 @@ export function hasSingularEnv() {
 export function getSingularEnv() {
   if (!cachedSingularEnv) {
     cachedSingularEnv = singularEnvSchema.parse({
-      SINGULAR_API_BASE_URL: process.env.SINGULAR_API_BASE_URL || "https://api.singular.net",
+      SINGULAR_API_BASE_URL:
+        process.env.SINGULAR_API_BASE_URL || "https://api.singular.net",
       SINGULAR_API_KEY: process.env.SINGULAR_API_KEY,
       SINGULAR_APP_NAMES: process.env.SINGULAR_APP_NAMES || undefined,
       SINGULAR_SOURCE_NAMES: process.env.SINGULAR_SOURCE_NAMES || undefined,
@@ -239,4 +291,25 @@ export function getSingularEnv() {
   }
 
   return cachedSingularEnv;
+}
+
+export function hasViewsBaseEnv() {
+  return Boolean(process.env.VIEWSBASE_SESSION_COOKIE_VALUE);
+}
+
+export function getViewsBaseEnv() {
+  if (!cachedViewsBaseEnv) {
+    cachedViewsBaseEnv = viewsBaseEnvSchema.parse({
+      VIEWSBASE_BASE_URL:
+        process.env.VIEWSBASE_BASE_URL || "https://www.viewsbase.com",
+      VIEWSBASE_SESSION_COOKIE_NAME:
+        process.env.VIEWSBASE_SESSION_COOKIE_NAME ||
+        "sb-euxaarvxbpiaipzmlesu-auth-token",
+      VIEWSBASE_SESSION_COOKIE_VALUE: process.env.VIEWSBASE_SESSION_COOKIE_VALUE,
+      VIEWSBASE_DEFAULT_ORG_SLUG:
+        process.env.VIEWSBASE_DEFAULT_ORG_SLUG || undefined,
+    });
+  }
+
+  return cachedViewsBaseEnv;
 }

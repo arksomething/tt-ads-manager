@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { AppAccountMenu } from "@/components/app-account-menu";
 import { isWorkspaceSchemaAvailable } from "@/lib/db";
 import { publicEnv } from "@/lib/env";
-import { isGoogleAuthDisabled } from "@/lib/server-env";
+import { isAuthDisabled } from "@/lib/server-env";
 import { getViewerOrganizations } from "@/server/auth/organizations";
 import { getCurrentUser } from "@/server/auth/session";
 import {
@@ -24,10 +24,14 @@ function getSearchParamValue(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
+type AppHomePageProps = {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
+
 export default async function AppHomePage({
   searchParams,
-}: PageProps<"/app">) {
-  const publicAccessEnabled = isGoogleAuthDisabled();
+}: AppHomePageProps) {
+  const publicAccessEnabled = isAuthDisabled();
   const resolvedSearchParams = await searchParams;
   const manageMode =
     getSearchParamValue(resolvedSearchParams.manage) === "workspaces";
@@ -44,7 +48,7 @@ export default async function AppHomePage({
     organizations = await getViewerOrganizations();
   } catch (error) {
     if (publicAccessEnabled) {
-      redirect("/tiktok-paid-views?notice=workspace-backend-unavailable");
+      redirect("/workspace-unavailable");
     }
 
     throw error;
@@ -54,11 +58,11 @@ export default async function AppHomePage({
     const workspaceSchemaAvailable = await isWorkspaceSchemaAvailable();
 
     if (!workspaceSchemaAvailable) {
-      redirect("/tiktok-paid-views?notice=workspace-backend-unavailable");
+      redirect("/workspace-unavailable");
     }
 
     if (publicAccessEnabled) {
-      redirect("/tiktok-paid-views");
+      redirect("/workspace-unavailable");
     }
 
     const organization = await ensureOrganizationForCurrentUser();
@@ -127,7 +131,7 @@ export default async function AppHomePage({
     "use server";
 
     if (!(await isWorkspaceSchemaAvailable())) {
-      redirect("/tiktok-paid-views?notice=workspace-backend-unavailable");
+      redirect("/workspace-unavailable");
     }
 
     const organization = await createOrganizationForCurrentUser({

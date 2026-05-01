@@ -1,116 +1,204 @@
-import NextAuth from "next-auth";
-import Google from "next-auth/providers/google";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
+import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { NextResponse } from "next/server";
 
 import { SchemaUnavailableError, db } from "@/lib/db";
-import { getAuthEnv, isGoogleAuthDisabled } from "@/lib/server-env";
+import {
+  getAuthEnv,
+  hasSupabaseAuthEnv,
+  isAuthDisabled,
+} from "@/lib/server-env";
+import { createClient } from "@/lib/supabase/server";
 
-const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
-const OAUTH_FLOW_COOKIE_MAX_AGE_SECONDS = 60 * 15;
-const AUTH_COOKIE_NAMESPACE = "billionviews";
+type SyncedUser = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  image: string | null;
+};
 
-function hasMinLength(value: string | undefined, minLength: number) {
-  return typeof value === "string" && value.length >= minLength;
+type AuthenticatedUser = SyncedUser & {
+  supabaseUserId: string;
+};
+
+type AuthSession = {
+  user: AuthenticatedUser;
+};
+
+function normalizeEmail(value: string | null | undefined) {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim().toLowerCase()
+    : null;
 }
 
-function getAuthCookieConfig(authUrl: string | undefined) {
-  const useSecureCookies = authUrl
-    ? authUrl.startsWith("https://")
-    : process.env.NODE_ENV === "production";
-  const cookiePrefix = useSecureCookies
-    ? `__Secure-${AUTH_COOKIE_NAMESPACE}`
-    : AUTH_COOKIE_NAMESPACE;
-  const sharedCookieOptions = {
-    httpOnly: true,
-    path: "/" as const,
-    sameSite: "lax" as const,
-    secure: useSecureCookies,
-  };
-
-  return {
-    sessionToken: {
-      name: `${cookiePrefix}.session-token`,
-      options: sharedCookieOptions,
-    },
-    callbackUrl: {
-      name: `${cookiePrefix}.callback-url`,
-      options: sharedCookieOptions,
-    },
-    csrfToken: {
-      name: useSecureCookies
-        ? `__Host-${AUTH_COOKIE_NAMESPACE}.csrf-token`
-        : `${AUTH_COOKIE_NAMESPACE}.csrf-token`,
-      options: sharedCookieOptions,
-    },
-    pkceCodeVerifier: {
-      name: `${cookiePrefix}.pkce.code_verifier`,
-      options: {
-        ...sharedCookieOptions,
-        maxAge: OAUTH_FLOW_COOKIE_MAX_AGE_SECONDS,
-      },
-    },
-    state: {
-      name: `${cookiePrefix}.state`,
-      options: {
-        ...sharedCookieOptions,
-        maxAge: OAUTH_FLOW_COOKIE_MAX_AGE_SECONDS,
-      },
-    },
-    nonce: {
-      name: `${cookiePrefix}.nonce`,
-      options: sharedCookieOptions,
-    },
-    webauthnChallenge: {
-      name: `${cookiePrefix}.challenge`,
-      options: {
-        ...sharedCookieOptions,
-        maxAge: OAUTH_FLOW_COOKIE_MAX_AGE_SECONDS,
-      },
-    },
-  };
-}
-
-function getAuthFallbackUserId(token: { sub?: unknown; email?: unknown }) {
-  if (typeof token.sub === "string" && token.sub.length > 0) {
-    return token.sub;
+function getMetadataString(
+  metadata: Record<string, unknown> | undefined,
+  keys: string[],
+) {
+  if (!metadata) {
+    return null;
   }
 
-  if (typeof token.email === "string" && token.email.length > 0) {
-    return token.email;
+  for (const key of keys) {
+    const value = metadata[key];
+
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
   }
 
   return null;
 }
 
-async function syncAuthUserRecord(args: {
-  email?: unknown;
-  image?: unknown;
-  name?: unknown;
-}) {
-  const authDb = db as any;
-  const email =
-    typeof args.email === "string" && args.email.trim().length > 0
-      ? args.email.trim().toLowerCase()
-      : null;
+function getSupabaseProfile(supabaseUser: SupabaseUser) {
+  const metadata =
+    supabaseUser.user_metadata &&
+    typeof supabaseUser.user_metadata === "object" &&
+    !Array.isArray(supabaseUser.user_metadata)
+      ? (supabaseUser.user_metadata as Record<string, unknown>)
+      : undefined;
+
+  return {
+    name: getMetadataString(metadata, [
+      "name",
+      "full_name",
+      "display_name",
+      "user_name",
+      "username",
+    ]),
+    image: getMetadataString(metadata, [
+      "avatar_url",
+      "picture",
+      "image",
+      "photo_url",
+    ]),
+  };
+}
+
+async function getRequestOrigin() {
+  const headerStore = await headers();
+  const directOrigin = headerStore.get("origin");
+
+  if (directOrigin) {
+    return directOrigin;
+  }
+
+  const host = headerStore.get("x-forwarded-host") ?? headerStore.get("host");
+  const proto =
+    headerStore.get("x-forwarded-proto") ??
+    (process.env.NODE_ENV === "development" ? "http" : "https");
+
+  if (host) {
+    return `${proto}://${host}`;
+  }
+
+  try {
+    return getAuthEnv().AUTH_URL ?? null;
+  } catch {
+    return process.env.AUTH_URL ?? null;
+  }
+}
+
+async function buildEmailRedirectTo(nextPath = "/app") {
+  const origin = await getRequestOrigin();
+
+  if (!origin) {
+    return undefined;
+  }
+
+  const url = new URL("/auth/confirm", origin);
+  url.searchParams.set("next", nextPath);
+  return url.toString();
+}
+
+export async function syncAuthUserRecord(args: { supabaseUser: SupabaseUser }) {
+  const email = normalizeEmail(args.supabaseUser.email);
 
   if (!email) {
     return null;
   }
 
-  const nextName =
-    typeof args.name === "string" && args.name.trim().length > 0
-      ? args.name.trim()
-      : null;
-  const nextImage =
-    typeof args.image === "string" && args.image.trim().length > 0
-      ? args.image.trim()
-      : null;
+  const profile = getSupabaseProfile(args.supabaseUser);
+  const nextEmailVerified = args.supabaseUser.email_confirmed_at
+    ? new Date(args.supabaseUser.email_confirmed_at)
+    : null;
 
   try {
-    const existingUser = await authDb.user.findFirst({
-      where: {
+    const existingUser =
+      (await db.user.findFirst({
+        where: {
+          id: args.supabaseUser.id,
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+          emailVerified: true,
+        },
+      })) ??
+      (await db.user.findFirst({
+        where: {
+          email: {
+            equals: email,
+            mode: "insensitive",
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+          emailVerified: true,
+        },
+      }));
+
+    if (existingUser) {
+      const needsUpdate =
+        existingUser.name !== profile.name ||
+        existingUser.image !== profile.image ||
+        normalizeEmail(existingUser.email) !== email ||
+        (nextEmailVerified != null &&
+          existingUser.emailVerified?.toISOString() !==
+            nextEmailVerified.toISOString());
+
+      if (needsUpdate) {
+        return db.user.update({
+          where: {
+            id: existingUser.id,
+          },
+          data: {
+            email,
+            name: profile.name,
+            image: profile.image,
+            emailVerified:
+              nextEmailVerified ?? existingUser.emailVerified ?? undefined,
+          },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            image: true,
+          },
+        });
+      }
+
+      return {
+        id: existingUser.id,
+        name: existingUser.name,
+        email: existingUser.email,
+        image: existingUser.image,
+      } satisfies SyncedUser;
+    }
+
+    return db.user.create({
+      data: {
+        id: args.supabaseUser.id,
         email,
+        name: profile.name,
+        image: profile.image,
+        emailVerified: nextEmailVerified,
       },
       select: {
         id: true,
@@ -119,47 +207,14 @@ async function syncAuthUserRecord(args: {
         image: true,
       },
     });
-
-    if (existingUser) {
-      const needsUpdate =
-        existingUser.name !== nextName || existingUser.image !== nextImage;
-
-      if (needsUpdate) {
-        const updatedUser = await authDb.user.update({
-          where: {
-            id: existingUser.id,
-          },
-          data: {
-            name: nextName,
-            image: nextImage,
-          },
-          select: {
-            id: true,
-          },
-        });
-
-        return updatedUser?.id ?? existingUser.id;
-      }
-
-      return existingUser.id;
-    }
-
-    const createdUser = await authDb.user.create({
-      data: {
-        email,
-        name: nextName,
-        image: nextImage,
-        emailVerified: new Date(),
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    return createdUser?.id ?? null;
   } catch (error) {
     if (error instanceof SchemaUnavailableError) {
-      return null;
+      return {
+        id: args.supabaseUser.id,
+        email,
+        name: profile.name,
+        image: profile.image,
+      } satisfies SyncedUser;
     }
 
     throw error;
@@ -167,87 +222,143 @@ async function syncAuthUserRecord(args: {
 }
 
 export const isAuthConfigured = Boolean(
-  !isGoogleAuthDisabled() &&
-    hasMinLength(process.env.AUTH_SECRET, 32) &&
-    process.env.GOOGLE_CLIENT_ID &&
-    process.env.GOOGLE_CLIENT_SECRET,
+  !isAuthDisabled() && hasSupabaseAuthEnv(),
 );
 
-function createDisabledAuth() {
+async function getSupabaseUser() {
+  if (!isAuthConfigured) {
+    return null;
+  }
+
+  const supabase = await createClient();
+  const { data: claimsData, error: claimsError } =
+    await supabase.auth.getClaims();
+
+  if (claimsError || !claimsData?.claims?.sub) {
+    return null;
+  }
+
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+
+  if (userError || !userData.user) {
+    return null;
+  }
+
+  return userData.user;
+}
+
+export async function auth(): Promise<AuthSession | null> {
+  const supabaseUser = await getSupabaseUser();
+
+  if (!supabaseUser) {
+    return null;
+  }
+
+  const syncedUser = await syncAuthUserRecord({
+    supabaseUser,
+  });
+
+  if (!syncedUser) {
+    return null;
+  }
+
   return {
-    handlers: {
-      GET() {
-        return NextResponse.json(
-          { error: "Authentication is not configured for this environment." },
-          { status: 503 },
-        );
-      },
-      POST() {
-        return NextResponse.json(
-          { error: "Authentication is not configured for this environment." },
-          { status: 503 },
-        );
-      },
-    },
-    auth: async () => null,
-    async signIn() {
-      redirect("/login");
-    },
-    async signOut(options?: { redirectTo?: string }) {
-      redirect(options?.redirectTo ?? "/");
+    user: {
+      id: syncedUser.id,
+      name: syncedUser.name,
+      email: syncedUser.email,
+      image: syncedUser.image,
+      supabaseUserId: supabaseUser.id,
     },
   };
 }
 
-const authModule = isAuthConfigured
-  ? await (async () => {
-      const authEnv = getAuthEnv();
-      const authCookies = getAuthCookieConfig(authEnv.AUTH_URL);
+export async function signInWithPassword(args: {
+  email: string;
+  password: string;
+}) {
+  if (!isAuthConfigured) {
+    return {
+      error: "Supabase Auth is not configured for this environment yet.",
+    };
+  }
 
-      return NextAuth({
-        providers: [
-          Google({
-            clientId: authEnv.GOOGLE_CLIENT_ID,
-            clientSecret: authEnv.GOOGLE_CLIENT_SECRET,
-          }),
-        ],
-        secret: authEnv.AUTH_SECRET,
-        pages: {
-          signIn: "/login",
-        },
-        session: {
-          strategy: "jwt",
-          maxAge: SESSION_MAX_AGE_SECONDS,
-          updateAge: 60 * 60 * 24,
-        },
-        cookies: authCookies,
-        callbacks: {
-          async jwt({ token, user }) {
-            if (user || !token.userId) {
-              const syncedUserId = await syncAuthUserRecord({
-                email: user?.email ?? token.email,
-                image: user?.image ?? token.picture,
-                name: user?.name ?? token.name,
-              });
+  const supabase = await createClient();
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: args.email.trim().toLowerCase(),
+    password: args.password,
+  });
 
-              token.userId = syncedUserId ?? getAuthFallbackUserId(token);
-            }
+  if (error) {
+    return {
+      error: error.message,
+    };
+  }
 
-            return token;
-          },
-          session({ session, token }) {
-            if (session.user) {
-              session.user.id =
-                typeof token.userId === "string" && token.userId.length > 0
-                  ? token.userId
-                  : getAuthFallbackUserId(token) ?? "";
-            }
+  if (data.user) {
+    await syncAuthUserRecord({
+      supabaseUser: data.user,
+    });
+  }
 
-            return session;
-          },
-        },
-      });
-    })()
-  : createDisabledAuth();
+  revalidatePath("/", "layout");
 
-export const { handlers, auth, signIn, signOut } = authModule;
+  return {
+    error: null,
+  };
+}
+
+export async function signUpWithPassword(args: {
+  email: string;
+  password: string;
+  nextPath?: string;
+}) {
+  if (!isAuthConfigured) {
+    return {
+      error: "Supabase Auth is not configured for this environment yet.",
+      requiresEmailConfirmation: false,
+    };
+  }
+
+  const supabase = await createClient();
+  const emailRedirectTo = await buildEmailRedirectTo(args.nextPath ?? "/app");
+  const { data, error } = await supabase.auth.signUp({
+    email: args.email.trim().toLowerCase(),
+    password: args.password,
+    options: emailRedirectTo
+      ? {
+          emailRedirectTo,
+        }
+      : undefined,
+  });
+
+  if (error) {
+    return {
+      error: error.message,
+      requiresEmailConfirmation: false,
+    };
+  }
+
+  if (data.session && data.user) {
+    await syncAuthUserRecord({
+      supabaseUser: data.user,
+    });
+  }
+
+  revalidatePath("/", "layout");
+
+  return {
+    error: null,
+    requiresEmailConfirmation: data.session == null,
+  };
+}
+
+export async function signOut(options?: { redirectTo?: string }) {
+  if (isAuthConfigured) {
+    const supabase = await createClient();
+    await supabase.auth.signOut();
+    revalidatePath("/", "layout");
+  }
+
+  redirect(options?.redirectTo ?? "/");
+}

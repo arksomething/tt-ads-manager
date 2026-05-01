@@ -56,6 +56,10 @@ export type TikTokAdSingularMatchLevel =
   | "exact_post_url"
   | "name_fallback"
   | "unavailable";
+export type TikTokAdGroupPostBackingStatus =
+  | "post_backed"
+  | "non_post_backed"
+  | "unknown";
 
 type QueryDateInput = Date | string;
 
@@ -89,6 +93,7 @@ type TikTokAdRecord = {
   identityType: string | null;
   identityAuthorizedBcId: string | null;
   tiktokItemId: string | null;
+  creativeVideoId: string | null;
   displayName: string | null;
   raw: Record<string, unknown>;
 };
@@ -119,6 +124,7 @@ type TikTokMatchedAd = {
   adId: string;
   adName: string | null;
   displayName: string | null;
+  postBackingStatus: TikTokAdGroupPostBackingStatus;
   itemIds: string[];
   resolvedPosts: TikTokResolvedPost[];
 };
@@ -128,6 +134,7 @@ type TikTokAdGroup = {
   adId: string;
   adName: string | null;
   displayName: string | null;
+  postBackingStatus: TikTokAdGroupPostBackingStatus;
   itemIds: string[];
   rows: TikTokPaidViewsRow[];
   totalValue: number;
@@ -189,6 +196,18 @@ export type TikTokAdProfitabilityReport = {
     profitableAds: number;
   };
   warnings: string[];
+};
+
+export type TikTokResolvedPaidAdGroup = {
+  adId: string;
+  adName: string | null;
+  displayName: string | null;
+  postBackingStatus: TikTokAdGroupPostBackingStatus;
+  itemIds: string[];
+  rows: TikTokPaidViewsRow[];
+  totalValue: number;
+  rowCount: number;
+  resolvedPosts: TikTokResolvedPost[];
 };
 
 const advertiserAdsCache = new Map<
@@ -464,9 +483,43 @@ function normalizeAdRecord(record: Record<string, unknown>): TikTokAdRecord | nu
       "item_id",
       "itemId",
     ]),
+    creativeVideoId: getFirstString(candidates, ["video_id", "videoId"]),
     displayName: getFirstString(candidates, ["display_name", "displayName"]),
     raw: record,
   };
+}
+
+function getPostBackingStatusFromAd(
+  ad: Pick<TikTokAdRecord, "identityType" | "tiktokItemId" | "creativeVideoId">,
+): TikTokAdGroupPostBackingStatus {
+  if (ad.tiktokItemId) {
+    return "post_backed";
+  }
+
+  if ((ad.identityType ?? "").trim().toUpperCase() === "CUSTOMIZED_USER") {
+    return "non_post_backed";
+  }
+
+  if (ad.creativeVideoId) {
+    return "non_post_backed";
+  }
+
+  return "unknown";
+}
+
+function mergePostBackingStatus(
+  current: TikTokAdGroupPostBackingStatus,
+  incoming: TikTokAdGroupPostBackingStatus,
+): TikTokAdGroupPostBackingStatus {
+  if (current === "post_backed" || incoming === "post_backed") {
+    return "post_backed";
+  }
+
+  if (current === "non_post_backed" || incoming === "non_post_backed") {
+    return "non_post_backed";
+  }
+
+  return "unknown";
 }
 
 function normalizeResolvedPost(
@@ -833,16 +886,21 @@ async function fetchMatchedAdsByIdsBestEffort(args: {
 function buildVideoLookupContexts(args: {
   ads?: readonly TikTokAdRecord[];
   rows?: readonly TikTokPaidViewsRow[];
+  targetItemIds?: readonly string[];
 }) {
+  const targetItemIdSet =
+    args.targetItemIds && args.targetItemIds.length > 0
+      ? new Set(uniqueNonEmptyStrings([...args.targetItemIds]))
+      : null;
   const rowItemIdsByAdId = new Map<string, Set<string>>();
   const candidateItemIds = new Set<string>();
 
   for (const row of args.rows ?? []) {
-    if (row.itemId) {
+    if (row.itemId && (!targetItemIdSet || targetItemIdSet.has(row.itemId))) {
       candidateItemIds.add(row.itemId);
     }
 
-    if (!row.adId || !row.itemId) {
+    if (!row.adId || !row.itemId || (targetItemIdSet && !targetItemIdSet.has(row.itemId))) {
       continue;
     }
 
@@ -862,7 +920,7 @@ function buildVideoLookupContexts(args: {
     const itemIds = uniqueNonEmptyStrings([
       ad.tiktokItemId,
       ...(rowItemIdsByAdId.has(ad.adId) ? [...(rowItemIdsByAdId.get(ad.adId) ?? [])] : []),
-    ]);
+    ]).filter((itemId) => !targetItemIdSet || targetItemIdSet.has(itemId));
 
     for (const itemId of itemIds) {
       candidateItemIds.add(itemId);
@@ -939,8 +997,14 @@ async function fetchResolvedPostsForAds(args: {
   accessToken: string;
   ads?: readonly TikTokAdRecord[];
   rows?: readonly TikTokPaidViewsRow[];
+  targetItemIds?: readonly string[];
 }) {
   const { candidateItemIds, contexts } = buildVideoLookupContexts(args);
+  const targetItemIds = uniqueNonEmptyStrings(args.targetItemIds ?? []);
+  const maxVideoInfoLookups =
+    targetItemIds.length > 0
+      ? Math.max(MAX_VIDEO_INFO_LOOKUPS, targetItemIds.length)
+      : MAX_VIDEO_INFO_LOOKUPS;
 
   if (candidateItemIds.length === 0) {
     return {
@@ -958,7 +1022,7 @@ async function fetchResolvedPostsForAds(args: {
     };
   }
 
-  const itemIdsToLookup = [...contexts.keys()].slice(0, MAX_VIDEO_INFO_LOOKUPS);
+  const itemIdsToLookup = [...contexts.keys()].slice(0, maxVideoInfoLookups);
   const resolvedPostsByItemId = new Map<string, TikTokResolvedPost>();
   const pendingContexts: TikTokVideoLookupContext[] = [];
 
@@ -1026,9 +1090,9 @@ async function fetchResolvedPostsForAds(args: {
   return {
     resolvedPostsByItemId,
     warnings: uniqueNonEmptyStrings([
-      ...(contexts.size > MAX_VIDEO_INFO_LOOKUPS
+      ...(contexts.size > maxVideoInfoLookups
         ? [
-            `Resolved exact post info for the first ${MAX_VIDEO_INFO_LOOKUPS} known Spark item IDs only to keep the lookup fast.`,
+            `Resolved exact post info for the first ${maxVideoInfoLookups} candidate TikTok post IDs relevant to this request only to keep the lookup fast.`,
           ]
         : []),
       ...(resolvedPostsByItemId.size === 0
@@ -1037,7 +1101,7 @@ async function fetchResolvedPostsForAds(args: {
           ]
         : resolvedPostsByItemId.size < candidateItemIds.length
           ? [
-              `Resolved exact post info for ${resolvedPostsByItemId.size} of ${candidateItemIds.length} known Spark item IDs. TikTok hid the rest, so the remaining matches use ad names and Singular metadata when available.`,
+              `Resolved exact post info for ${resolvedPostsByItemId.size} of ${candidateItemIds.length} candidate TikTok post IDs relevant to this request. TikTok hid the rest, so the remaining matches use ad names and Singular metadata when available.`,
             ]
           : []),
     ]),
@@ -1056,16 +1120,22 @@ function buildMatchedAdSummaries(args: {
       adId: string;
       adName: string | null;
       displayName: string | null;
+      postBackingStatus: TikTokAdGroupPostBackingStatus;
       itemIds: Set<string>;
     }
   >();
 
   for (const ad of args.ads ?? []) {
     const existingSummary = summaries.get(ad.adId);
+    const postBackingStatus = getPostBackingStatusFromAd(ad);
 
     if (existingSummary) {
       existingSummary.adName ??= ad.adName;
       existingSummary.displayName ??= ad.displayName;
+      existingSummary.postBackingStatus = mergePostBackingStatus(
+        existingSummary.postBackingStatus,
+        postBackingStatus,
+      );
 
       if (ad.tiktokItemId) {
         existingSummary.itemIds.add(ad.tiktokItemId);
@@ -1078,6 +1148,7 @@ function buildMatchedAdSummaries(args: {
       adId: ad.adId,
       adName: ad.adName,
       displayName: ad.displayName,
+      postBackingStatus,
       itemIds: new Set(ad.tiktokItemId ? [ad.tiktokItemId] : []),
     });
   }
@@ -1092,6 +1163,7 @@ function buildMatchedAdSummaries(args: {
     if (existingSummary) {
       if (row.itemId) {
         existingSummary.itemIds.add(row.itemId);
+        existingSummary.postBackingStatus = "post_backed";
       }
 
       continue;
@@ -1101,6 +1173,7 @@ function buildMatchedAdSummaries(args: {
       adId: row.adId,
       adName: null,
       displayName: null,
+      postBackingStatus: row.itemId ? "post_backed" : "unknown",
       itemIds: new Set(row.itemId ? [row.itemId] : []),
     });
   }
@@ -1110,6 +1183,7 @@ function buildMatchedAdSummaries(args: {
       adId: summary.adId,
       adName: summary.adName,
       displayName: summary.displayName,
+      postBackingStatus: summary.postBackingStatus,
       itemIds: [...summary.itemIds].sort(),
       resolvedPosts: [...summary.itemIds]
         .sort()
@@ -1128,6 +1202,7 @@ function buildAdGroups(args: {
     string,
     {
       adId: string;
+      postBackingStatus: TikTokAdGroupPostBackingStatus;
       itemIds: Set<string>;
       rows: TikTokPaidViewsRow[];
       totalValue: number;
@@ -1144,6 +1219,7 @@ function buildAdGroups(args: {
 
       if (row.itemId) {
         existingGroup.itemIds.add(row.itemId);
+        existingGroup.postBackingStatus = "post_backed";
       }
 
       continue;
@@ -1151,6 +1227,7 @@ function buildAdGroups(args: {
 
     groups.set(adId, {
       adId,
+      postBackingStatus: row.itemId ? "post_backed" : "unknown",
       itemIds: new Set(row.itemId ? [row.itemId] : []),
       rows: [row],
       totalValue: row.metricValue,
@@ -1181,6 +1258,8 @@ function buildAdGroups(args: {
       adId: group.adId,
       adName: metadata?.adName ?? null,
       displayName: metadata?.displayName ?? null,
+      postBackingStatus:
+        itemIds.length > 0 ? "post_backed" : (metadata?.postBackingStatus ?? group.postBackingStatus),
       itemIds,
       rows: sortedRows,
       totalValue: group.totalValue,
@@ -1263,13 +1342,14 @@ function attachSingularMetricsToGroups(args: {
   allowNameFallback: boolean;
 }) {
   const rowsByCreativeId = new Map<string, TikTokSingularReportRow[]>();
-  const rowsByVideoIdFromUrl = new Map<string, TikTokSingularReportRow[]>();
+  const rowsByExactPostId = new Map<string, TikTokSingularReportRow[]>();
   const rowsByNameKey = new Map<string, TikTokSingularReportRow[]>();
   const groupKeysByName = new Map<string, Set<string>>();
 
   for (const row of args.singular.rows) {
     addSingularRowToLookup(rowsByCreativeId, row.creativeId, row);
-    addSingularRowToLookup(rowsByVideoIdFromUrl, extractTikTokVideoIdFromUrl(row.creativeUrl), row);
+    addSingularRowToLookup(rowsByExactPostId, row.tiktokPostId, row);
+    addSingularRowToLookup(rowsByExactPostId, extractTikTokVideoIdFromUrl(row.creativeUrl), row);
     addSingularRowToLookup(rowsByNameKey, normalizeMatchText(row.creativeName), row);
   }
 
@@ -1302,7 +1382,7 @@ function attachSingularMetricsToGroups(args: {
 
     if (matchedRows.size === 0) {
       for (const itemId of group.itemIds) {
-        for (const row of rowsByVideoIdFromUrl.get(itemId) ?? []) {
+        for (const row of rowsByExactPostId.get(itemId) ?? []) {
           matchedRows.set(row.rowKey, row);
         }
       }
@@ -1463,6 +1543,97 @@ export async function getAdProfitabilityReportForAdvertiser(args: {
         : [
             "Best effort mode allows ad-name fallback when an exact Spark ID or TikTok post match is unavailable.",
           ]),
+    ]),
+  };
+}
+
+export async function resolvePaidAdGroupsForAdvertiser(args: {
+  advertiserId: string;
+  accessToken: string;
+  rows: Array<{
+    adId: string | null;
+    itemId: string | null;
+    statDate: string | null;
+    metricValue: number;
+    raw: Record<string, unknown>;
+  }>;
+  targetItemIds?: readonly string[];
+}): Promise<{
+  groups: TikTokResolvedPaidAdGroup[];
+  warnings: string[];
+}> {
+  const advertiserId = args.advertiserId.trim();
+  const accessToken = args.accessToken.trim();
+
+  if (advertiserId.length === 0) {
+    throw new Error("Advertiser ID is required.");
+  }
+
+  if (accessToken.length === 0) {
+    throw new Error("Access token is required.");
+  }
+
+  const rows: TikTokPaidViewsRow[] = args.rows.map((row) => ({
+    adId: row.adId,
+    itemId: row.itemId,
+    statDate: row.statDate,
+    metricValue: row.metricValue,
+    raw: row.raw,
+  }));
+  const matchedAdIds = uniqueNonEmptyStrings(rows.map((row) => row.adId));
+  const adMetadata = await fetchMatchedAdsByIdsBestEffort({
+    advertiserId,
+    accessToken,
+    adIds: matchedAdIds,
+  });
+  const resolvedPosts = await fetchResolvedPostsForAds({
+    advertiserId,
+    accessToken,
+    ads: adMetadata.ads,
+    rows,
+    targetItemIds: args.targetItemIds,
+  });
+  const matchedAds = buildMatchedAdSummaries({
+    ads: adMetadata.ads,
+    rows,
+    resolvedPostsByItemId: resolvedPosts.resolvedPostsByItemId,
+  });
+  const targetItemIdSet =
+    args.targetItemIds && args.targetItemIds.length > 0
+      ? new Set(uniqueNonEmptyStrings([...args.targetItemIds]))
+      : null;
+  const groups = buildAdGroups({
+    rows,
+    matchedAds,
+  })
+    .map((group) => {
+      const resolvedPosts = targetItemIdSet
+        ? group.resolvedPosts.filter((post) => targetItemIdSet.has(post.itemId))
+        : group.resolvedPosts;
+
+      return {
+        adId: group.adId,
+        adName: group.adName,
+        displayName: group.displayName,
+        postBackingStatus: group.postBackingStatus,
+        itemIds: group.itemIds,
+        rows: group.rows,
+        totalValue: group.totalValue,
+        rowCount: group.rows.length,
+        resolvedPosts,
+      };
+    });
+
+  return {
+    groups,
+    warnings: uniqueNonEmptyStrings([
+      ...adMetadata.warnings,
+      ...resolvedPosts.warnings,
+      ...(rows.length === 0
+        ? [
+            "TikTok returned no ad-level rows to resolve into per-video matches.",
+          ]
+        : []),
     ]),
   };
 }

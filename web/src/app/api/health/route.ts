@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 
 import {
   hasSingularEnv,
+  hasSupabaseAuthEnv,
   hasSupabaseDatabaseEnv,
-  isGoogleAuthDisabled,
+  isAuthDisabled,
 } from "@/lib/server-env";
 
 export function GET() {
@@ -15,16 +16,13 @@ export function GET() {
     Boolean(process.env.VIRAL_APP_API_KEY ?? process.env.DATA_PROVIDER_API_KEY);
 
   return NextResponse.json({
-      ok: true,
-      service: "billion-views-web",
-      timestamp: new Date().toISOString(),
-      configured: {
+    ok: true,
+    service: "billion-views-web",
+    timestamp: new Date().toISOString(),
+    configured: {
       database: hasSupabaseDatabaseEnv(),
-      googleAuth:
-        !isGoogleAuthDisabled() &&
-        Boolean(process.env.GOOGLE_CLIENT_ID) &&
-        Boolean(process.env.GOOGLE_CLIENT_SECRET),
-      publicAccess: isGoogleAuthDisabled(),
+      supabaseAuth: !isAuthDisabled() && hasSupabaseAuthEnv(),
+      publicAccess: isAuthDisabled(),
       aiAnalytics: Boolean(process.env.OPENAI_API_KEY),
       dataProvider: hasGenericProviderConfig,
       viralApp: hasViralAppConfig,

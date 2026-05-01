@@ -129,7 +129,10 @@ async function getAvailableOrganizationIdentity(args: {
   };
 }
 
-export async function createOrganizationForCurrentUser(input: unknown) {
+async function createOrganizationForCurrentUserInternal(
+  input: unknown,
+  options?: { revalidate?: boolean },
+) {
   const user = await requireUser();
   const { name } = createOrganizationFromNameSchema.parse(input);
   const organizationIdentity = await getAvailableOrganizationIdentity({
@@ -137,23 +140,35 @@ export async function createOrganizationForCurrentUser(input: unknown) {
     desiredName: name,
   });
 
-  const organization = await prisma.organization.create({
-    data: {
-      name: organizationIdentity.name,
-      slug: organizationIdentity.slug,
-      createdById: user.id,
-      memberships: {
-        create: {
-          userId: user.id,
-          role: OrganizationRole.OWNER,
-        },
+  const organization = await prisma.$transaction(async (tx) => {
+    const createdOrganization = await tx.organization.create({
+      data: {
+        name: organizationIdentity.name,
+        slug: organizationIdentity.slug,
+        createdById: user.id,
       },
-    },
+    });
+
+    await tx.organizationMembership.create({
+      data: {
+        organizationId: createdOrganization.id,
+        userId: user.id,
+        role: OrganizationRole.OWNER,
+      },
+    });
+
+    return createdOrganization;
   });
 
-  revalidatePath("/app");
+  if (options?.revalidate !== false) {
+    revalidatePath("/app");
+  }
 
   return organization;
+}
+
+export async function createOrganizationForCurrentUser(input: unknown) {
+  return createOrganizationForCurrentUserInternal(input);
 }
 
 export async function ensureOrganizationForCurrentUser() {
@@ -174,12 +189,17 @@ export async function ensureOrganizationForCurrentUser() {
     return existingMembership.organization;
   }
 
-  return createOrganizationForCurrentUser({
-    name: getDefaultOrganizationNameForUser({
-      name: user.name,
-      email: user.email,
-    }),
-  });
+  return createOrganizationForCurrentUserInternal(
+    {
+      name: getDefaultOrganizationNameForUser({
+        name: user.name,
+        email: user.email,
+      }),
+    },
+    {
+      revalidate: false,
+    },
+  );
 }
 
 export async function inviteOrganizationMember(args: {

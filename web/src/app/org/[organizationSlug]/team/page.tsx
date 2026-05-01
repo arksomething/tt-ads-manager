@@ -617,8 +617,8 @@ export default async function OrganizationTeamPage({
                   Invite someone to this organization.
                 </h2>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-                  Use the exact Google email they will sign in with, then choose
-                  whether they should get all campaign access or only the
+                  Use the exact email address they will sign in with, then
+                  choose whether they should get all campaign access or only the
                   campaigns you select here.
                 </p>
               </div>

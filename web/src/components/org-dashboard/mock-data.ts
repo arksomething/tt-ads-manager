@@ -12,6 +12,8 @@ export type DashboardSectionKey =
   | "review"
   | "ai-analytics"
   | "leaderboard"
+  | "view-tally"
+  | "ugc-pay"
   | "tiktok-paid-views"
   | "campaigns"
   | "payouts"
@@ -189,6 +191,18 @@ export const dashboardNavGroups: DashboardNavGroup[] = [
         icon: "arrowUpRight",
       },
       {
+        key: "view-tally",
+        label: "View Tally",
+        segment: "view-tally",
+        icon: "videos",
+      },
+      {
+        key: "ugc-pay",
+        label: "UGC Pay",
+        segment: "ugc-pay",
+        icon: "payouts",
+      },
+      {
         key: "tiktok-paid-views",
         label: "Ad Profit",
         segment: "tiktok-paid-views",
@@ -266,6 +280,20 @@ export const dashboardRouteMeta: Record<DashboardSectionKey, DashboardRouteMeta>
     title: "Rank creators, videos, and campaigns in one shared performance leaderboard.",
     description:
       "The future view can compare momentum, output, and conversion signals across the organization without leaving the workspace.",
+  },
+  "view-tally": {
+    groupLabel: "Analytics",
+    navLabel: "View Tally",
+    title: "Compare tracked TikTok video totals against paid delivery for one creator.",
+    description:
+      "This route filters videos by post date, then pairs current total views with exact Spark-linked paid video views when TikTok exposes item-level attribution.",
+  },
+  "ugc-pay": {
+    groupLabel: "Analytics",
+    navLabel: "UGC Pay",
+    title: "Calculate creator UGC pay from View Tally video views.",
+    description:
+      "This route prices creator video output with campaign deal terms, deducting paid TikTok delivery from View Tally rows before applying CPM and cap rules.",
   },
   "tiktok-paid-views": {
     groupLabel: "Analytics",
@@ -750,6 +778,40 @@ export const placeholderSectionData: Record<
       { label: "Ranking table", value: "Reserved in UI", status: "Ready" },
       { label: "Score weighting", value: "Planned", status: "Draft" },
       { label: "Compare mode", value: "Queued", status: "Next" },
+    ],
+  },
+  "view-tally": {
+    eyebrow: "Analytics",
+    spotlightTitle: "View Tally compares total tracked views against paid TikTok delivery here.",
+    spotlightDescription:
+      "The live route pairs tracked TikTok videos with exact Spark-linked paid views so operators can inspect one creator's recent posting window without leaving the dashboard.",
+    highlights: ["Recent posts", "Paid video views", "Organic estimate"],
+    statCards: [
+      { label: "Default range", value: "Last 7 days" },
+      { label: "Paid metric", value: "Video play actions" },
+      { label: "Scope", value: "One creator at a time" },
+    ],
+    rows: [
+      { label: "Creator filter", value: "Live on page", status: "Ready" },
+      { label: "Exact Spark matching", value: "Required for paid tally", status: "Ready" },
+      { label: "Post-date filter", value: "Inclusive date range", status: "Ready" },
+    ],
+  },
+  "ugc-pay": {
+    eyebrow: "Analytics",
+    spotlightTitle: "UGC Pay prices creator videos with campaign deal terms.",
+    spotlightDescription:
+      "The live route uses View Tally video rows, paid-view deductions, and campaign creator deals to calculate creator and video pay.",
+    highlights: ["Creator pay", "Video breakdown", "Campaign deals"],
+    statCards: [
+      { label: "Default CPM", value: "$1" },
+      { label: "Default cap", value: "$100" },
+      { label: "Source", value: "View Tally" },
+    ],
+    rows: [
+      { label: "Video pricing", value: "Live page", status: "Ready" },
+      { label: "Paid deductions", value: "View Tally", status: "Ready" },
+      { label: "Custom deals", value: "Campaign scoped", status: "Ready" },
     ],
   },
   "tiktok-paid-views": {

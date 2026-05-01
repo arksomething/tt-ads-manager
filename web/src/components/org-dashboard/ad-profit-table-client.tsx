@@ -38,6 +38,7 @@ export type AdProfitTableClientRow = {
   creativeName: string | null;
   creativeTitle: string;
   creativeUrl: string | null;
+  tiktokPostId: string | null;
   id: string;
   overallRankLabel: string;
   profitLabel: string;
@@ -51,7 +52,9 @@ export type AdProfitTableClientRow = {
   volumePrimaryLabel: string;
   volumeSecondaryLabel: string;
   compositeLabel: string;
+  primaryLinkLabel: string;
   subCampaignName: string | null;
+  viralPostMatched: boolean;
 };
 
 type AdProfitTableClientProps = {
@@ -206,6 +209,7 @@ export function AdProfitTableClient({
             campaignName: row.campaignName,
             creativeId: row.creativeId,
             creativeName: row.creativeName,
+            tiktokPostId: row.tiktokPostId,
             creativeUrl: row.creativeUrl,
             endDate,
             startDate,
@@ -393,8 +397,14 @@ export function AdProfitTableClient({
                               rel="noreferrer"
                               target="_blank"
                             >
-                              Open creative
+                              {row.primaryLinkLabel}
                             </a>
+                          ) : null}
+
+                          {row.viralPostMatched ? (
+                            <span className="text-[#B8FF86]">
+                              viral.app matched
+                            </span>
                           ) : null}
 
                           <button

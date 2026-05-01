@@ -71,6 +71,17 @@ export enum PayoutStatus {
   CANCELLED = "CANCELLED",
 }
 
+export enum CreatorDealPaidTrafficMetric {
+  VIDEO_PLAY_ACTIONS = "VIDEO_PLAY_ACTIONS",
+  IMPRESSIONS = "IMPRESSIONS",
+}
+
+export enum CreatorDealPerVideoCapScope {
+  CPM = "CPM",
+  TOTAL = "TOTAL",
+  NONE = "NONE",
+}
+
 export enum NoteEntityType {
   ORGANIZATION = "ORGANIZATION",
   CAMPAIGN = "CAMPAIGN",
@@ -317,6 +328,29 @@ export interface CampaignCreator {
   deliveredAt: Date | null;
   postedAt: Date | null;
   internalNotes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CampaignCreatorDeal {
+  id: string;
+  organizationId: string;
+  campaignCreatorId: string;
+  currency: string;
+  effectiveStartDate: Date;
+  effectiveEndDate: Date | null;
+  fixedFee: number | null;
+  fixedFeeRecognitionDate: Date | null;
+  fixedFeePerVideo: number | null;
+  cpmAmount: number | null;
+  paidTrafficMetric: CreatorDealPaidTrafficMetric;
+  deductPaidTraffic: boolean;
+  viewCapPerVideo: number | null;
+  viewWindowDays: number | null;
+  payoutCapPerVideo: number | null;
+  perVideoCapScope: CreatorDealPerVideoCapScope;
+  payoutCapTotal: number | null;
+  notes: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -668,6 +702,11 @@ export namespace Prisma {
   export type CampaignCreatorSelect = GenericSelect;
   export type CampaignCreatorCreateInput = GenericInput;
   export type CampaignCreatorUpdateInput = GenericInput;
+  export type CampaignCreatorDealWhereInput = GenericWhereInput;
+  export type CampaignCreatorDealOrderByWithRelationInput = GenericOrderByInput;
+  export type CampaignCreatorDealSelect = GenericSelect;
+  export type CampaignCreatorDealCreateInput = GenericInput;
+  export type CampaignCreatorDealUpdateInput = GenericInput;
   export type VideoWhereInput = GenericWhereInput;
   export type VideoOrderByWithRelationInput = GenericOrderByInput;
   export type VideoSelect = GenericSelect;
@@ -773,6 +812,7 @@ export namespace Prisma {
     CreatorPlatformAccount: "CreatorPlatformAccount",
     CreatorMetricsSnapshot: "CreatorMetricsSnapshot",
     CampaignCreator: "CampaignCreator",
+    CampaignCreatorDeal: "CampaignCreatorDeal",
     Video: "Video",
     VideoReview: "VideoReview",
     VideoMetricsSnapshot: "VideoMetricsSnapshot",

@@ -1,9 +1,26 @@
-export default function Home() {
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-black px-6 text-white">
-      <h1 className="text-center text-4xl font-semibold tracking-tight sm:text-6xl">
-        billionviews by superviralstudio
-      </h1>
-    </main>
-  );
+import { redirect } from "next/navigation";
+
+import { auth, isAuthConfigured } from "@/auth";
+import { isAuthDisabled } from "@/lib/server-env";
+
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  if (isAuthDisabled()) {
+    redirect("/app");
+  }
+
+  if (isAuthConfigured) {
+    try {
+      const session = await auth();
+
+      if (session?.user?.id) {
+        redirect("/app");
+      }
+    } catch {
+      // Fall back to the login screen when auth env is incomplete.
+    }
+  }
+
+  redirect("/login");
 }

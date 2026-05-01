@@ -1,12 +1,21 @@
+import type { ReactNode } from "react";
+
 import { OrgDashboardShell } from "@/components/org-dashboard/org-dashboard-shell";
 import { getOrganizationDashboardLayoutData } from "@/server/dashboard/org-shell";
 
 export const dynamic = "force-dynamic";
 
+type OrganizationLayoutProps = {
+  children: ReactNode;
+  params: Promise<{
+    organizationSlug: string;
+  }>;
+};
+
 export default async function OrganizationLayout({
   children,
   params,
-}: LayoutProps<"/org/[organizationSlug]">) {
+}: OrganizationLayoutProps) {
   const { organizationSlug } = await params;
   const layoutData = await getOrganizationDashboardLayoutData(organizationSlug);
 

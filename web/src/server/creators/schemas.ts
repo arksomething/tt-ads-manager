@@ -19,7 +19,7 @@ const trackedAccountMaxVideoValues = new Set<number>(
 );
 
 export const createCreatorSchema = z.object({
-  organizationId: z.string().cuid(),
+  organizationId: z.string().min(1).max(191),
   displayName: z.string().min(2).max(160),
   primaryNiche: z.string().max(100).optional(),
   region: z.string().max(100).optional(),
@@ -32,7 +32,7 @@ export const createCreatorSchema = z.object({
 
 export const trackCreatorAccountFormSchema = z.object({
   profileUrl: z.string().trim().max(4096).url(),
-  campaignId: z.string().cuid(),
+  campaignId: z.string().min(1).max(191),
   maxVideos: z.coerce
     .number()
     .int()
@@ -42,7 +42,7 @@ export const trackCreatorAccountFormSchema = z.object({
 });
 
 export const createPlatformAccountSchema = z.object({
-  creatorId: z.string().cuid(),
+  creatorId: z.string().min(1).max(191),
   platform: z.nativeEnum(Platform),
   sourceAccountId: z.string().max(255).optional(),
   handle: z.string().min(1).max(255),
@@ -53,13 +53,18 @@ export const createPlatformAccountSchema = z.object({
 });
 
 export const creatorFiltersSchema = z.object({
-  organizationId: z.string().cuid(),
-  campaignId: z.string().cuid().optional(),
+  organizationId: z.string().min(1).max(191),
+  campaignId: z.string().min(1).max(191).optional(),
   platform: z.nativeEnum(Platform).optional(),
   internalStatus: z.nativeEnum(CreatorStatus).optional(),
   niche: z.string().optional(),
   region: z.string().optional(),
   search: z.string().max(160).optional(),
+});
+
+export const setCreatorStatusSchema = z.object({
+  creatorId: z.string().min(1).max(191),
+  internalStatus: z.nativeEnum(CreatorStatus),
 });
 
 export type CreateCreatorInput = z.infer<typeof createCreatorSchema>;
@@ -70,3 +75,4 @@ export type CreatePlatformAccountInput = z.infer<
   typeof createPlatformAccountSchema
 >;
 export type CreatorFiltersInput = z.infer<typeof creatorFiltersSchema>;
+export type SetCreatorStatusInput = z.infer<typeof setCreatorStatusSchema>;

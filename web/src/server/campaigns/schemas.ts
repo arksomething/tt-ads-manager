@@ -2,9 +2,9 @@ import { CampaignRole } from "@/lib/prisma-shim";
 import { z } from "zod";
 
 export const createCampaignSchema = z.object({
-  organizationId: z.string().cuid(),
+  organizationId: z.string().min(1).max(191),
   name: z.string().min(2).max(160),
-  ownerUserId: z.string().cuid().optional(),
+  ownerUserId: z.string().min(1).max(191).optional(),
 });
 
 export const createOrganizationCampaignSchema = createCampaignSchema.omit({
@@ -17,8 +17,8 @@ export const updateCampaignSchema = z.object({
 });
 
 export const addCreatorToCampaignSchema = z.object({
-  campaignId: z.string().cuid(),
-  creatorId: z.string().cuid(),
+  campaignId: z.string().min(1).max(191),
+  creatorId: z.string().min(1).max(191),
   agreedRate: z.number().nonnegative().optional(),
   dueDate: z.coerce.date().optional(),
   internalNotes: z.string().max(5000).optional(),
@@ -30,16 +30,16 @@ export const inviteCampaignMemberSchema = z.object({
 });
 
 export const updateCampaignMemberRoleSchema = z.object({
-  membershipId: z.string().cuid(),
+  membershipId: z.string().min(1).max(191),
   role: z.enum([CampaignRole.MANAGER, CampaignRole.MEMBER]),
 });
 
 export const removeCampaignMemberSchema = z.object({
-  membershipId: z.string().cuid(),
+  membershipId: z.string().min(1).max(191),
 });
 
 export const revokeCampaignInvitationSchema = z.object({
-  invitationId: z.string().cuid(),
+  invitationId: z.string().min(1).max(191),
 });
 
 export type CreateCampaignInput = z.infer<typeof createCampaignSchema>;

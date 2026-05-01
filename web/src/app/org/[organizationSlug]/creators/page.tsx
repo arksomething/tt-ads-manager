@@ -8,6 +8,8 @@ import { formatPlatformLabel } from "@/server/dashboard/filters";
 import {
   removeCreatorContactPointForOrganization,
   requestSparkCodeForCreatorInOrganization,
+  setCreatorStatusForOrganization,
+  syncTrackedTikTokWorkspaceForOrganization,
   trackCreatorAccountForOrganization,
   upsertCreatorContactPointForOrganization,
 } from "@/server/creators/mutations";
@@ -270,10 +272,16 @@ function getNoticeLabel(value: string | undefined) {
       return "Account added to viral.app and synced locally.";
     case "creator-created":
       return "Creator added to viral.app";
+    case "tracked-sync-complete":
+      return "Tracked TikTok creators and videos were synced from viral.app.";
     case "contact-saved":
       return "Creator contact point saved.";
     case "contact-removed":
       return "Creator contact point removed.";
+    case "creator-archived":
+      return "Creator excluded locally. Archived creators stay synced but are ignored in payouts.";
+    case "creator-restored":
+      return "Creator restored locally and included in payouts again.";
     case "spark-request-sent":
       return "Spark code request sent.";
     default:
@@ -333,6 +341,34 @@ export default async function CreatorsPage({
           page: workspace.currentPage,
           notice: null,
           error: getActionErrorMessage(createError),
+        }),
+      );
+    }
+  }
+
+  async function syncTrackedWorkspaceAction() {
+    "use server";
+
+    try {
+      await syncTrackedTikTokWorkspaceForOrganization(organizationSlug);
+
+      redirect(
+        buildCreatorsPageHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          page: workspace.currentPage,
+          notice: "tracked-sync-complete",
+          error: null,
+        }),
+      );
+    } catch (syncError) {
+      redirect(
+        buildCreatorsPageHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          page: workspace.currentPage,
+          notice: null,
+          error: getActionErrorMessage(syncError),
         }),
       );
     }
@@ -445,6 +481,45 @@ export default async function CreatorsPage({
     }
   }
 
+  async function setCreatorStatusAction(formData: FormData) {
+    "use server";
+
+    const nextStatus = getTrimmedFormValue(formData, "internalStatus");
+
+    try {
+      await setCreatorStatusForOrganization({
+        organizationSlug,
+        input: {
+          creatorId: getTrimmedFormValue(formData, "creatorId"),
+          internalStatus: nextStatus,
+        },
+      });
+
+      redirect(
+        buildCreatorsPageHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          page: workspace.currentPage,
+          notice:
+            nextStatus === CreatorStatus.ARCHIVED
+              ? "creator-archived"
+              : "creator-restored",
+          error: null,
+        }),
+      );
+    } catch (statusError) {
+      redirect(
+        buildCreatorsPageHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          page: workspace.currentPage,
+          notice: null,
+          error: getActionErrorMessage(statusError),
+        }),
+      );
+    }
+  }
+
   return (
     <div className="space-y-4">
       {notice ? (
@@ -473,21 +548,38 @@ export default async function CreatorsPage({
                 Paste a TikTok, Instagram, or YouTube profile URL. We&apos;ll add
                 the account to viral.app and sync the creator locally.
               </p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                For tracked TikTok accounts already in viral.app, use the bulk sync
+                action below. You can exclude any synced creator locally without
+                deleting them upstream.
+              </p>
             </div>
-            {notice || error ? (
-              <Link
-                href={buildCreatorsPageHref({
-                  organizationSlug,
-                  searchParams: resolvedSearchParams,
-                  page: workspace.currentPage,
-                  notice: null,
-                  error: null,
-                })}
-                className="inline-flex min-h-10 items-center rounded-[0.95rem] border border-white/[0.08] bg-white/[0.04] px-3.5 text-sm text-muted-foreground transition hover:border-white/[0.14] hover:bg-white/[0.07] hover:text-foreground"
-              >
-                Clear flash
-              </Link>
-            ) : null}
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {workspace.canManageOrganizationData ? (
+                <form action={syncTrackedWorkspaceAction}>
+                  <button
+                    className="inline-flex min-h-10 items-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-3.5 text-sm font-medium text-black transition hover:bg-[#A4FF68]"
+                    type="submit"
+                  >
+                    Sync tracked TikTok creators
+                  </button>
+                </form>
+              ) : null}
+              {notice || error ? (
+                <Link
+                  href={buildCreatorsPageHref({
+                    organizationSlug,
+                    searchParams: resolvedSearchParams,
+                    page: workspace.currentPage,
+                    notice: null,
+                    error: null,
+                  })}
+                  className="inline-flex min-h-10 items-center rounded-[0.95rem] border border-white/[0.08] bg-white/[0.04] px-3.5 text-sm text-muted-foreground transition hover:border-white/[0.14] hover:bg-white/[0.07] hover:text-foreground"
+                >
+                  Clear flash
+                </Link>
+              ) : null}
+            </div>
           </div>
 
           {workspace.canTrackCreators ? (
@@ -722,10 +814,38 @@ export default async function CreatorsPage({
                         {formatStatusLabel(creator.internalStatus)}
                       </span>
                       <p className="mt-2 max-w-[14rem] text-xs leading-5 text-muted-foreground">
-                        {creator.providerCreatorId || creator.platformAccounts.length > 0
-                          ? "Linked to a viral.app tracked account."
-                          : "No viral.app account linked yet."}
+                        {creator.internalStatus === CreatorStatus.ARCHIVED
+                          ? "Excluded locally. This creator stays in sync but is ignored in payouts."
+                          : creator.providerCreatorId || creator.platformAccounts.length > 0
+                            ? "Linked to a viral.app tracked account."
+                            : "No viral.app account linked yet."}
                       </p>
+                      {workspace.canManageOrganizationData ? (
+                        <form action={setCreatorStatusAction} className="mt-3">
+                          <input name="creatorId" type="hidden" value={creator.id} />
+                          <input
+                            name="internalStatus"
+                            type="hidden"
+                            value={
+                              creator.internalStatus === CreatorStatus.ARCHIVED
+                                ? CreatorStatus.ACTIVE
+                                : CreatorStatus.ARCHIVED
+                            }
+                          />
+                          <button
+                            className={`inline-flex min-h-8 items-center rounded-[0.8rem] border px-3 text-xs uppercase tracking-[0.18em] transition ${
+                              creator.internalStatus === CreatorStatus.ARCHIVED
+                                ? "border-[#90FF4D]/20 bg-[#90FF4D]/10 text-[#D4FFB2] hover:bg-[#90FF4D]/16"
+                                : "border-white/[0.08] bg-black/[0.22] text-muted-foreground hover:border-white/[0.14] hover:text-foreground"
+                            }`}
+                            type="submit"
+                          >
+                            {creator.internalStatus === CreatorStatus.ARCHIVED
+                              ? "Restore"
+                              : "Exclude"}
+                          </button>
+                        </form>
+                      ) : null}
                     </td>
                     <td className="px-4 py-4">
                       {creator.platformAccounts.length > 0 ? (
@@ -876,8 +996,8 @@ export default async function CreatorsPage({
           </div>
         ) : (
           <div className="mt-5 rounded-[1.2rem] border border-dashed border-white/[0.08] bg-black/[0.18] px-4 py-10 text-sm text-muted-foreground">
-            No creators yet. Paste the first profile URL above to track a creator
-            account in viral.app and store it in this workspace.
+            No creators yet. Sync all tracked TikTok creators from viral.app above,
+            or paste the first profile URL to start tracking a creator account here.
           </div>
         )}
       </section>

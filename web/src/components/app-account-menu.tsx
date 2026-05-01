@@ -93,7 +93,7 @@ export function AppAccountMenu({
             >
               <span className="text-sm text-foreground">Change account</span>
               <span className="mt-0.5 text-xs text-muted-foreground">
-                Use a different Google login
+                Use a different sign-in
               </span>
             </button>
           </form>

@@ -2,7 +2,7 @@ import { OrganizationRole, type Organization, type OrganizationMembership } from
 import { cache } from "react";
 
 import { prisma } from "@/lib/db";
-import { isGoogleAuthDisabled } from "@/lib/server-env";
+import { isAuthDisabled } from "@/lib/server-env";
 import {
   getOrganizationDisplayName,
   normalizeOrganizationNameKey,
@@ -44,7 +44,7 @@ export const getViewerOrganizations = cache(async () => {
           },
         },
       })
-    : isGoogleAuthDisabled()
+    : isAuthDisabled()
       ? (
           await prisma.organization.findMany({
             orderBy: {
@@ -97,7 +97,7 @@ export const getOrganizationMembership = cache(async (organizationSlug: string) 
     });
   }
 
-  if (!isGoogleAuthDisabled()) {
+  if (!isAuthDisabled()) {
     return null;
   }
 

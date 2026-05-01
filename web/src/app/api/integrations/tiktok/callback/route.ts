@@ -14,15 +14,6 @@ import {
   saveTikTokOauthAccount,
   validateTikTokOauthState,
 } from "@/server/tiktok-business/oauth";
-import {
-  createTikTokPublicConnectionCookieValue,
-  createTikTokPublicPendingSelectionCookieValue,
-  getTikTokPublicConnectionCookieName,
-  getTikTokPublicConnectionCookieOptions,
-  getTikTokPublicConnectionMaxAgeSeconds,
-  getTikTokPublicPendingSelectionCookieName,
-  getTikTokPublicPendingSelectionMaxAgeSeconds,
-} from "@/server/tiktok-business/public-session";
 
 function buildRedirectPath(args: {
   pathname: string;
@@ -51,14 +42,6 @@ function clearTikTokOauthState(response: NextResponse) {
     getTikTokOauthStateCookieName(),
     "",
     getTikTokOauthCookieOptions(0),
-  );
-}
-
-function clearPublicPendingSelection(response: NextResponse) {
-  response.cookies.set(
-    getTikTokPublicPendingSelectionCookieName(),
-    "",
-    getTikTokPublicConnectionCookieOptions(0),
   );
 }
 
@@ -101,118 +84,6 @@ export async function GET(request: NextRequest) {
   const authCode =
     request.nextUrl.searchParams.get("auth_code") ??
     request.nextUrl.searchParams.get("code");
-
-  if (statePayload.kind === "public") {
-    if (oauthError) {
-      const declinedResponse = createCallbackResponse(
-        request,
-        buildRedirectPath({
-          pathname: statePayload.returnTo,
-          error: oauthError,
-        }),
-      );
-
-      clearTikTokOauthState(declinedResponse);
-      clearPublicPendingSelection(declinedResponse);
-
-      return declinedResponse;
-    }
-
-    if (!authCode) {
-      const missingCodeResponse = createCallbackResponse(
-        request,
-        buildRedirectPath({
-          pathname: statePayload.returnTo,
-          error: "TikTok OAuth did not return an authorization code.",
-        }),
-      );
-
-      clearTikTokOauthState(missingCodeResponse);
-      clearPublicPendingSelection(missingCodeResponse);
-
-      return missingCodeResponse;
-    }
-
-    try {
-      const token = await exchangeTikTokAuthCode({
-        authCode,
-      });
-      const advertisers = await getAuthorizedTikTokAdvertisers({
-        accessToken: token.accessToken,
-      });
-
-      if (advertisers.length === 0) {
-        throw new Error(
-          "TikTok OAuth succeeded, but no advertiser accounts were returned for this app.",
-        );
-      }
-
-      if (advertisers.length === 1) {
-        const successResponse = createCallbackResponse(
-          request,
-          buildRedirectPath({
-            pathname: statePayload.returnTo,
-            notice: "connection-saved",
-          }),
-        );
-
-        clearTikTokOauthState(successResponse);
-        clearPublicPendingSelection(successResponse);
-        successResponse.cookies.set(
-          getTikTokPublicConnectionCookieName(),
-          createTikTokPublicConnectionCookieValue({
-            advertiserId: advertisers[0].advertiserId,
-            advertiserName: advertisers[0].advertiserName,
-            accessToken: token.accessToken,
-          }),
-          getTikTokPublicConnectionCookieOptions(
-            getTikTokPublicConnectionMaxAgeSeconds(),
-          ),
-        );
-
-        return successResponse;
-      }
-
-      const selectionResponse = createCallbackResponse(
-        request,
-        buildRedirectPath({
-          pathname: statePayload.returnTo,
-          notice: "oauth-select-advertiser",
-        }),
-      );
-
-      clearTikTokOauthState(selectionResponse);
-      selectionResponse.cookies.set(
-        getTikTokPublicPendingSelectionCookieName(),
-        createTikTokPublicPendingSelectionCookieValue({
-          returnTo: statePayload.returnTo,
-          advertisers,
-          accessToken: token.accessToken,
-        }),
-        getTikTokPublicConnectionCookieOptions(
-          getTikTokPublicPendingSelectionMaxAgeSeconds(),
-        ),
-      );
-
-      return selectionResponse;
-    } catch (error) {
-      const failureResponse = createCallbackResponse(
-        request,
-        buildRedirectPath({
-          pathname: statePayload.returnTo,
-          error:
-            error instanceof Error
-              ? error.message
-              : "TikTok OAuth callback failed.",
-        }),
-      );
-
-      clearTikTokOauthState(failureResponse);
-      clearPublicPendingSelection(failureResponse);
-
-      return failureResponse;
-    }
-  }
 
   const membership = await requireOrganizationMembership(statePayload.organizationSlug);
 

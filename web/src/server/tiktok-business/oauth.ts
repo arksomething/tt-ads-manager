@@ -53,16 +53,6 @@ type TikTokOrganizationOauthStatePayload = {
   returnTo: string;
 };
 
-export type TikTokPublicOauthStatePayload = {
-  kind: "public";
-  nonce: string;
-  returnTo: string;
-};
-
-export type TikTokOauthStatePayload =
-  | TikTokOrganizationOauthStatePayload
-  | TikTokPublicOauthStatePayload;
-
 export type TikTokPendingAdvertiserSelection = {
   organizationSlug: string;
   returnTo: string;
@@ -148,7 +138,7 @@ function secondsToDate(value: number | null) {
   return new Date(Date.now() + value * 1000);
 }
 
-function encodeStatePayload(payload: TikTokOauthStatePayload) {
+function encodeStatePayload(payload: TikTokOrganizationOauthStatePayload) {
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
@@ -170,17 +160,9 @@ function decodeStatePayload(value: string) {
       return null;
     }
 
-    if (kind === "public") {
-      return {
-        kind: "public",
-        nonce,
-        returnTo,
-      } satisfies TikTokPublicOauthStatePayload;
-    }
-
     const organizationSlug = getFirstString(parsed, ["organizationSlug"]);
 
-    if (!organizationSlug) {
+    if (kind !== "organization" || !organizationSlug) {
       return null;
     }
 
@@ -371,14 +353,6 @@ export function createTikTokOauthState(args: {
     nonce: randomUUID(),
     organizationSlug: args.organizationSlug,
     returnTo: sanitizeReturnPath(args.organizationSlug, args.returnTo ?? null),
-  });
-}
-
-export function createTikTokPublicOauthState(args: { returnTo: string }) {
-  return encodeStatePayload({
-    kind: "public",
-    nonce: randomUUID(),
-    returnTo: args.returnTo,
   });
 }
 

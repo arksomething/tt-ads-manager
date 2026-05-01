@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { getViewsBaseEnv, hasViewsBaseEnv } from "@/lib/server-env";
 import { CampaignBadge } from "@/components/org-dashboard/campaign-badge";
 import {
   formatPlatformLabel,
@@ -8,6 +9,7 @@ import {
 } from "@/server/dashboard/filters";
 import { trackVideoForOrganization } from "@/server/videos/mutations";
 import { getOrganizationImportedVideosPage } from "@/server/videos/queries";
+import { syncViewsBaseCampaignForOrganization } from "@/server/viewsbase/sync";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +63,8 @@ function getNoticeLabel(value: string | undefined) {
   switch (value) {
     case "video-tracked":
       return "Video added to tracking, synced with viral.app, and saved locally.";
+    case "viewsbase-synced":
+      return "ViewsBase campaign synced and added to local tracking.";
     default:
       return undefined;
   }
@@ -275,6 +279,10 @@ export default async function VideosPage({
     organizationSlug,
     page: requestedPage,
   });
+  const hasViewsBaseIntegration = hasViewsBaseEnv();
+  const defaultViewsBaseOrgSlug = hasViewsBaseIntegration
+    ? getViewsBaseEnv().VIEWSBASE_DEFAULT_ORG_SLUG ?? ""
+    : "";
   const defaultCampaignId =
     videosPage.campaignOptions.length === 1
       ? videosPage.campaignOptions[0]?.id ?? ""
@@ -324,6 +332,36 @@ export default async function VideosPage({
     }
   }
 
+  async function syncViewsBaseAction(formData: FormData) {
+    "use server";
+
+    try {
+      await syncViewsBaseCampaignForOrganization({
+        organizationSlug,
+        input: {
+          campaignId: getTrimmedFormValue(formData, "viewsbaseCampaignId"),
+          orgSlug: getTrimmedFormValue(formData, "viewsbaseOrgSlug"),
+          campaignSlug: getTrimmedFormValue(formData, "viewsbaseCampaignSlug"),
+        },
+      });
+
+      redirect(
+        buildVideosPageHref({
+          organizationSlug,
+          notice: "viewsbase-synced",
+        }),
+      );
+    } catch (syncError) {
+      redirect(
+        buildVideosPageHref({
+          organizationSlug,
+          page: currentPage,
+          error: getActionErrorMessage(syncError),
+        }),
+      );
+    }
+  }
+
   return (
     <div className="space-y-4">
       {notice ? (
@@ -338,7 +376,7 @@ export default async function VideosPage({
         </section>
       ) : null}
 
-      <section className="max-w-3xl">
+      <section className="max-w-4xl">
         <aside className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -368,59 +406,157 @@ export default async function VideosPage({
           </div>
 
           {videosPage.canTrackVideos ? (
-            <form action={trackVideoAction} className="mt-5 space-y-4">
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_15rem]">
-                <label className="block">
-                  <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                    Video URL
-                  </span>
-                  <input
-                    className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-white/[0.16]"
-                    name="videoUrl"
-                    placeholder="https://www.tiktok.com/@creator/video/7456789068912345678"
-                    required
-                    type="url"
-                  />
-                </label>
+            <div className="mt-5 grid gap-5 xl:grid-cols-2">
+              <form
+                action={trackVideoAction}
+                className="space-y-4 rounded-[1.2rem] border border-white/[0.08] bg-black/[0.14] p-4"
+              >
+                <div>
+                  <p className="text-[0.62rem] uppercase tracking-[0.22em] text-muted-foreground">
+                    Manual Video Tracking
+                  </p>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Add one TikTok, Instagram Reel, or YouTube Shorts URL through viral.app.
+                  </p>
+                </div>
 
-                <label className="block">
-                  <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                    Campaign
-                  </span>
-                  <select
-                    className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
-                    defaultValue={defaultCampaignId}
-                    disabled={videosPage.campaignOptions.length === 0}
-                    name="campaignId"
-                    required
-                  >
-                    <option value="">
-                      {videosPage.campaignOptions.length === 0
-                        ? "No campaign yet"
-                        : "Choose a campaign"}
-                    </option>
-                    {videosPage.campaignOptions.map((campaign) => (
-                      <option key={campaign.id} value={campaign.id}>
-                        {campaign.label}
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_15rem]">
+                  <label className="block">
+                    <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                      Video URL
+                    </span>
+                    <input
+                      className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-white/[0.16]"
+                      name="videoUrl"
+                      placeholder="https://www.tiktok.com/@creator/video/7456789068912345678"
+                      required
+                      type="url"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                      Campaign
+                    </span>
+                    <select
+                      className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
+                      defaultValue={defaultCampaignId}
+                      disabled={videosPage.campaignOptions.length === 0}
+                      name="campaignId"
+                      required
+                    >
+                      <option value="">
+                        {videosPage.campaignOptions.length === 0
+                          ? "No campaign yet"
+                          : "Choose a campaign"}
                       </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
+                      {videosPage.campaignOptions.map((campaign) => (
+                        <option key={campaign.id} value={campaign.id}>
+                          {campaign.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
 
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <button
-                  className="inline-flex min-h-11 items-center justify-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68]"
-                  type="submit"
-                >
-                  Track video
-                </button>
-                <p className="text-xs leading-5 text-muted-foreground sm:max-w-sm sm:text-right">
-                  Choose one of the campaigns you can access. We&apos;ll
-                  automatically link the detected creator to that campaign.
-                </p>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <button
+                    className="inline-flex min-h-11 items-center justify-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68]"
+                    type="submit"
+                  >
+                    Track video
+                  </button>
+                  <p className="text-xs leading-5 text-muted-foreground sm:max-w-sm sm:text-right">
+                    Choose one of the campaigns you can access. We&apos;ll
+                    automatically link the detected creator to that campaign.
+                  </p>
+                </div>
+              </form>
+
+              <div className="rounded-[1.2rem] border border-white/[0.08] bg-black/[0.14] p-4">
+                <div>
+                  <p className="text-[0.62rem] uppercase tracking-[0.22em] text-muted-foreground">
+                    ViewsBase Sync
+                  </p>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Pull a whole ViewsBase campaign into this workspace. These synced rows are
+                    priced in payouts at 0.5 CPM with a $100 per-video cap and no fixed fee.
+                  </p>
+                </div>
+
+                {hasViewsBaseIntegration ? (
+                  <form action={syncViewsBaseAction} className="mt-4 space-y-4">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                          ViewsBase Org Slug
+                        </span>
+                        <input
+                          className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-white/[0.16]"
+                          defaultValue={defaultViewsBaseOrgSlug}
+                          name="viewsbaseOrgSlug"
+                          placeholder="gotall"
+                          required
+                        />
+                      </label>
+
+                      <label className="block">
+                        <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                          ViewsBase Campaign Slug
+                        </span>
+                        <input
+                          className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-white/[0.16]"
+                          name="viewsbaseCampaignSlug"
+                          placeholder="gotall-nuddi"
+                          required
+                        />
+                      </label>
+                    </div>
+
+                    <label className="block">
+                      <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                        Local Campaign
+                      </span>
+                      <select
+                        className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
+                        defaultValue={defaultCampaignId}
+                        disabled={videosPage.campaignOptions.length === 0}
+                        name="viewsbaseCampaignId"
+                        required
+                      >
+                        <option value="">
+                          {videosPage.campaignOptions.length === 0
+                            ? "No campaign yet"
+                            : "Choose a campaign"}
+                        </option>
+                        {videosPage.campaignOptions.map((campaign) => (
+                          <option key={campaign.id} value={campaign.id}>
+                            {campaign.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <button
+                        className="inline-flex min-h-11 items-center justify-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68]"
+                        type="submit"
+                      >
+                        Sync ViewsBase campaign
+                      </button>
+                      <p className="text-xs leading-5 text-muted-foreground sm:max-w-sm sm:text-right">
+                        Uses the authenticated ViewsBase session cookie from your server env.
+                      </p>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="mt-4 rounded-[1rem] border border-dashed border-white/[0.08] bg-black/[0.18] px-4 py-6 text-sm text-muted-foreground">
+                    Configure <code>VIEWSBASE_SESSION_COOKIE_VALUE</code> in the server env to
+                    enable ViewsBase syncs from this workspace.
+                  </div>
+                )}
               </div>
-            </form>
+            </div>
           ) : (
             <div className="mt-5 rounded-[1.2rem] border border-dashed border-white/[0.08] bg-black/[0.18] px-4 py-10 text-sm text-muted-foreground">
               You need access to at least one campaign before you can track videos
@@ -520,6 +656,9 @@ export default async function VideosPage({
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="rounded-full border border-white/[0.08] bg-white/[0.05] px-2.5 py-1 text-[0.56rem] uppercase tracking-[0.18em] text-muted-foreground">
                                 {formatPlatformLabel(video.platform)}
+                              </span>
+                              <span className="rounded-full border border-white/[0.08] bg-white/[0.05] px-2.5 py-1 text-[0.56rem] uppercase tracking-[0.18em] text-muted-foreground">
+                                {video.sourceLabel}
                               </span>
                               <a
                                 className="text-[0.62rem] uppercase tracking-[0.2em] text-[#C7FFA4] transition hover:text-[#90FF4D]"

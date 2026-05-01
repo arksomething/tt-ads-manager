@@ -540,6 +540,12 @@ export const modelSchema = {
         "isList": true,
         "isOptional": false
       },
+      "creatorDeals": {
+        "kind": "relation",
+        "type": "CampaignCreatorDeal",
+        "isList": true,
+        "isOptional": false
+      },
       "tiktokPaidMetricSnapshots": {
         "kind": "relation",
         "type": "TikTokPaidMetricSnapshot",
@@ -580,6 +586,16 @@ export const modelSchema = {
       },
       "creators": {
         "model": "Creator",
+        "isList": true,
+        "localFields": [
+          "id"
+        ],
+        "remoteFields": [
+          "organizationId"
+        ]
+      },
+      "creatorDeals": {
+        "model": "CampaignCreatorDeal",
         "isList": true,
         "localFields": [
           "id"
@@ -1835,6 +1851,12 @@ export const modelSchema = {
         "isList": false,
         "isOptional": false
       },
+      "deal": {
+        "kind": "relation",
+        "type": "CampaignCreatorDeal",
+        "isList": false,
+        "isOptional": true
+      },
       "payouts": {
         "kind": "relation",
         "type": "Payout",
@@ -1863,6 +1885,16 @@ export const modelSchema = {
           "id"
         ]
       },
+      "deal": {
+        "model": "CampaignCreatorDeal",
+        "isList": false,
+        "localFields": [
+          "id"
+        ],
+        "remoteFields": [
+          "campaignCreatorId"
+        ]
+      },
       "payouts": {
         "model": "Payout",
         "isList": true,
@@ -1871,6 +1903,165 @@ export const modelSchema = {
         ],
         "remoteFields": [
           "campaignCreatorId"
+        ]
+      }
+    }
+  },
+  "CampaignCreatorDeal": {
+    "table": "CampaignCreatorDeal",
+    "fields": {
+      "id": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "organizationId": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "campaignCreatorId": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "currency": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "effectiveStartDate": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "effectiveEndDate": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": true
+      },
+      "fixedFee": {
+        "kind": "scalar",
+        "type": "Decimal",
+        "isList": false,
+        "isOptional": true
+      },
+      "fixedFeeRecognitionDate": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": true
+      },
+      "fixedFeePerVideo": {
+        "kind": "scalar",
+        "type": "Decimal",
+        "isList": false,
+        "isOptional": true
+      },
+      "cpmAmount": {
+        "kind": "scalar",
+        "type": "Decimal",
+        "isList": false,
+        "isOptional": true
+      },
+      "paidTrafficMetric": {
+        "kind": "enum",
+        "type": "CreatorDealPaidTrafficMetric",
+        "isList": false,
+        "isOptional": false
+      },
+      "deductPaidTraffic": {
+        "kind": "scalar",
+        "type": "Boolean",
+        "isList": false,
+        "isOptional": false
+      },
+      "viewCapPerVideo": {
+        "kind": "scalar",
+        "type": "Int",
+        "isList": false,
+        "isOptional": true
+      },
+      "viewWindowDays": {
+        "kind": "scalar",
+        "type": "Int",
+        "isList": false,
+        "isOptional": true
+      },
+      "payoutCapPerVideo": {
+        "kind": "scalar",
+        "type": "Decimal",
+        "isList": false,
+        "isOptional": true
+      },
+      "perVideoCapScope": {
+        "kind": "enum",
+        "type": "CreatorDealPerVideoCapScope",
+        "isList": false,
+        "isOptional": false
+      },
+      "payoutCapTotal": {
+        "kind": "scalar",
+        "type": "Decimal",
+        "isList": false,
+        "isOptional": true
+      },
+      "notes": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "createdAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "updatedAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "organization": {
+        "kind": "relation",
+        "type": "Organization",
+        "isList": false,
+        "isOptional": false
+      },
+      "campaignCreator": {
+        "kind": "relation",
+        "type": "CampaignCreator",
+        "isList": false,
+        "isOptional": false
+      }
+    },
+    "relations": {
+      "organization": {
+        "model": "Organization",
+        "isList": false,
+        "localFields": [
+          "organizationId"
+        ],
+        "remoteFields": [
+          "id"
+        ]
+      },
+      "campaignCreator": {
+        "model": "CampaignCreator",
+        "isList": false,
+        "localFields": [
+          "campaignCreatorId"
+        ],
+        "remoteFields": [
+          "id"
         ]
       }
     }

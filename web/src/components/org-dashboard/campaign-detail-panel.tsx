@@ -408,8 +408,8 @@ export async function CampaignDetailPanel({
               </div>
               <p className="mt-3 text-xs leading-5 text-muted-foreground">
                 If the person already has an account, access applies immediately.
-                Otherwise the invite stays pending until they sign in with Google
-                using that exact email.
+                Otherwise the invite stays pending until they sign in with that
+                exact email address.
               </p>
             </form>
           ) : (

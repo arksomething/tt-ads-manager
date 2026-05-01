@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 
-import { isGoogleAuthDisabled } from "@/lib/server-env";
+import { isAuthDisabled } from "@/lib/server-env";
 import {
   getViewerOrganizations,
 } from "@/server/auth/organizations";
@@ -11,7 +11,7 @@ import { getAccessibleCampaignOptionsForMembership } from "@/server/campaigns/qu
 export const getOrganizationDashboardLayoutData = cache(
   async (organizationSlug: string) => {
     const user = await getCurrentUser();
-    const publicAccessEnabled = isGoogleAuthDisabled();
+    const publicAccessEnabled = isAuthDisabled();
 
     if (!user?.id && !publicAccessEnabled) {
       redirect("/login");

@@ -11,9 +11,8 @@ const MAX_SINGULAR_REPORT_RANGE_DAYS = 30;
 const SINGULAR_SOURCE_CACHE_TTL_MS = 60 * 60 * 1_000;
 const SINGULAR_REPORT_CACHE_TTL_MS = 15 * 60 * 1_000;
 const SINGULAR_PENDING_REPORT_TTL_MS = 30 * 60 * 1_000;
-const SINGULAR_STATUS_POLL_INTERVAL_MS = 2_000;
-const SINGULAR_INITIAL_STATUS_POLL_ATTEMPTS = 3;
-const SINGULAR_INITIAL_STATUS_POLL_INTERVAL_MS = 1_000;
+const SINGULAR_STATUS_POLL_INTERVAL_MS = 3_000;
+const SINGULAR_INITIAL_REPORT_WAIT_MS = 6_000;
 const SINGULAR_REPORT_DIMENSIONS = [
   "app",
   "source",
@@ -23,9 +22,7 @@ const SINGULAR_REPORT_DIMENSIONS = [
   "sub_campaign_name",
   "adn_creative_id",
   "adn_creative_name",
-  "creative_url",
-  "creative_image",
-  "creative_is_video",
+  "tiktok_post_id",
 ] as const;
 const SINGULAR_REPORT_METRICS = [
   "adn_cost",
@@ -72,6 +69,7 @@ export type TikTokSingularReportRow = {
   subCampaignName: string | null;
   creativeId: string | null;
   creativeName: string | null;
+  tiktokPostId: string | null;
   creativeUrl: string | null;
   creativeImage: string | null;
   creativeIsVideo: boolean | null;
@@ -86,6 +84,7 @@ export type TikTokSingularReportRow = {
 
 export type TikTokSingularOverlay = {
   configured: boolean;
+  isPending: boolean;
   cohortPeriod: string;
   sourceNames: string[];
   rowCount: number;
@@ -126,12 +125,14 @@ function writeCachedValue<T>(
 
 function getEmptyTikTokSingularOverlay(args?: {
   configured?: boolean;
+  isPending?: boolean;
   cohortPeriod?: string;
   sourceNames?: string[];
   warnings?: string[];
 }): TikTokSingularOverlay {
   return {
     configured: args?.configured ?? false,
+    isPending: args?.isPending ?? false,
     cohortPeriod: args?.cohortPeriod ?? "7d",
     sourceNames: args?.sourceNames ?? [],
     rowCount: 0,
@@ -171,6 +172,17 @@ function getFirstString(record: Record<string, unknown>, keys: string[]) {
   }
 
   return null;
+}
+
+function getFirstMeaningfulString(record: Record<string, unknown>, keys: string[]) {
+  const value = getFirstString(record, keys);
+  const normalized = value?.trim() ?? "";
+
+  if (!normalized || ["n/a", "na", "none", "null", "unknown"].includes(normalized.toLowerCase())) {
+    return null;
+  }
+
+  return normalized;
 }
 
 function getFirstNumber(record: Record<string, unknown>, keys: string[]) {
@@ -318,11 +330,12 @@ function mergeTikTokSingularOverlays(overlays: TikTokSingularOverlay[]) {
 
   return {
     configured: overlays.some((overlay) => overlay.configured),
+    isPending: overlays.some((overlay) => overlay.isPending),
     cohortPeriod: firstOverlay.cohortPeriod,
     sourceNames: firstOverlay.sourceNames,
     rowCount: rows.length,
     rows,
-    warnings: uniqueNonEmptyStrings(overlays.flatMap((overlay) => overlay.warnings)),
+    warnings: normalizeSingularWarnings(overlays.flatMap((overlay) => overlay.warnings)),
   };
 }
 
@@ -334,6 +347,7 @@ function buildRowKey(record: TikTokSingularReportRow) {
     record.subCampaignId,
     record.creativeId,
     record.creativeName,
+    record.tiktokPostId,
     record.creativeUrl,
   ]
     .map((value) => value?.trim() || "")
@@ -364,6 +378,7 @@ function normalizeReportRow(record: Record<string, unknown>, cohortPeriod: strin
     subCampaignName: getFirstString(record, ["sub_campaign_name", "adn_sub_campaign_name"]),
     creativeId: getFirstString(record, ["adn_creative_id", "asset_id"]),
     creativeName: getFirstString(record, ["adn_creative_name", "asset_name"]),
+    tiktokPostId: getFirstMeaningfulString(record, ["tiktok_post_id"]),
     creativeUrl: getFirstString(record, ["creative_reported_url", "creative_url"]),
     creativeImage: getFirstString(record, ["creative_image"]),
     creativeIsVideo: getFirstBoolean(record, ["creative_is_video"]),
@@ -519,6 +534,7 @@ function buildSingularReportQuery(args: {
   cohortPeriod: string;
   sourceNames: string[];
   appNames: string[];
+  dimensions?: string[];
 }): SingularCreateAsyncReportArgs {
   return {
     startDate: args.startDate,
@@ -526,13 +542,48 @@ function buildSingularReportQuery(args: {
     timeBreakdown: "all",
     sourceNames: args.sourceNames,
     appNames: args.appNames,
-    dimensions: [...SINGULAR_REPORT_DIMENSIONS],
+    dimensions: args.dimensions ? [...args.dimensions] : [...SINGULAR_REPORT_DIMENSIONS],
     metrics: [...SINGULAR_REPORT_METRICS],
     cohortMetrics: ["revenue"],
     cohortPeriods: [args.cohortPeriod],
     displayUnenriched: true,
     format: "json",
   };
+}
+
+function getUnauthorizedDimensionsFromError(error: unknown) {
+  if (!(error instanceof SingularApiError || error instanceof Error)) {
+    return [];
+  }
+
+  const match = error.message.match(/unauthorized dimensions:\s*([^\n\r]+)/i);
+
+  if (!match?.[1]) {
+    return [];
+  }
+
+  return uniqueNonEmptyStrings(
+    match[1]
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0),
+  );
+}
+
+function normalizeSingularWarnings(warnings: string[]) {
+  return uniqueNonEmptyStrings(
+    warnings.map((warning) => {
+      const unauthorizedDimensions = getUnauthorizedDimensionsFromError(
+        new Error(warning),
+      );
+
+      if (unauthorizedDimensions.length === 0) {
+        return warning;
+      }
+
+      return `Singular does not allow the requested dimensions (${unauthorizedDimensions.join(", ")}) for this API key, so the dashboard is loading aggregate performance without those columns.`;
+    }),
+  );
 }
 
 async function getTikTokSingularOverlayForRange(args: {
@@ -559,43 +610,92 @@ async function getTikTokSingularOverlayForRange(args: {
     return completePendingReport(cacheKey, cached);
   }
 
-  const query = buildSingularReportQuery({
-    startDate: args.startDate,
-    endDate: args.endDate,
-    cohortPeriod: args.cohortPeriod,
-    sourceNames: args.sourceNames,
-    appNames: args.appNames,
-  });
+  let allowedDimensions = [...SINGULAR_REPORT_DIMENSIONS];
+  const retryWarnings: string[] = [];
 
-  try {
-    const reportId = await singularClient.createAsyncReport(query);
-    const pendingEntry: SingularPendingReportCacheEntry = {
-      kind: "pending",
-      expiresAt: Date.now() + SINGULAR_PENDING_REPORT_TTL_MS,
-      reportId,
-      query,
+  while (allowedDimensions.length > 0) {
+    const query = buildSingularReportQuery({
+      startDate: args.startDate,
+      endDate: args.endDate,
+      cohortPeriod: args.cohortPeriod,
       sourceNames: args.sourceNames,
       appNames: args.appNames,
-      cohortPeriod: args.cohortPeriod,
-      lastPolledAt: Date.now(),
-    };
-
-    singularReportCache.set(cacheKey, pendingEntry);
-    return warmPendingReport(cacheKey, pendingEntry);
-  } catch (error) {
-    singularReportCache.delete(cacheKey);
-
-    return getEmptyTikTokSingularOverlay({
-      configured: true,
-      cohortPeriod: args.cohortPeriod,
-      sourceNames: args.sourceNames,
-      warnings: [
-        error instanceof SingularApiError || error instanceof Error
-          ? error.message
-          : "Could not load Singular reporting for this date window.",
-      ],
+      dimensions: allowedDimensions,
     });
+
+    try {
+      const reportId = await singularClient.createAsyncReport(query);
+      const pendingEntry: SingularPendingReportCacheEntry = {
+        kind: "pending",
+        expiresAt: Date.now() + SINGULAR_PENDING_REPORT_TTL_MS,
+        reportId,
+        query,
+        sourceNames: args.sourceNames,
+        appNames: args.appNames,
+        cohortPeriod: args.cohortPeriod,
+        lastPolledAt: Date.now(),
+      };
+
+      singularReportCache.set(cacheKey, pendingEntry);
+
+      await sleep(SINGULAR_INITIAL_REPORT_WAIT_MS);
+
+      const overlay = await pollPendingReport(cacheKey, {
+        ...pendingEntry,
+        lastPolledAt: 0,
+      });
+
+      return {
+        ...overlay,
+        warnings: normalizeSingularWarnings([
+          ...retryWarnings,
+          ...overlay.warnings,
+        ]),
+      };
+    } catch (error) {
+      const unauthorizedDimensions = getUnauthorizedDimensionsFromError(error);
+
+      if (unauthorizedDimensions.length > 0) {
+        const nextDimensions = allowedDimensions.filter(
+          (dimension) => !unauthorizedDimensions.includes(dimension),
+        );
+
+        if (nextDimensions.length > 0 && nextDimensions.length < allowedDimensions.length) {
+          retryWarnings.push(
+            `Singular denied ${unauthorizedDimensions.join(", ")} for this API key, so the creative fallback retried without those dimensions.`,
+          );
+          allowedDimensions = nextDimensions;
+          continue;
+        }
+      }
+
+      singularReportCache.delete(cacheKey);
+
+      return getEmptyTikTokSingularOverlay({
+        configured: true,
+        cohortPeriod: args.cohortPeriod,
+        sourceNames: args.sourceNames,
+        warnings: normalizeSingularWarnings([
+          ...retryWarnings,
+          error instanceof SingularApiError || error instanceof Error
+            ? error.message
+            : "Could not load Singular reporting for this date window.",
+        ]),
+      });
+    }
   }
+
+  singularReportCache.delete(cacheKey);
+
+  return getEmptyTikTokSingularOverlay({
+    configured: true,
+    cohortPeriod: args.cohortPeriod,
+    sourceNames: args.sourceNames,
+    warnings: normalizeSingularWarnings([
+      ...retryWarnings,
+      "Singular denied all requested creative dimensions for this API key.",
+    ]),
+  });
 }
 
 async function completePendingReport(
@@ -605,6 +705,7 @@ async function completePendingReport(
   if (Date.now() - entry.lastPolledAt < SINGULAR_STATUS_POLL_INTERVAL_MS) {
     return getEmptyTikTokSingularOverlay({
       configured: true,
+      isPending: true,
       cohortPeriod: entry.cohortPeriod,
       sourceNames: entry.sourceNames,
       warnings: [
@@ -614,39 +715,6 @@ async function completePendingReport(
   }
 
   return pollPendingReport(cacheKey, entry);
-}
-
-async function warmPendingReport(
-  cacheKey: string,
-  entry: SingularPendingReportCacheEntry,
-): Promise<TikTokSingularOverlay> {
-  let latestEntry = entry;
-  let latestOverlay = getEmptyTikTokSingularOverlay({
-    configured: true,
-    cohortPeriod: entry.cohortPeriod,
-    sourceNames: entry.sourceNames,
-  });
-
-  for (let attempt = 1; attempt <= SINGULAR_INITIAL_STATUS_POLL_ATTEMPTS; attempt += 1) {
-    latestOverlay = await pollPendingReport(cacheKey, latestEntry);
-    const cached = readReportCache(cacheKey);
-
-    if (cached?.kind === "ready") {
-      return cached.value;
-    }
-
-    if (cached?.kind !== "pending") {
-      return latestOverlay;
-    }
-
-    latestEntry = cached;
-
-    if (attempt < SINGULAR_INITIAL_STATUS_POLL_ATTEMPTS) {
-      await sleep(SINGULAR_INITIAL_STATUS_POLL_INTERVAL_MS);
-    }
-  }
-
-  return latestOverlay;
 }
 
 async function pollPendingReport(
@@ -684,6 +752,7 @@ async function pollPendingReport(
 
     const overlay: TikTokSingularOverlay = {
       configured: true,
+      isPending: false,
       cohortPeriod: entry.cohortPeriod,
       sourceNames: entry.sourceNames,
       rowCount: rows.length,
@@ -723,6 +792,7 @@ async function pollPendingReport(
 
   return getEmptyTikTokSingularOverlay({
     configured: true,
+    isPending: true,
     cohortPeriod: entry.cohortPeriod,
     sourceNames: entry.sourceNames,
     warnings: [
@@ -749,11 +819,11 @@ export async function getTikTokSingularOverlay(args: {
     return getEmptyTikTokSingularOverlay({
       configured: true,
       cohortPeriod: env.SINGULAR_COHORT_PERIOD,
-      warnings: [
+      warnings: normalizeSingularWarnings([
         error instanceof SingularApiError || error instanceof Error
           ? error.message
           : "Could not resolve TikTok sources from Singular filters.",
-      ],
+      ]),
     });
   }
 

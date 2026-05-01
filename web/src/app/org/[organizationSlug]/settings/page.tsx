@@ -25,7 +25,7 @@ export default async function OrganizationSettingsPage({
     },
     {
       label: "Login",
-      description: "Google sign-in still starts from the usual place.",
+      description: "Supabase Auth sign-in still starts from the usual place.",
       href: "/login",
     },
   ];

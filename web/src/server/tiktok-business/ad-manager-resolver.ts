@@ -111,6 +111,7 @@ export type ResolveTikTokAdsManagerCandidatesArgs = {
   singularRow: {
     creativeId: string | null;
     creativeName: string | null;
+    tiktokPostId: string | null;
     creativeUrl: string | null;
     campaignName: string | null;
     subCampaignName: string | null;
@@ -1004,7 +1005,9 @@ function buildCandidateSubtitle(args: {
     args.matchLevel === "exact_item_id"
       ? "Matched by item ID"
       : args.matchLevel === "exact_post_url"
-        ? "Matched by post URL"
+        ? args.singularRow.tiktokPostId
+          ? "Matched by post ID"
+          : "Matched by post URL"
         : "Matched by name";
 
   return uniqueNonEmptyStrings([
@@ -1022,7 +1025,9 @@ function matchResolvedAdGroups(args: {
   singularRow: ResolveTikTokAdsManagerCandidatesArgs["singularRow"];
 }) {
   const exactItemId = args.singularRow.creativeId?.trim() || null;
-  const exactPostVideoId = extractTikTokVideoIdFromUrl(args.singularRow.creativeUrl);
+  const exactPostVideoId =
+    args.singularRow.tiktokPostId?.trim() ||
+    extractTikTokVideoIdFromUrl(args.singularRow.creativeUrl);
   const normalizedCreativeName = isMeaningfulMatchLabel(args.singularRow.creativeName)
     ? normalizeMatchText(args.singularRow.creativeName)
     : "";
@@ -1135,6 +1140,7 @@ export async function resolveTikTokAdsManagerCandidates(
   const creativeSignals = uniqueNonEmptyStrings([
     args.singularRow.creativeId,
     args.singularRow.creativeName,
+    args.singularRow.tiktokPostId,
     args.singularRow.creativeUrl,
   ]);
 

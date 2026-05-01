@@ -21,7 +21,7 @@ npm run db:push
 - Next.js App Router app in `web/`
 - TypeScript, ESLint, and Tailwind
 - Prisma schema for the MVP data model
-- Google auth plumbing with Auth.js
+- Supabase Auth plumbing for the primary sign-in flow
 - Environment variable validation
 - Core server modules for organizations, campaigns, creators, videos, notes, dashboard queries, and external data provider integration
 - Root-level scripts so the workspace behaves like one project
@@ -29,6 +29,6 @@ npm run db:push
 ## Next Product Steps
 
 - connect a real Postgres database
-- add Google OAuth credentials
+- finish Supabase Auth environment setup
 - confirm the real provider endpoints and map them into sync jobs
 - build onboarding, organization selection, and campaign workspace screens
