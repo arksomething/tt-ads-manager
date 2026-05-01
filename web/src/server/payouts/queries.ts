@@ -128,7 +128,6 @@ type DailyAdMetricRow = {
   date: string;
   spend: number;
   impressions: number;
-  videoPlayActions: number;
 };
 
 type DailyCostRow = {
@@ -142,7 +141,6 @@ type DailyCostRow = {
   paidViewsDeducted: number;
   payableViews: number;
   adImpressions: number;
-  adVideoPlayActions: number;
   actualPaidPayouts: number;
 };
 
@@ -215,7 +213,6 @@ export type OrganizationPayoutDashboardData = {
     paidViewsDeducted: number;
     payableViews: number;
     adImpressions: number;
-    adVideoPlayActions: number;
     singularRevenue: number;
     singularProfit: number;
     singularInstalls: number;
@@ -432,8 +429,7 @@ function resolveCampaignCreatorDeal(
     fixedFee: deal?.fixedFee ?? null,
     fixedFeeRecognitionDate: deal?.fixedFeeRecognitionDate ?? null,
     cpmAmount: deal?.cpmAmount ?? DEFAULT_DEAL_CPM_AMOUNT,
-    paidTrafficMetric:
-      deal?.paidTrafficMetric ?? CreatorDealPaidTrafficMetric.VIDEO_PLAY_ACTIONS,
+    paidTrafficMetric: CreatorDealPaidTrafficMetric.IMPRESSIONS,
     deductPaidTraffic: deal?.deductPaidTraffic ?? true,
     viewCapPerVideo: deal?.viewCapPerVideo ?? null,
     viewWindowDays: Math.max(deal?.viewWindowDays ?? DEFAULT_DEAL_VIEW_WINDOW_DAYS, 1),
@@ -453,10 +449,8 @@ function getPerVideoPayableViewCap(deal: ResolvedCampaignCreatorDeal) {
   return (deal.payoutCapPerVideo / deal.cpmAmount) * 1_000;
 }
 
-function getPaidMetricForDeal(deal: Pick<ResolvedCampaignCreatorDeal, "paidTrafficMetric">) {
-  return deal.paidTrafficMetric === CreatorDealPaidTrafficMetric.IMPRESSIONS
-    ? "impressions"
-    : "videoPlayActions";
+function getPaidMetricForDeal(): "impressions" {
+  return "impressions";
 }
 
 function getVideoGroupingKey(video: CampaignCreatorVideoRow) {
@@ -560,7 +554,6 @@ async function getDailyAdMetricsForOrganization(args: {
             metrics: [
               candidate.spendMetric,
               "impressions",
-              "video_play_actions",
             ],
             start_date: args.startDate,
             end_date: args.endDate,
@@ -586,7 +579,6 @@ async function getDailyAdMetricsForOrganization(args: {
             date,
             spend: getFirstNumber([metrics, row], [...candidate.spendKeys]),
             impressions: getFirstNumber([metrics, row], ["impressions"]),
-            videoPlayActions: getFirstNumber([metrics, row], ["video_play_actions"]),
           });
         }
 
@@ -603,7 +595,6 @@ async function getDailyAdMetricsForOrganization(args: {
         if (existing) {
           existing.spend += row.spend;
           existing.impressions += row.impressions;
-          existing.videoPlayActions += row.videoPlayActions;
           continue;
         }
 
@@ -975,7 +966,7 @@ export async function getOrganizationPayoutDashboardData(args: {
     ...singularOverlay.warnings,
   ];
   const hasAnyAdDelivery = dailyAdMetrics.rows.some(
-    (row) => row.spend > 0 || row.impressions > 0 || row.videoPlayActions > 0,
+    (row) => row.spend > 0 || row.impressions > 0,
   );
 
   const snapshotsByVideoId = new Map<string, VideoSnapshotRow[]>();
@@ -1039,7 +1030,7 @@ export async function getOrganizationPayoutDashboardData(args: {
 
   if (shouldSkipExactPaidDeductions) {
     warnings.push(
-      `Exact TikTok paid-view deductions were skipped for this overview because it spans ${paidTimelineScope.creators} creators and ${paidTimelineScope.sourceVideos} TikTok videos, which exceeds the live lookup budget. The dashboard used gross creator views for this broad selection so the page stays responsive.`,
+      `Exact TikTok paid-impression deductions were skipped for this overview because it spans ${paidTimelineScope.creators} creators and ${paidTimelineScope.sourceVideos} TikTok videos, which exceeds the live lookup budget. The dashboard used gross creator views for this broad selection so the page stays responsive.`,
     );
   }
 
@@ -1073,7 +1064,6 @@ export async function getOrganizationPayoutDashboardData(args: {
         paidViewsDeducted: 0,
         payableViews: 0,
         adImpressions: 0,
-        adVideoPlayActions: 0,
         actualPaidPayouts: actualPaidPayoutsByDate.get(dateKey) ?? 0,
       } satisfies DailyCostRow,
     ]),
@@ -1088,7 +1078,6 @@ export async function getOrganizationPayoutDashboardData(args: {
 
     dailyRow.adSpend += adRow.spend;
     dailyRow.adImpressions += adRow.impressions;
-    dailyRow.adVideoPlayActions += adRow.videoPlayActions;
   }
 
   const creatorRows: CreatorCostRow[] = [];
@@ -1157,7 +1146,7 @@ export async function getOrganizationPayoutDashboardData(args: {
               sourceVideoIds: tiktokSourceVideoIds,
               startDate: termStart,
               endDate: termEnd,
-              metric: getPaidMetricForDeal(resolvedDeal),
+              metric: getPaidMetricForDeal(),
             });
 
           for (const warning of paidTimelineResult.warnings) {
@@ -1166,8 +1155,8 @@ export async function getOrganizationPayoutDashboardData(args: {
         } catch (error) {
           creatorWarnings.add(
             error instanceof Error
-              ? `Paid-view deductions could not be loaded for ${campaignCreator.creator.displayName}, so the dashboard used 0 paid deductions for this creator. ${error.message}`
-              : `Paid-view deductions could not be loaded for ${campaignCreator.creator.displayName}, so the dashboard used 0 paid deductions for this creator.`,
+              ? `Paid-impression deductions could not be loaded for ${campaignCreator.creator.displayName}, so the dashboard used 0 paid-impression deductions for this creator. ${error.message}`
+              : `Paid-impression deductions could not be loaded for ${campaignCreator.creator.displayName}, so the dashboard used 0 paid-impression deductions for this creator.`,
           );
         }
       }
@@ -1447,10 +1436,6 @@ export async function getOrganizationPayoutDashboardData(args: {
   );
   const payableViews = dailyRows.reduce((total, row) => total + row.payableViews, 0);
   const adImpressions = dailyRows.reduce((total, row) => total + row.adImpressions, 0);
-  const adVideoPlayActions = dailyRows.reduce(
-    (total, row) => total + row.adVideoPlayActions,
-    0,
-  );
   const actualPaidPayouts = dailyRows.reduce(
     (total, row) => total + row.actualPaidPayouts,
     0,
@@ -1472,7 +1457,6 @@ export async function getOrganizationPayoutDashboardData(args: {
       paidViewsDeducted,
       payableViews,
       adImpressions,
-      adVideoPlayActions,
       singularRevenue: normalizeMoney(
         singularOverlay.rows.reduce((total, row) => total + row.revenue, 0),
       ),

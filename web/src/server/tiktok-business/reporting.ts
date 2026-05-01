@@ -23,7 +23,6 @@ const AD_SPEND_REPORT_CACHE_TTL_MS = 5 * 60 * 1_000;
 
 const paidViewMetricMap = {
   impressions: "impressions",
-  videoPlayActions: "video_play_actions",
 } as const;
 const tiktokReportMetricMap = {
   ...paidViewMetricMap,
@@ -1814,7 +1813,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
     throw new Error("End date must be on or after start date.");
   }
 
-  const metric = args.metric ?? "videoPlayActions";
+  const metric = args.metric ?? "impressions";
   const itemIds = uniqueNonEmptyStrings(args.itemIds ?? []);
   const itemIdSet = itemIds.length > 0 ? new Set(itemIds) : null;
   const startDateString = toDateOnlyString(startDate);
@@ -2441,7 +2440,7 @@ export async function getPaidViewsForItemIdsForOrganization(args: {
     throw new Error("End date must be on or after start date.");
   }
 
-  const metric = args.metric ?? "videoPlayActions";
+  const metric = args.metric ?? "impressions";
   const itemIds = uniqueNonEmptyStrings(args.itemIds);
 
   if (itemIds.length === 0) {
@@ -2657,7 +2656,7 @@ export async function getPaidViewsForSourceVideosForCreatorForOrganization(args:
     throw new Error("End date must be on or after start date.");
   }
 
-  const metric = args.metric ?? "videoPlayActions";
+  const metric = args.metric ?? "impressions";
   const sourceVideoIds = uniqueNonEmptyStrings(args.sourceVideoIds);
 
   if (sourceVideoIds.length === 0) {
@@ -2939,7 +2938,7 @@ export async function getPaidViewTimelineForSourceVideosForCreatorForOrganizatio
     throw new Error("End date must be on or after start date.");
   }
 
-  const metric = args.metric ?? "videoPlayActions";
+  const metric = args.metric ?? "impressions";
   const sourceVideoIds = uniqueNonEmptyStrings(args.sourceVideoIds);
 
   if (sourceVideoIds.length === 0) {

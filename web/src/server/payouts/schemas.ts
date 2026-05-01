@@ -51,7 +51,7 @@ export const upsertCampaignCreatorDealSchema = z
     cpmAmount: optionalCurrencyField.default(1),
     paidTrafficMetric: z
       .nativeEnum(CreatorDealPaidTrafficMetric)
-      .default(CreatorDealPaidTrafficMetric.VIDEO_PLAY_ACTIONS),
+      .default(CreatorDealPaidTrafficMetric.IMPRESSIONS),
     deductPaidTraffic: z.boolean().default(true),
     viewCapPerVideo: optionalIntegerField,
     viewWindowDays: positiveIntegerField.default(30),

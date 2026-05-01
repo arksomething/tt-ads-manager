@@ -451,7 +451,7 @@ model CampaignCreatorDeal {
   fixedFeeRecognitionDate DateTime?
   fixedFeePerVideo        Decimal?                     @db.Decimal(12, 2)
   cpmAmount               Decimal?                     @default(1) @db.Decimal(12, 2)
-  paidTrafficMetric       CreatorDealPaidTrafficMetric @default(VIDEO_PLAY_ACTIONS)
+  paidTrafficMetric       CreatorDealPaidTrafficMetric @default(IMPRESSIONS)
   deductPaidTraffic       Boolean                      @default(true)
   viewCapPerVideo         Int?
   viewWindowDays          Int?                         @default(30)

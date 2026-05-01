@@ -46,7 +46,6 @@ const SUPPORTED_VIDEO_INFO_IDENTITY_TYPES = new Set([
 
 const paidViewMetricMap = {
   impressions: "impressions",
-  videoPlayActions: "video_play_actions",
 } as const;
 
 export type TikTokPaidViewMetric = keyof typeof paidViewMetricMap;

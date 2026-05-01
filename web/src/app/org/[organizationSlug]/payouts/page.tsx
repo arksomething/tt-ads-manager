@@ -272,7 +272,7 @@ export default async function PayoutsPage({
             </h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
               UGC costs are computed from creator deal terms, video snapshot deltas,
-              and TikTok paid-view deductions for Spark-backed posts. Ad costs come
+              and TikTok paid-impression deductions for Spark-backed posts. Ad costs come
               from TikTok reporting, while revenue and performance summary fields come
               from Singular.
             </p>
@@ -389,12 +389,12 @@ export default async function PayoutsPage({
         <SummaryCard
           label="Payable Views"
           value={formatMetricValue(data.summary.payableViews, true)}
-          detail={`${formatMetricValue(data.summary.grossViews, true)} gross less ${formatMetricValue(data.summary.paidViewsDeducted, true)} paid deductions`}
+          detail={`${formatMetricValue(data.summary.grossViews, true)} gross less ${formatMetricValue(data.summary.paidViewsDeducted, true)} paid impressions`}
         />
         <SummaryCard
           label="Ad Delivery"
           value={formatMetricValue(data.summary.adImpressions, true)}
-          detail={`${formatMetricValue(data.summary.adVideoPlayActions, true)} video play actions`}
+          detail="TikTok Ads Manager impressions"
         />
         <SummaryCard
           label="Singular Revenue"
@@ -446,7 +446,7 @@ export default async function PayoutsPage({
                 <th className="pb-3 pr-4 font-medium">Ads</th>
                 <th className="pb-3 pr-4 font-medium">Total</th>
                 <th className="pb-3 pr-4 font-medium">Gross Views</th>
-                <th className="pb-3 pr-4 font-medium">Paid Views</th>
+                <th className="pb-3 pr-4 font-medium">Paid Impressions</th>
                 <th className="pb-3 pr-4 font-medium">Payable Views</th>
                 <th className="pb-3 pr-4 font-medium">Impressions</th>
                 <th className="pb-3 pr-0 font-medium">Paid Out</th>
@@ -558,7 +558,7 @@ export default async function PayoutsPage({
                     {formatMetricValue(row.grossViews, true)} gross
                   </span>
                   <span className="rounded-full border border-white/[0.08] bg-white/[0.05] px-2.5 py-1 text-muted-foreground">
-                    {formatMetricValue(row.paidViewsDeducted, true)} paid deducted
+                    {formatMetricValue(row.paidViewsDeducted, true)} paid impressions deducted
                   </span>
                   <span className="rounded-full border border-[#90FF4D]/20 bg-[#90FF4D]/10 px-2.5 py-1 text-[#D4FFB2]">
                     {formatMetricValue(row.payableViews, true)} payable
@@ -696,11 +696,10 @@ export default async function PayoutsPage({
                     </span>
                     <select
                       className="w-full rounded-[0.9rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
-                      defaultValue={row.deal.paidTrafficMetric}
+                      defaultValue="IMPRESSIONS"
                       disabled={!row.canEditDeal}
                       name="paidTrafficMetric"
                     >
-                      <option value="VIDEO_PLAY_ACTIONS">Video play actions</option>
                       <option value="IMPRESSIONS">Impressions</option>
                     </select>
                   </label>

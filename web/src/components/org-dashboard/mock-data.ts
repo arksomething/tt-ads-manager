@@ -784,11 +784,11 @@ export const placeholderSectionData: Record<
     eyebrow: "Analytics",
     spotlightTitle: "View Tally compares total tracked views against paid TikTok delivery here.",
     spotlightDescription:
-      "The live route pairs tracked TikTok videos with exact Spark-linked paid views so operators can inspect one creator's recent posting window without leaving the dashboard.",
+      "The live route pairs tracked TikTok videos with exact Spark-linked paid impressions so operators can inspect one creator's recent posting window without leaving the dashboard.",
     highlights: ["Recent posts", "Paid video views", "Organic estimate"],
     statCards: [
       { label: "Default range", value: "Last 7 days" },
-      { label: "Paid metric", value: "Video play actions" },
+      { label: "Paid metric", value: "Impressions" },
       { label: "Scope", value: "One creator at a time" },
     ],
     rows: [
@@ -801,7 +801,7 @@ export const placeholderSectionData: Record<
     eyebrow: "Analytics",
     spotlightTitle: "UGC Pay prices creator videos with campaign deal terms.",
     spotlightDescription:
-      "The live route uses View Tally video rows, paid-view deductions, and campaign creator deals to calculate creator and video pay.",
+      "The live route uses View Tally video rows, paid-impression deductions, and campaign creator deals to calculate creator and video pay.",
     highlights: ["Creator pay", "Video breakdown", "Campaign deals"],
     statCards: [
       { label: "Default CPM", value: "$1" },

@@ -605,13 +605,13 @@ async function ViewTallyPageContent({
         />
         <MetricCard
           iconName="integrations"
-          label="Paid Views"
+          label="Paid Impressions"
           tone="blue"
           value={formatCompactMetricValue(data.totals.paidViews)}
         />
         <MetricCard
           iconName="viralVideos"
-          label="Unpaid Views"
+          label="Net Views"
           tone="orange"
           value={formatCompactMetricValue(data.totals.unpaidViews)}
         />

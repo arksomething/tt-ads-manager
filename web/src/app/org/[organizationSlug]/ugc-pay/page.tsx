@@ -107,7 +107,7 @@ function formatDealLabel(creator: UgcPayCreatorRow) {
 function getPaidStatusLabel(video: UgcPayVideoRow) {
   switch (video.paidStatus) {
     case "yes":
-      return "Paid deducted";
+      return "Paid impressions deducted";
     case "no":
       return "Organic";
     case "unsupported":
@@ -201,7 +201,7 @@ function CreatorPayRow({ creator }: { creator: UgcPayCreatorRow }) {
             {formatPayableViewsWithGross(creator)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {formatMetricValue(creator.paidViewsDeducted, true)} paid removed
+            {formatMetricValue(creator.paidViewsDeducted, true)} paid impressions removed
           </p>
         </div>
 
@@ -252,7 +252,7 @@ function CreatorPayRow({ creator }: { creator: UgcPayCreatorRow }) {
                 <tr className="border-b border-white/[0.08] text-[0.62rem] uppercase text-muted-foreground">
                   <th className="px-3 py-3 font-medium">Video</th>
                   <th className="px-3 py-3 font-medium">Gross</th>
-                  <th className="px-3 py-3 font-medium">Paid</th>
+                  <th className="px-3 py-3 font-medium">Paid Impressions</th>
                   <th className="px-3 py-3 font-medium">Payable</th>
                   <th className="px-3 py-3 font-medium">Fixed</th>
                   <th className="px-3 py-3 font-medium">CPM</th>
@@ -449,7 +449,7 @@ export default async function UgcPayPage({
           value={formatMoney(data.summary.totalPay)}
         />
         <SummaryCard
-          detail={`${formatMetricValue(data.summary.grossViews, true)} gross less ${formatMetricValue(data.summary.paidViewsDeducted, true)} paid`}
+          detail={`${formatMetricValue(data.summary.grossViews, true)} gross less ${formatMetricValue(data.summary.paidViewsDeducted, true)} paid impressions`}
           iconName="overview"
           label="Payable Views"
           value={formatPayableViewsWithGross(data.summary)}
@@ -519,7 +519,7 @@ export default async function UgcPayPage({
                   <th className="px-3 py-3 font-medium">Video</th>
                   <th className="px-3 py-3 font-medium">Creator</th>
                   <th className="px-3 py-3 font-medium">Gross</th>
-                  <th className="px-3 py-3 font-medium">Paid</th>
+                  <th className="px-3 py-3 font-medium">Paid Impressions</th>
                   <th className="px-3 py-3 font-medium">Payable</th>
                   <th className="px-3 py-3 font-medium">Fixed</th>
                   <th className="px-3 py-3 font-medium">CPM Pay</th>

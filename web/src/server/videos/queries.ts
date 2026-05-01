@@ -2000,7 +2000,7 @@ export async function getOrganizationViewTallyData(args: {
             errorMessage:
               error instanceof Error
                 ? error.message
-                : "Could not resolve paid TikTok views for these videos right now.",
+                : "Could not resolve paid TikTok impressions for these videos right now.",
             lookupDetails: [],
             rows: [],
             unresolvedNonPostBackedGroupCount: 0,
