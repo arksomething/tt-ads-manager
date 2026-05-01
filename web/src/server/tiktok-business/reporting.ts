@@ -26,8 +26,16 @@ const paidViewMetricMap = {
 } as const;
 const tiktokReportMetricMap = {
   ...paidViewMetricMap,
+  clicks: "clicks",
+  conversions: "conversion",
   spend: "spend",
 } as const;
+const campaignPerformanceMetrics = [
+  "impressions",
+  "spend",
+  "clicks",
+  "conversions",
+] as const;
 const basePaidReportDimensions = ["stat_time_day", "ad_id", "item_id"] as const;
 const campaignPaidReportDimensions = [
   "stat_time_day",
@@ -100,6 +108,7 @@ type TikTokPaidViewsRow = {
   itemId: string | null;
   statDate: string | null;
   metricValue: number;
+  metricValues?: Partial<Record<TikTokReportMetric, number>>;
   raw: Record<string, unknown>;
 };
 
@@ -205,6 +214,9 @@ export type TikTokCampaignVideoViewRow = {
   tiktokCampaignId: string | null;
   tiktokCampaignName: string | null;
   paidViews: number;
+  spend: number;
+  clicks: number;
+  conversions: number;
   reportRowCount: number;
   matchedAdIds: string[];
   statDates: string[];
@@ -217,6 +229,9 @@ export type TikTokCampaignVideoViewsResult = {
   startDate: string;
   endDate: string;
   totalPaidViews: number;
+  totalSpend: number;
+  totalClicks: number;
+  totalConversions: number;
   reportRowCount: number;
   rows: TikTokCampaignVideoViewRow[];
   warnings: string[];
@@ -255,13 +270,21 @@ type PaidReportFetchResult = {
   warnings: string[];
 };
 
+type PaidReportMetricsFetchResult = {
+  rows: TikTokIntegratedReportRow[];
+  apiMetricNames: Partial<
+    Record<TikTokReportMetric, (typeof tiktokReportMetricMap)[TikTokReportMetric]>
+  >;
+  warnings: string[];
+};
+
 type TimedCacheValue<T> = {
   expiresAt: number;
   value: T;
 };
 
-const paidReportCache = new Map<string, TimedCacheValue<PaidReportFetchResult>>();
-const pendingPaidReportCache = new Map<string, Promise<PaidReportFetchResult>>();
+const paidReportCache = new Map<string, TimedCacheValue<PaidReportMetricsFetchResult>>();
+const pendingPaidReportCache = new Map<string, Promise<PaidReportMetricsFetchResult>>();
 const adSpendReportCache = new Map<string, TimedCacheValue<TikTokAdSpendReport>>();
 const pendingAdSpendReportCache = new Map<string, Promise<TikTokAdSpendReport>>();
 
@@ -317,12 +340,12 @@ function getPaidReportCacheKey(args: {
   advertiserId: string;
   startDate: string;
   endDate: string;
-  metric: TikTokReportMetric;
+  metrics: readonly TikTokReportMetric[];
   dimensions?: readonly string[];
 }) {
   return [
     args.advertiserId,
-    args.metric,
+    [...args.metrics].sort().join(","),
     (args.dimensions ?? basePaidReportDimensions).join(","),
     args.startDate,
     args.endDate,
@@ -498,6 +521,43 @@ function normalizeReportRow(row: TikTokIntegratedReportRow, apiMetricName: strin
     statDate: getFirstString([dimensions, row], ["stat_time_day", "statTimeDay"]),
     metricValue: getFirstNumber([metrics, row], [apiMetricName]),
     raw: row,
+  };
+}
+
+function normalizeReportMetricsRow(args: {
+  row: TikTokIntegratedReportRow;
+  apiMetricNames: PaidReportMetricsFetchResult["apiMetricNames"];
+  primaryMetric: TikTokReportMetric;
+}): TikTokPaidViewsRow {
+  const dimensions = isRecord(args.row.dimensions) ? args.row.dimensions : null;
+  const metrics = isRecord(args.row.metrics) ? args.row.metrics : null;
+  const metricValues: Partial<Record<TikTokReportMetric, number>> = {};
+
+  for (const metric of Object.keys(args.apiMetricNames) as TikTokReportMetric[]) {
+    const apiMetricName = args.apiMetricNames[metric];
+
+    if (!apiMetricName) {
+      continue;
+    }
+
+    metricValues[metric] = getFirstNumber([metrics, args.row], [apiMetricName]);
+  }
+
+  return {
+    campaignId: getFirstString([dimensions, args.row], ["campaign_id", "campaignId"]),
+    campaignName: getFirstString([dimensions, args.row], [
+      "campaign_name",
+      "campaignName",
+    ]),
+    adId: getFirstString([dimensions, args.row], ["ad_id", "adId"]),
+    itemId: getFirstString([dimensions, args.row], ["item_id", "itemId"]),
+    statDate: getFirstString([dimensions, args.row], [
+      "stat_time_day",
+      "statTimeDay",
+    ]),
+    metricValue: metricValues[args.primaryMetric] ?? 0,
+    metricValues,
+    raw: args.row,
   };
 }
 
@@ -1524,6 +1584,34 @@ async function fetchPaidReportRows(args: {
   metric: TikTokReportMetric;
   dimensions?: readonly string[];
 }) {
+  const result = await fetchPaidReportRowsForMetrics({
+    ...args,
+    metrics: [args.metric],
+  });
+  const apiMetricName = result.apiMetricNames[args.metric];
+
+  if (!apiMetricName) {
+    throw new Error(`TikTok report metric ${args.metric} was not returned.`);
+  }
+
+  return {
+    rows: result.rows,
+    apiMetricName,
+    warnings: result.warnings,
+  } satisfies PaidReportFetchResult;
+}
+
+async function fetchPaidReportRowsForMetrics(args: {
+  advertiserId: string;
+  accessToken: string;
+  startDate: string;
+  endDate: string;
+  metrics: readonly TikTokReportMetric[];
+  dimensions?: readonly string[];
+}): Promise<PaidReportMetricsFetchResult> {
+  const metrics = [
+    ...new Set(args.metrics.filter((metric) => metric in tiktokReportMetricMap)),
+  ];
   const cacheKey = getPaidReportCacheKey(args);
   const cached = readPaidReportCache(cacheKey);
 
@@ -1538,10 +1626,17 @@ async function fetchPaidReportRows(args: {
   }
 
   const requestPromise = (async () => {
-    const apiMetricName = tiktokReportMetricMap[args.metric];
+    const apiMetricNames = Object.fromEntries(
+      metrics.map((metric) => [metric, tiktokReportMetricMap[metric]]),
+    ) as PaidReportMetricsFetchResult["apiMetricNames"];
+    const apiMetrics = metrics.map((metric) => tiktokReportMetricMap[metric]);
     const dimensions = args.dimensions ?? basePaidReportDimensions;
     const rows: TikTokIntegratedReportRow[] = [];
     const warnings: string[] = [];
+
+    if (apiMetrics.length === 0) {
+      throw new Error("At least one TikTok report metric is required.");
+    }
 
     const startBoundary = parseDateInput(args.startDate, "start date");
     const endBoundary = parseDateInput(args.endDate, "end date");
@@ -1568,7 +1663,7 @@ async function fetchPaidReportRows(args: {
             advertiser_id: args.advertiserId,
             data_level: "AUCTION_AD",
             dimensions,
-            metrics: [apiMetricName],
+            metrics: apiMetrics,
             start_date: toDateOnlyString(windowStart),
             end_date: toDateOnlyString(windowEnd),
             page,
@@ -1596,9 +1691,9 @@ async function fetchPaidReportRows(args: {
       windowStart = addUtcDays(windowEnd, 1);
     }
 
-    const result: PaidReportFetchResult = {
+    const result: PaidReportMetricsFetchResult = {
       rows,
-      apiMetricName,
+      apiMetricNames,
       warnings,
     };
 
@@ -1807,12 +1902,41 @@ async function fetchCampaignAwarePaidReportRows(args: {
   }
 }
 
+async function fetchCampaignAwarePaidReportRowsForMetrics(args: {
+  advertiserId: string;
+  accessToken: string;
+  startDate: string;
+  endDate: string;
+  metrics: readonly TikTokReportMetric[];
+}) {
+  try {
+    return await fetchPaidReportRowsForMetrics({
+      ...args,
+      dimensions: campaignPaidReportDimensions,
+    });
+  } catch {
+    const fallbackReport = await fetchPaidReportRowsForMetrics({
+      ...args,
+      dimensions: basePaidReportDimensions,
+    });
+
+    return {
+      ...fallbackReport,
+      warnings: [
+        ...fallbackReport.warnings,
+        "TikTok did not return campaign_id as a report dimension, so campaign labels were resolved from ad metadata when possible.",
+      ],
+    };
+  }
+}
+
 export async function getTikTokCampaignVideoViewsForOrganization(args: {
   organizationSlug: string;
   itemIds?: string[];
   startDate: QueryDateInput;
   endDate: QueryDateInput;
   metric?: TikTokPaidViewMetric;
+  includePerformanceMetrics?: boolean;
 }): Promise<TikTokCampaignVideoViewsResult> {
   const membership = await requireOrganizationMembership(args.organizationSlug);
   const startDate = parseDateInput(args.startDate, "start date");
@@ -1848,6 +1972,9 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       startDate: startDateString,
       endDate: endDateString,
       totalPaidViews: 0,
+      totalSpend: 0,
+      totalClicks: 0,
+      totalConversions: 0,
       reportRowCount: 0,
       rows: [],
       warnings: [
@@ -1862,15 +1989,58 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
     throw new Error("TikTok advertiser credentials are unavailable.");
   }
 
-  const report = await fetchCampaignAwarePaidReportRows({
-    advertiserId,
-    accessToken,
-    startDate: startDateString,
-    endDate: endDateString,
-    metric,
-  });
+  const report =
+    args.includePerformanceMetrics === true
+      ? await fetchCampaignAwarePaidReportRowsForMetrics({
+          advertiserId,
+          accessToken,
+          startDate: startDateString,
+          endDate: endDateString,
+          metrics: campaignPerformanceMetrics,
+        }).catch(async (error) => {
+          const fallbackReport = await fetchCampaignAwarePaidReportRows({
+            advertiserId,
+            accessToken,
+            startDate: startDateString,
+            endDate: endDateString,
+            metric,
+          });
+
+          return {
+            rows: fallbackReport.rows,
+            apiMetricNames: {
+              [metric]: fallbackReport.apiMetricName,
+            },
+            warnings: [
+              ...fallbackReport.warnings,
+              error instanceof Error
+                ? `TikTok rejected the expanded campaign metrics, so only impressions are shown: ${error.message}`
+                : "TikTok rejected the expanded campaign metrics, so only impressions are shown.",
+            ],
+          } satisfies PaidReportMetricsFetchResult;
+        })
+      : await fetchCampaignAwarePaidReportRows({
+          advertiserId,
+          accessToken,
+          startDate: startDateString,
+          endDate: endDateString,
+          metric,
+        }).then(
+          (singleMetricReport) =>
+            ({
+              rows: singleMetricReport.rows,
+              apiMetricNames: {
+                [metric]: singleMetricReport.apiMetricName,
+              },
+              warnings: singleMetricReport.warnings,
+            }) satisfies PaidReportMetricsFetchResult,
+        );
   const normalizedRows = report.rows.map((row) =>
-    normalizeReportRow(row, report.apiMetricName),
+    normalizeReportMetricsRow({
+      row,
+      apiMetricNames: report.apiMetricNames,
+      primaryMetric: metric,
+    }),
   );
   const rowsNeedAdMetadata = normalizedRows.some(
     (row) => row.adId && (!row.itemId || !row.campaignId),
@@ -1977,6 +2147,9 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       tiktokCampaignId: string | null;
       tiktokCampaignName: string | null;
       paidViews: number;
+      spend: number;
+      clicks: number;
+      conversions: number;
       reportRowCount: number;
       matchedAdIds: Set<string>;
       statDates: Set<string>;
@@ -2020,6 +2193,9 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
         tiktokCampaignId,
         tiktokCampaignName,
         paidViews: 0,
+        spend: 0,
+        clicks: 0,
+        conversions: 0,
         reportRowCount: 0,
         matchedAdIds: new Set<string>(),
         statDates: new Set<string>(),
@@ -2040,6 +2216,9 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
 
     group.tiktokCampaignName ??= tiktokCampaignName;
     group.paidViews += row.metricValue;
+    group.spend += row.metricValues?.spend ?? 0;
+    group.clicks += row.metricValues?.clicks ?? 0;
+    group.conversions += row.metricValues?.conversions ?? 0;
     group.reportRowCount += 1;
 
     if (row.adId) {
@@ -2077,6 +2256,9 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
         tiktokCampaignId: row.tiktokCampaignId,
         tiktokCampaignName: row.tiktokCampaignName,
         paidViews: row.paidViews,
+        spend: row.spend,
+        clicks: row.clicks,
+        conversions: row.conversions,
         reportRowCount: row.reportRowCount,
         matchedAdIds,
         statDates: [...row.statDates].sort(),
@@ -2098,6 +2280,9 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
     startDate: startDateString,
     endDate: endDateString,
     totalPaidViews: rows.reduce((total, row) => total + row.paidViews, 0),
+    totalSpend: rows.reduce((total, row) => total + row.spend, 0),
+    totalClicks: rows.reduce((total, row) => total + row.clicks, 0),
+    totalConversions: rows.reduce((total, row) => total + row.conversions, 0),
     reportRowCount: normalizedRows.length,
     rows,
     warnings: uniqueNonEmptyStrings([

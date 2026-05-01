@@ -57,6 +57,16 @@ const campaignCompactNumberFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
   notation: "compact",
 });
+const campaignCurrencyFormatter = new Intl.NumberFormat("en-US", {
+  currency: "USD",
+  maximumFractionDigits: 2,
+  style: "currency",
+});
+const campaignPercentFormatter = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 2,
+  minimumFractionDigits: 2,
+  style: "percent",
+});
 const campaignListFormatter = new Intl.ListFormat("en-US", {
   style: "long",
   type: "conjunction",
@@ -192,6 +202,45 @@ function formatCampaignCompactMetric(
   }
 
   return campaignCompactNumberFormatter.format(value);
+}
+
+function formatCampaignCurrency(
+  value: number | null | undefined,
+  fallback = "--",
+) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return campaignCurrencyFormatter.format(value);
+}
+
+function formatCampaignPercent(
+  value: number | null | undefined,
+  fallback = "--",
+) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return campaignPercentFormatter.format(value);
+}
+
+function getCampaignRatio(
+  numerator: number | null | undefined,
+  denominator: number | null | undefined,
+) {
+  if (
+    typeof numerator !== "number" ||
+    typeof denominator !== "number" ||
+    !Number.isFinite(numerator) ||
+    !Number.isFinite(denominator) ||
+    denominator <= 0
+  ) {
+    return null;
+  }
+
+  return numerator / denominator;
 }
 
 function getVideoTitle(row: CampaignTikTokReconciliationRow) {
@@ -706,7 +755,7 @@ export default async function CampaignsPage({
           </form>
         </div>
 
-        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
           <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
             <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
               Paid video rows
@@ -727,6 +776,28 @@ export default async function CampaignsPage({
             </p>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
               Ads Manager impressions matched to those paid videos
+            </p>
+          </article>
+          <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
+            <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+              TikTok cost
+            </p>
+            <p className="mt-2 text-xl font-medium text-foreground">
+              {formatCampaignCurrency(reconciliation.totals.tiktokSpend)}
+            </p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              Spend reported by TikTok Ads Manager in this window
+            </p>
+          </article>
+          <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
+            <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+              TikTok results
+            </p>
+            <p className="mt-2 text-xl font-medium text-foreground">
+              {formatCampaignMetric(reconciliation.totals.tiktokConversions)}
+            </p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              Ads Manager conversion result count for the selected event
             </p>
           </article>
           <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
@@ -755,32 +826,46 @@ export default async function CampaignsPage({
 
         {reconciliation.campaignTotals.length > 0 ? (
           <div className="mt-5 grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
-            {reconciliation.campaignTotals.map((campaignTotal) => (
-              <article
-                className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.18] p-4"
-                key={campaignTotal.key}
-              >
-                <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
-                  TikTok campaign total
-                </p>
-                <h3 className="mt-2 truncate text-sm font-medium text-foreground">
-                  {campaignTotal.tiktokCampaignName ??
-                    (campaignTotal.tiktokCampaignId
-                      ? `TikTok campaign ${campaignTotal.tiktokCampaignId}`
-                      : "Unknown TikTok campaign")}
-                </h3>
-                <p className="mt-2 text-lg font-medium text-foreground">
-                  {formatCampaignMetric(campaignTotal.impressions)} impressions
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {formatCampaignMetric(campaignTotal.videos)} video
-                  {campaignTotal.videos === 1 ? "" : "s"}
-                  {campaignTotal.tiktokCampaignId
-                    ? ` / ID ${campaignTotal.tiktokCampaignId}`
-                    : ""}
-                </p>
-              </article>
-            ))}
+            {reconciliation.campaignTotals.map((campaignTotal) => {
+              const costPerResult = getCampaignRatio(
+                campaignTotal.spend,
+                campaignTotal.conversions,
+              );
+
+              return (
+                <article
+                  className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.18] p-4"
+                  key={campaignTotal.key}
+                >
+                  <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+                    TikTok campaign total
+                  </p>
+                  <h3 className="mt-2 truncate text-sm font-medium text-foreground">
+                    {campaignTotal.tiktokCampaignName ??
+                      (campaignTotal.tiktokCampaignId
+                        ? `TikTok campaign ${campaignTotal.tiktokCampaignId}`
+                        : "Unknown TikTok campaign")}
+                  </h3>
+                  <p className="mt-2 text-lg font-medium text-foreground">
+                    {formatCampaignMetric(campaignTotal.impressions)} impressions
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {formatCampaignCurrency(campaignTotal.spend)} cost /{" "}
+                    {formatCampaignMetric(campaignTotal.conversions)} results
+                    {costPerResult !== null
+                      ? ` / ${formatCampaignCurrency(costPerResult)} CPA`
+                      : ""}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {formatCampaignMetric(campaignTotal.videos)} video
+                    {campaignTotal.videos === 1 ? "" : "s"}
+                    {campaignTotal.tiktokCampaignId
+                      ? ` / ID ${campaignTotal.tiktokCampaignId}`
+                      : ""}
+                  </p>
+                </article>
+              );
+            })}
           </div>
         ) : null}
 
@@ -808,12 +893,15 @@ export default async function CampaignsPage({
         <div className="mt-5 overflow-hidden rounded-[1.15rem] border border-white/[0.08] bg-black/[0.16]">
           {reconciliation.rows.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="min-w-[1080px] w-full border-collapse text-left text-sm">
+              <table className="min-w-[1500px] w-full border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-white/[0.08] text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
                     <th className="px-4 py-3 font-medium">Paid video</th>
                     <th className="px-4 py-3 font-medium">TikTok campaign</th>
                     <th className="px-4 py-3 text-right font-medium">TikTok impressions</th>
+                    <th className="px-4 py-3 text-right font-medium">Cost</th>
+                    <th className="px-4 py-3 text-right font-medium">Clicks / CTR</th>
+                    <th className="px-4 py-3 text-right font-medium">Results / CPA</th>
                     <th className="px-4 py-3 font-medium">Local match</th>
                     <th className="px-4 py-3 text-right font-medium">App views</th>
                     <th className="px-4 py-3 font-medium">Evidence</th>
@@ -827,6 +915,22 @@ export default async function CampaignsPage({
                     const videoHref = row.videoUrl;
                     const videoLinkSourceLabel = getVideoLinkSourceLabel(
                       row.videoUrlSource,
+                    );
+                    const ctr = getCampaignRatio(
+                      row.tiktokClicks,
+                      row.tiktokImpressions,
+                    );
+                    const cpm =
+                      row.tiktokImpressions > 0
+                        ? (row.tiktokSpend / row.tiktokImpressions) * 1000
+                        : null;
+                    const costPerResult = getCampaignRatio(
+                      row.tiktokSpend,
+                      row.tiktokConversions,
+                    );
+                    const resultRate = getCampaignRatio(
+                      row.tiktokConversions,
+                      row.tiktokImpressions,
                     );
 
                     return (
@@ -902,6 +1006,33 @@ export default async function CampaignsPage({
                           </p>
                           <p className="mt-1 text-xs text-muted-foreground">
                             {formatCampaignCompactMetric(row.tiktokImpressions)}
+                          </p>
+                        </td>
+                        <td className="px-4 py-4 text-right">
+                          <p className="font-medium text-foreground">
+                            {formatCampaignCurrency(row.tiktokSpend)}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {formatCampaignCurrency(cpm)} CPM
+                          </p>
+                        </td>
+                        <td className="px-4 py-4 text-right">
+                          <p className="font-medium text-foreground">
+                            {formatCampaignMetric(row.tiktokClicks)}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {formatCampaignPercent(ctr)} CTR
+                          </p>
+                        </td>
+                        <td className="px-4 py-4 text-right">
+                          <p className="font-medium text-foreground">
+                            {formatCampaignMetric(row.tiktokConversions)}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {formatCampaignCurrency(costPerResult)} CPA
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {formatCampaignPercent(resultRate)} result rate
                           </p>
                         </td>
                         <td className="px-4 py-4">
