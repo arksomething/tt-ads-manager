@@ -21,6 +21,7 @@ const DEFAULT_DEAL_CURRENCY = "USD";
 const DEFAULT_DEAL_CPM_AMOUNT = 1;
 const DEFAULT_DEAL_VIEW_WINDOW_DAYS = 30;
 const DEFAULT_DEAL_PAYOUT_CAP_PER_VIDEO = 100;
+const DEFAULT_REPORT_TIME_ZONE = "America/New_York";
 const VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD = 100;
 
 type CampaignCreatorUgcPayRow = {
@@ -153,6 +154,7 @@ export type OrganizationUgcPayData = {
   selectedCampaignLabel: string | null;
   startDate: string;
   endDate: string;
+  reportTimeZone: string;
   warnings: string[];
   errorMessage: string | null;
   summary: {
@@ -185,13 +187,179 @@ function toDateOnlyString(value: Date) {
   return value.toISOString().slice(0, 10);
 }
 
+function toDateOnlyStringInTimeZone(value: Date, timeZone: string) {
+  const parts = getDateTimePartsInTimeZone(value, timeZone);
+  return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
 function parseDateOnly(value: string) {
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function parseDateOnlyParts(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day] = match;
+
+  return {
+    year: Number(year),
+    month: Number(month),
+    day: Number(day),
+  };
+}
+
 function startOfUtcDay(value: Date) {
   return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
+}
+
+function addDateOnlyDays(value: string, days: number) {
+  const parts = parseDateOnlyParts(value);
+
+  if (!parts) {
+    return null;
+  }
+
+  const nextValue = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  nextValue.setUTCDate(nextValue.getUTCDate() + days);
+  return toDateOnlyString(nextValue);
+}
+
+function getReportTimeZone() {
+  const configuredTimeZone =
+    process.env.UGC_PAY_REPORT_TIME_ZONE?.trim() || DEFAULT_REPORT_TIME_ZONE;
+
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: configuredTimeZone }).format(
+      new Date(),
+    );
+    return configuredTimeZone;
+  } catch {
+    return DEFAULT_REPORT_TIME_ZONE;
+  }
+}
+
+function getDateTimePartsInTimeZone(value: Date, timeZone: string) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = Object.fromEntries(
+    formatter
+      .formatToParts(value)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)]),
+  );
+
+  return {
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    hour: parts.hour,
+    minute: parts.minute,
+    second: parts.second,
+  };
+}
+
+function getTimeZoneOffsetMs(value: Date, timeZone: string) {
+  const parts = getDateTimePartsInTimeZone(value, timeZone);
+  const asUtc = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second,
+  );
+
+  return asUtc - value.getTime();
+}
+
+function zonedDateTimeToUtc(args: {
+  year: number;
+  month: number;
+  day: number;
+  hour?: number;
+  minute?: number;
+  second?: number;
+  timeZone: string;
+}) {
+  const utcWallTime = Date.UTC(
+    args.year,
+    args.month - 1,
+    args.day,
+    args.hour ?? 0,
+    args.minute ?? 0,
+    args.second ?? 0,
+  );
+  let resolved = new Date(utcWallTime);
+
+  for (let index = 0; index < 4; index += 1) {
+    const offset = getTimeZoneOffsetMs(resolved, args.timeZone);
+    const nextResolved = new Date(utcWallTime - offset);
+
+    if (Math.abs(nextResolved.getTime() - resolved.getTime()) < 1_000) {
+      return nextResolved;
+    }
+
+    resolved = nextResolved;
+  }
+
+  return resolved;
+}
+
+function startOfReportTimeZoneDay(value: string, timeZone: string) {
+  const parts = parseDateOnlyParts(value);
+
+  if (!parts) {
+    return null;
+  }
+
+  return zonedDateTimeToUtc({
+    ...parts,
+    timeZone,
+  });
+}
+
+function getReportDateRangeBounds(args: {
+  startDate: string;
+  endDate: string;
+  timeZone: string;
+}) {
+  const endExclusiveDate = addDateOnlyDays(args.endDate, 1);
+
+  if (!endExclusiveDate) {
+    return null;
+  }
+
+  const start = startOfReportTimeZoneDay(args.startDate, args.timeZone);
+  const endExclusive = startOfReportTimeZoneDay(endExclusiveDate, args.timeZone);
+
+  return start && endExclusive ? { start, endExclusive } : null;
+}
+
+function getVideoPostedAt(row: ViewTallyListItem) {
+  return row.publishedAt ?? row.createdAt ?? null;
+}
+
+function isVideoPostedInReportDateRange(args: {
+  row: ViewTallyListItem;
+  start: Date;
+  endExclusive: Date;
+}) {
+  const postedAt = getVideoPostedAt(args.row);
+
+  return postedAt ? postedAt >= args.start && postedAt < args.endExclusive : false;
 }
 
 function getDateOnlySearchParam(
@@ -207,14 +375,16 @@ function getDateOnlySearchParam(
   return rawValue;
 }
 
-function getDefaultReportDate() {
-  const date = new Date();
-  date.setUTCDate(date.getUTCDate() - 1);
-  return toDateOnlyString(date);
+function getDefaultReportDate(timeZone: string) {
+  const reportToday = toDateOnlyStringInTimeZone(new Date(), timeZone);
+  return addDateOnlyDays(reportToday, -1) ?? reportToday;
 }
 
-function getSelectedDateRange(searchParams: DashboardSearchParams | undefined) {
-  const fallbackDate = getDefaultReportDate();
+function getSelectedDateRange(
+  searchParams: DashboardSearchParams | undefined,
+  timeZone: string,
+) {
+  const fallbackDate = getDefaultReportDate(timeZone);
   const startDate = getDateOnlySearchParam(searchParams, "startDate") ?? fallbackDate;
   const endDate = getDateOnlySearchParam(searchParams, "endDate") ?? fallbackDate;
 
@@ -508,6 +678,7 @@ function getEmptyData(args: {
   selectedCampaignLabel: string | null;
   startDate: string;
   endDate: string;
+  reportTimeZone: string;
   warnings?: string[];
   errorMessage?: string | null;
 }): OrganizationUgcPayData {
@@ -517,6 +688,7 @@ function getEmptyData(args: {
     selectedCampaignLabel: args.selectedCampaignLabel,
     startDate: args.startDate,
     endDate: args.endDate,
+    reportTimeZone: args.reportTimeZone,
     warnings: args.warnings ?? [],
     errorMessage: args.errorMessage ?? null,
     summary: {
@@ -554,17 +726,27 @@ export async function getOrganizationUgcPayData(args: {
     campaignOptions.find((campaign) => campaign.id === requestedCampaignId) ??
     campaignOptions[0] ??
     null;
-  const { startDate, endDate } = getSelectedDateRange(args.searchParams);
+  const reportTimeZone = getReportTimeZone();
+  const { startDate, endDate } = getSelectedDateRange(
+    args.searchParams,
+    reportTimeZone,
+  );
   const start = parseDateOnly(startDate);
   const end = parseDateOnly(endDate);
+  const reportDateBounds = getReportDateRangeBounds({
+    startDate,
+    endDate,
+    timeZone: reportTimeZone,
+  });
 
-  if (!start || !end) {
+  if (!start || !end || !reportDateBounds) {
     return getEmptyData({
       campaignOptions,
       selectedCampaignId: selectedCampaign?.id ?? null,
       selectedCampaignLabel: selectedCampaign?.label ?? null,
       startDate,
       endDate,
+      reportTimeZone,
       errorMessage: "The selected date range was invalid.",
     });
   }
@@ -576,6 +758,7 @@ export async function getOrganizationUgcPayData(args: {
       selectedCampaignLabel: null,
       startDate,
       endDate,
+      reportTimeZone,
       warnings: ["Create a campaign before running UGC pay."],
     });
   }
@@ -663,6 +846,13 @@ export async function getOrganizationUgcPayData(args: {
     includeAdSpend: false,
   });
   const warnings = [...viewTallyData.warnings];
+  const postedInRangeRows = viewTallyData.rows.filter((row) =>
+    isVideoPostedInReportDateRange({
+      row,
+      start: reportDateBounds.start,
+      endExclusive: reportDateBounds.endExclusive,
+    }),
+  );
   let unmatchedVideos = 0;
 
   if (viewTallyData.rows.length >= VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD) {
@@ -691,7 +881,7 @@ export async function getOrganizationUgcPayData(args: {
     }
   }
 
-  for (const row of viewTallyData.rows) {
+  for (const row of postedInRangeRows) {
     const campaignCreator = getCampaignCreatorForViewTallyRow({
       row,
       byHandle,
@@ -762,6 +952,7 @@ export async function getOrganizationUgcPayData(args: {
     selectedCampaignLabel: selectedCampaign.label,
     startDate: viewTallyData.startDate,
     endDate: viewTallyData.endDate,
+    reportTimeZone,
     warnings: [...new Set(warnings)],
     errorMessage: viewTallyData.errorMessage,
     summary: {

@@ -24,7 +24,11 @@ import {
   updateCampaignForOrganization,
   updateCampaignMemberRole,
 } from "@/server/campaigns/mutations";
-import { getCampaignWorkspace } from "@/server/campaigns/queries";
+import {
+  getCampaignTikTokVideoReconciliation,
+  getCampaignWorkspace,
+  type CampaignTikTokReconciliationRow,
+} from "@/server/campaigns/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +51,11 @@ const campaignDateFormatter = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
   year: "numeric",
   timeZone: "UTC",
+});
+const campaignNumberFormatter = new Intl.NumberFormat("en-US");
+const campaignCompactNumberFormatter = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 1,
+  notation: "compact",
 });
 const campaignListFormatter = new Intl.ListFormat("en-US", {
   style: "long",
@@ -91,6 +100,55 @@ function createCampaignHref(args: {
   return query ? `${baseHref}?${query}` : baseHref;
 }
 
+function toDateOnlyString(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
+function getDefaultReconciliationStartDate() {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() - 6);
+  return toDateOnlyString(date);
+}
+
+function getDefaultReconciliationEndDate() {
+  return toDateOnlyString(new Date());
+}
+
+function getReconciliationDateRange(searchParams: DashboardSearchParams) {
+  const fallbackStartDate = getDefaultReconciliationStartDate();
+  const fallbackEndDate = getDefaultReconciliationEndDate();
+  const startDate = getSearchParamValue(searchParams, "startDate");
+  const endDate = getSearchParamValue(searchParams, "endDate");
+  const normalizedStartDate =
+    startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate)
+      ? startDate
+      : fallbackStartDate;
+  const normalizedEndDate =
+    endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate)
+      ? endDate
+      : fallbackEndDate;
+
+  if (normalizedEndDate < normalizedStartDate) {
+    return {
+      startDate: fallbackStartDate,
+      endDate: fallbackEndDate,
+    };
+  }
+
+  return {
+    startDate: normalizedStartDate,
+    endDate: normalizedEndDate,
+  };
+}
+
+function getCampaignSearchValue(searchParams: DashboardSearchParams) {
+  return getSearchParamValue(searchParams, "campaigns");
+}
+
+function getActiveCampaignSearchValue(searchParams: DashboardSearchParams) {
+  return getSearchParamValue(searchParams, "campaign");
+}
+
 function getActionErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong.";
 }
@@ -115,6 +173,98 @@ function formatCampaignDateLabel(
   }
 
   return campaignDateFormatter.format(date);
+}
+
+function formatCampaignMetric(value: number | null | undefined, fallback = "--") {
+  if (typeof value !== "number") {
+    return fallback;
+  }
+
+  return campaignNumberFormatter.format(value);
+}
+
+function formatCampaignCompactMetric(
+  value: number | null | undefined,
+  fallback = "--",
+) {
+  if (typeof value !== "number") {
+    return fallback;
+  }
+
+  return campaignCompactNumberFormatter.format(value);
+}
+
+function getVideoTitle(row: CampaignTikTokReconciliationRow) {
+  const title = row.titleOrCaption?.trim();
+  return title && title.length > 0 ? title : `${row.creatorName} on TikTok`;
+}
+
+function getHandleLabel(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  return value.startsWith("@") ? value : `@${value}`;
+}
+
+function getTikTokCampaignLabel(row: CampaignTikTokReconciliationRow) {
+  if (row.tiktokCampaignName) {
+    return row.tiktokCampaignName;
+  }
+
+  if (row.tiktokCampaignId) {
+    return `TikTok campaign ${row.tiktokCampaignId}`;
+  }
+
+  return row.hasTikTokDelivery
+    ? "Unknown TikTok campaign"
+    : "No matched TikTok campaign";
+}
+
+function formatMatchSource(source: CampaignTikTokReconciliationRow["matchSources"][number]) {
+  switch (source) {
+    case "report_item_id":
+      return "report item_id";
+    case "ad_metadata_item_id":
+      return "ad metadata item";
+    case "report_campaign_id":
+      return "report campaign_id";
+    default:
+      return "ad metadata campaign";
+  }
+}
+
+function formatEvidenceLabel(row: CampaignTikTokReconciliationRow) {
+  if (row.reportRowCount === 0) {
+    return "No TikTok rows in range";
+  }
+
+  const details = [
+    `${formatCampaignMetric(row.reportRowCount)} TikTok row${
+      row.reportRowCount === 1 ? "" : "s"
+    }`,
+    row.matchedAdIds.length > 0
+      ? `${formatCampaignMetric(row.matchedAdIds.length)} ad${
+          row.matchedAdIds.length === 1 ? "" : "s"
+        }`
+      : null,
+    row.statDates.length > 0
+      ? `${formatCampaignMetric(row.statDates.length)} day${
+          row.statDates.length === 1 ? "" : "s"
+        }`
+      : null,
+  ].filter((value): value is string => Boolean(value));
+
+  return details.join(" / ");
+}
+
+function getBackgroundImageStyle(imageUrl: string) {
+  return {
+    backgroundImage: `url(${JSON.stringify(imageUrl)})`,
+    backgroundPosition: "center",
+    backgroundRepeat: "no-repeat",
+    backgroundSize: "cover",
+  } as const;
 }
 
 function pluralizeLabel(count: number, singular: string) {
@@ -193,6 +343,16 @@ export default async function CampaignsPage({
   const visibleCampaigns = workspace.campaigns.filter((campaign) =>
     visibleCampaignIds.includes(campaign.id),
   );
+  const reconciliationDateRange =
+    getReconciliationDateRange(resolvedSearchParams);
+  const reconciliation = await getCampaignTikTokVideoReconciliation({
+    organizationSlug,
+    campaignIds: visibleCampaignIds,
+    startDate: reconciliationDateRange.startDate,
+    endDate: reconciliationDateRange.endDate,
+  });
+  const campaignFilterValue = getCampaignSearchValue(resolvedSearchParams);
+  const activeCampaignValue = getActiveCampaignSearchValue(resolvedSearchParams);
   const requestedCampaignId = getSearchParamValue(resolvedSearchParams, "campaign");
   const activeCampaignSummary =
     visibleCampaigns.find((campaign) => campaign.id === requestedCampaignId) ??
@@ -454,6 +614,296 @@ export default async function CampaignsPage({
             {linkedVideoCount}
           </p>
         </article>
+      </section>
+
+      <section className="rounded-[1.7rem] border border-white/[0.08] bg-white/[0.03] p-6 shadow-[0_22px_70px_rgba(0,0,0,0.2)]">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div className="max-w-3xl">
+            <p className="text-[0.62rem] uppercase tracking-[0.24em] text-muted-foreground">
+              TikTok reconciliation
+            </p>
+            <h2 className="mt-3 text-2xl font-medium text-foreground">
+              Videos by TikTok campaign.
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-muted-foreground">
+              This table keeps every local TikTok video in the selected campaigns
+              visible, then overlays TikTok Ads Manager campaign labels and
+              video_play_actions for the selected date window.
+            </p>
+          </div>
+
+          <form
+            className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+            method="get"
+          >
+            {campaignFilterValue ? (
+              <input name="campaigns" type="hidden" value={campaignFilterValue} />
+            ) : null}
+            {activeCampaignValue ? (
+              <input name="campaign" type="hidden" value={activeCampaignValue} />
+            ) : null}
+
+            <label className="block">
+              <span className="mb-2 block text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+                Start date
+              </span>
+              <input
+                className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
+                defaultValue={reconciliationDateRange.startDate}
+                name="startDate"
+                type="date"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+                End date
+              </span>
+              <input
+                className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
+                defaultValue={reconciliationDateRange.endDate}
+                name="endDate"
+                type="date"
+              />
+            </label>
+
+            <div className="flex items-end">
+              <button
+                className="inline-flex min-h-11 w-full items-center justify-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68]"
+                type="submit"
+              >
+                Refresh
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
+            <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+              Local videos
+            </p>
+            <p className="mt-2 text-xl font-medium text-foreground">
+              {formatCampaignMetric(reconciliation.totals.videos)}
+            </p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              TikTok videos linked to the selected local campaigns
+            </p>
+          </article>
+          <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
+            <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+              TikTok views
+            </p>
+            <p className="mt-2 text-xl font-medium text-foreground">
+              {formatCampaignMetric(reconciliation.totals.tiktokViews)}
+            </p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              Ads Manager video_play_actions matched to those videos
+            </p>
+          </article>
+          <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
+            <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+              Matched videos
+            </p>
+            <p className="mt-2 text-xl font-medium text-foreground">
+              {formatCampaignMetric(reconciliation.totals.matchedVideos)}
+            </p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              Videos with at least one TikTok campaign row in range
+            </p>
+          </article>
+          <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
+            <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+              TikTok campaigns
+            </p>
+            <p className="mt-2 text-xl font-medium text-foreground">
+              {formatCampaignMetric(reconciliation.totals.tiktokCampaigns)}
+            </p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              Campaign labels returned or resolved from TikTok
+            </p>
+          </article>
+        </div>
+
+        {reconciliation.campaignTotals.length > 0 ? (
+          <div className="mt-5 grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
+            {reconciliation.campaignTotals.map((campaignTotal) => (
+              <article
+                className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.18] p-4"
+                key={campaignTotal.key}
+              >
+                <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+                  TikTok campaign total
+                </p>
+                <h3 className="mt-2 truncate text-sm font-medium text-foreground">
+                  {campaignTotal.tiktokCampaignName ??
+                    (campaignTotal.tiktokCampaignId
+                      ? `TikTok campaign ${campaignTotal.tiktokCampaignId}`
+                      : "Unknown TikTok campaign")}
+                </h3>
+                <p className="mt-2 text-lg font-medium text-foreground">
+                  {formatCampaignMetric(campaignTotal.views)} views
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {formatCampaignMetric(campaignTotal.videos)} video
+                  {campaignTotal.videos === 1 ? "" : "s"}
+                  {campaignTotal.tiktokCampaignId
+                    ? ` / ID ${campaignTotal.tiktokCampaignId}`
+                    : ""}
+                </p>
+              </article>
+            ))}
+          </div>
+        ) : null}
+
+        {reconciliation.warnings.length > 0 ? (
+          <div className="mt-5 rounded-[1.15rem] border border-[#FFD24D]/20 bg-[#FFD24D]/[0.08] p-4 text-sm text-[#FFEAB1]">
+            <p className="text-[0.62rem] uppercase tracking-[0.2em] text-[#FFEAB1]/80">
+              Reconciliation notes
+            </p>
+            <ul className="mt-2 space-y-1.5">
+              {reconciliation.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+            {!reconciliation.advertiserId ? (
+              <Link
+                className="mt-3 inline-flex text-sm font-medium text-[#FFEAB1] underline underline-offset-4"
+                href={`/org/${organizationSlug}/integrations`}
+              >
+                Manage TikTok connection
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="mt-5 overflow-hidden rounded-[1.15rem] border border-white/[0.08] bg-black/[0.16]">
+          {reconciliation.rows.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="min-w-[1080px] w-full border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-white/[0.08] text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+                    <th className="px-4 py-3 font-medium">Video</th>
+                    <th className="px-4 py-3 font-medium">Local campaign</th>
+                    <th className="px-4 py-3 font-medium">TikTok campaign</th>
+                    <th className="px-4 py-3 text-right font-medium">TikTok views</th>
+                    <th className="px-4 py-3 text-right font-medium">App views</th>
+                    <th className="px-4 py-3 font-medium">Evidence</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.06]">
+                  {reconciliation.rows.map((row) => {
+                    const handleLabel = getHandleLabel(row.accountHandle);
+                    const matchedAdPreview = row.matchedAdIds.slice(0, 2).join(", ");
+                    const extraAdCount = Math.max(row.matchedAdIds.length - 2, 0);
+
+                    return (
+                      <tr key={row.rowKey} className="align-top">
+                        <td className="px-4 py-4">
+                          <div className="flex min-w-0 items-start gap-3">
+                            <a
+                              aria-label="Open TikTok video"
+                              className="h-14 w-14 shrink-0 rounded-[0.9rem] border border-white/[0.08] bg-white/[0.05]"
+                              href={row.videoUrl}
+                              rel="noreferrer"
+                              style={
+                                row.thumbnailUrl
+                                  ? getBackgroundImageStyle(row.thumbnailUrl)
+                                  : undefined
+                              }
+                              target="_blank"
+                            />
+                            <div className="min-w-0">
+                              <a
+                                className="line-clamp-2 font-medium leading-5 text-foreground transition hover:text-[#90FF4D]"
+                                href={row.videoUrl}
+                                rel="noreferrer"
+                                target="_blank"
+                              >
+                                {getVideoTitle(row)}
+                              </a>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {row.creatorName}
+                                {handleLabel ? ` / ${handleLabel}` : ""}
+                              </p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Post ID {row.sourceVideoId} / Published{" "}
+                                {formatCampaignDateLabel(row.publishedAt)}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-4">
+                          <span className="inline-flex max-w-[14rem] rounded-full border border-white/[0.08] bg-white/[0.05] px-3 py-1 text-xs text-foreground">
+                            <span className="truncate">
+                              {row.localCampaignName ?? "Unassigned"}
+                            </span>
+                          </span>
+                        </td>
+                        <td className="px-4 py-4">
+                          <div
+                            className={`inline-flex max-w-[18rem] rounded-full border px-3 py-1 text-xs ${
+                              row.hasTikTokDelivery
+                                ? "border-[#90FF4D]/20 bg-[#90FF4D]/10 text-[#D7FFBD]"
+                                : "border-white/[0.08] bg-white/[0.05] text-muted-foreground"
+                            }`}
+                          >
+                            <span className="truncate">
+                              {getTikTokCampaignLabel(row)}
+                            </span>
+                          </div>
+                          {row.tiktokCampaignId ? (
+                            <p className="mt-2 text-xs text-muted-foreground">
+                              ID {row.tiktokCampaignId}
+                            </p>
+                          ) : null}
+                        </td>
+                        <td className="px-4 py-4 text-right">
+                          <p className="font-medium text-foreground">
+                            {formatCampaignMetric(row.tiktokViews)}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {formatCampaignCompactMetric(row.tiktokViews)}
+                          </p>
+                        </td>
+                        <td className="px-4 py-4 text-right">
+                          <p className="font-medium text-foreground">
+                            {formatCampaignMetric(row.localViews)}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            lifetime
+                          </p>
+                        </td>
+                        <td className="px-4 py-4">
+                          <p className="text-xs leading-5 text-muted-foreground">
+                            {formatEvidenceLabel(row)}
+                          </p>
+                          {matchedAdPreview ? (
+                            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                              Ads {matchedAdPreview}
+                              {extraAdCount > 0
+                                ? ` +${formatCampaignMetric(extraAdCount)}`
+                                : ""}
+                            </p>
+                          ) : null}
+                          {row.matchSources.length > 0 ? (
+                            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                              {row.matchSources.map(formatMatchSource).join(", ")}
+                            </p>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="px-4 py-8 text-sm leading-6 text-muted-foreground">
+              No TikTok videos are linked to the selected local campaigns yet.
+            </div>
+          )}
+        </div>
       </section>
 
       <section className="rounded-[1.7rem] border border-white/[0.08] bg-white/[0.03] p-6 shadow-[0_22px_70px_rgba(0,0,0,0.2)]">

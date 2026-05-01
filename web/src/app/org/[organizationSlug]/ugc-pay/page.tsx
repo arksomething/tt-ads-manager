@@ -56,6 +56,18 @@ function formatMetricValue(value: number, compact = false) {
     : wholeNumberFormatter.format(value);
 }
 
+function formatPayableViewsWithGross(item: {
+  grossViews: number;
+  paidViewsDeducted: number;
+  payableViews: number;
+}) {
+  const payableLabel = formatMetricValue(item.payableViews, true);
+
+  return item.paidViewsDeducted > 0 && item.grossViews > item.payableViews
+    ? `${payableLabel} (${formatMetricValue(item.grossViews, true)})`
+    : payableLabel;
+}
+
 function formatDateLabel(value: Date | string | null | undefined) {
   if (!value) {
     return "Unknown";
@@ -186,7 +198,7 @@ function CreatorPayRow({ creator }: { creator: UgcPayCreatorRow }) {
             Views
           </p>
           <p className="mt-1 text-sm text-foreground">
-            {formatMetricValue(creator.payableViews, true)}
+            {formatPayableViewsWithGross(creator)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             {formatMetricValue(creator.paidViewsDeducted, true)} paid removed
@@ -285,7 +297,7 @@ function VideoTableRow({ video }: { video: UgcPayVideoRow }) {
         {formatMetricValue(video.paidViewsDeducted, true)}
       </td>
       <td className="px-3 py-3 text-muted-foreground">
-        {formatMetricValue(video.payableViews, true)}
+        {formatPayableViewsWithGross(video)}
       </td>
       <td className="px-3 py-3 text-muted-foreground">
         {formatMoney(video.fixedFeePerVideo, video.currency)}
@@ -346,6 +358,9 @@ export default async function UgcPayPage({
               {formatDateLabel(data.startDate)} to {formatDateLabel(data.endDate)}
             </p>
             <p className="mt-1 text-xs">
+              {data.reportTimeZone} report dates. Videos posted in range; views use this View Tally period.
+            </p>
+            <p className="mt-1 text-xs">
               {formatMetricValue(data.summary.customDeals)} custom deals
             </p>
           </div>
@@ -357,7 +372,7 @@ export default async function UgcPayPage({
         >
           <label className="block">
             <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
-              Start
+              Start date
             </span>
             <input
               className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
@@ -369,7 +384,7 @@ export default async function UgcPayPage({
 
           <label className="block">
             <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
-              End
+              End date
             </span>
             <input
               className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
@@ -437,7 +452,7 @@ export default async function UgcPayPage({
           detail={`${formatMetricValue(data.summary.grossViews, true)} gross less ${formatMetricValue(data.summary.paidViewsDeducted, true)} paid`}
           iconName="overview"
           label="Payable Views"
-          value={formatMetricValue(data.summary.payableViews, true)}
+          value={formatPayableViewsWithGross(data.summary)}
         />
         <SummaryCard
           detail={`${formatMetricValue(data.summary.creators)} creators matched`}
@@ -542,7 +557,7 @@ export default async function UgcPayPage({
                       {formatMetricValue(video.paidViewsDeducted, true)}
                     </td>
                     <td className="px-3 py-3 text-muted-foreground">
-                      {formatMetricValue(video.payableViews, true)}
+                      {formatPayableViewsWithGross(video)}
                     </td>
                     <td className="px-3 py-3 text-muted-foreground">
                       {formatMoney(video.fixedFeePerVideo, video.currency)}

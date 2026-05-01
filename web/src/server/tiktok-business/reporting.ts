@@ -14,6 +14,8 @@ import { requestTikTokBusinessApi } from "./client";
 
 const MAX_REPORT_PAGES = 20;
 const REPORT_PAGE_SIZE = 1_000;
+const MAX_LIST_PAGES = 20;
+const LIST_PAGE_SIZE = 100;
 const PAID_REPORT_CACHE_TTL_MS = 5 * 60 * 1_000;
 const AD_SPEND_REPORT_CACHE_TTL_MS = 5 * 60 * 1_000;
 
@@ -25,6 +27,24 @@ const tiktokReportMetricMap = {
   ...paidViewMetricMap,
   spend: "spend",
 } as const;
+const basePaidReportDimensions = ["stat_time_day", "ad_id", "item_id"] as const;
+const campaignPaidReportDimensions = [
+  "stat_time_day",
+  "campaign_id",
+  "ad_id",
+  "item_id",
+] as const;
+const adCampaignFieldCandidates: Array<readonly string[] | undefined> = [
+  ["ad_id", "ad_name", "campaign_id", "tiktok_item_id", "item_id"],
+  ["ad_id", "campaign_id", "tiktok_item_id"],
+  ["ad_id", "campaign_id"],
+  undefined,
+] as const;
+const campaignFieldCandidates: Array<readonly string[] | undefined> = [
+  ["campaign_id", "campaign_name"],
+  ["campaign_id"],
+  undefined,
+] as const;
 
 export type TikTokPaidViewMetric = keyof typeof paidViewMetricMap;
 type TikTokReportMetric = keyof typeof tiktokReportMetricMap;
@@ -67,12 +87,31 @@ type TikTokIntegratedReportData = {
   total_metrics?: Record<string, unknown>;
 };
 
+type TikTokListData = Record<string, unknown> & {
+  list?: Record<string, unknown>[];
+  page_info?: Record<string, unknown>;
+};
+
 type TikTokPaidViewsRow = {
+  campaignId?: string | null;
+  campaignName?: string | null;
   adId: string | null;
   itemId: string | null;
   statDate: string | null;
   metricValue: number;
   raw: Record<string, unknown>;
+};
+
+type TikTokAdCampaignMetadata = {
+  adId: string;
+  campaignId: string | null;
+  tiktokItemId: string | null;
+  adName: string | null;
+};
+
+type TikTokCampaignMetadata = {
+  campaignId: string;
+  campaignName: string | null;
 };
 
 export type TikTokCreatorPaidViewsResult = {
@@ -148,6 +187,34 @@ export type TikTokSourceVideoPaidViewsTimelineResult =
   TikTokSourceVideoPaidViewsResult & {
     timelineRows: TikTokSourceVideoPaidViewsTimelineRow[];
   };
+
+export type TikTokCampaignVideoMatchSource =
+  | "report_item_id"
+  | "ad_metadata_item_id"
+  | "report_campaign_id"
+  | "ad_metadata_campaign_id";
+
+export type TikTokCampaignVideoViewRow = {
+  sourceVideoId: string;
+  tiktokCampaignId: string | null;
+  tiktokCampaignName: string | null;
+  paidViews: number;
+  reportRowCount: number;
+  matchedAdIds: string[];
+  statDates: string[];
+  matchSources: TikTokCampaignVideoMatchSource[];
+};
+
+export type TikTokCampaignVideoViewsResult = {
+  advertiserId: string | null;
+  metric: TikTokPaidViewMetric;
+  startDate: string;
+  endDate: string;
+  totalPaidViews: number;
+  reportRowCount: number;
+  rows: TikTokCampaignVideoViewRow[];
+  warnings: string[];
+};
 
 export type TikTokAdSpendRow = {
   key: string;
@@ -245,10 +312,12 @@ function getPaidReportCacheKey(args: {
   startDate: string;
   endDate: string;
   metric: TikTokReportMetric;
+  dimensions?: readonly string[];
 }) {
   return [
     args.advertiserId,
     args.metric,
+    (args.dimensions ?? basePaidReportDimensions).join(","),
     args.startDate,
     args.endDate,
   ].join("::");
@@ -353,6 +422,40 @@ function getFirstNumber(records: Array<Record<string, unknown> | null>, keys: st
   return 0;
 }
 
+function getRecordArray(
+  payload: Record<string, unknown>,
+  keys: string[],
+): Record<string, unknown>[] {
+  for (const key of keys) {
+    const value = payload[key];
+
+    if (Array.isArray(value)) {
+      return value.filter(isRecord);
+    }
+  }
+
+  return [];
+}
+
+function getNestedRecordCandidates(record: Record<string, unknown>, keys: string[]) {
+  const nestedRecords: Record<string, unknown>[] = [];
+
+  for (const key of keys) {
+    const value = record[key];
+
+    if (Array.isArray(value)) {
+      nestedRecords.push(...value.filter(isRecord));
+      continue;
+    }
+
+    if (isRecord(value)) {
+      nestedRecords.push(value);
+    }
+  }
+
+  return nestedRecords;
+}
+
 function getReportRows(payload: TikTokIntegratedReportData) {
   if (!Array.isArray(payload.list)) {
     return [];
@@ -361,7 +464,12 @@ function getReportRows(payload: TikTokIntegratedReportData) {
   return payload.list.filter(isRecord);
 }
 
-function getTotalPages(payload: TikTokIntegratedReportData, currentRows: number) {
+function getTotalPages(
+  payload: Pick<TikTokIntegratedReportData, "page_info">,
+  currentRows: number,
+  pageSize = REPORT_PAGE_SIZE,
+  maxPages = MAX_REPORT_PAGES,
+) {
   const pageInfo = isRecord(payload.page_info) ? payload.page_info : null;
   const totalPages = getFirstNumber([pageInfo], ["total_page", "total_pages"]);
 
@@ -369,7 +477,7 @@ function getTotalPages(payload: TikTokIntegratedReportData, currentRows: number)
     return Math.max(1, Math.trunc(totalPages));
   }
 
-  return currentRows < REPORT_PAGE_SIZE ? 1 : MAX_REPORT_PAGES;
+  return currentRows < pageSize ? 1 : maxPages;
 }
 
 function normalizeReportRow(row: TikTokIntegratedReportRow, apiMetricName: string): TikTokPaidViewsRow {
@@ -377,11 +485,60 @@ function normalizeReportRow(row: TikTokIntegratedReportRow, apiMetricName: strin
   const metrics = isRecord(row.metrics) ? row.metrics : null;
 
   return {
+    campaignId: getFirstString([dimensions, row], ["campaign_id", "campaignId"]),
+    campaignName: getFirstString([dimensions, row], ["campaign_name", "campaignName"]),
     adId: getFirstString([dimensions, row], ["ad_id", "adId"]),
     itemId: getFirstString([dimensions, row], ["item_id", "itemId"]),
     statDate: getFirstString([dimensions, row], ["stat_time_day", "statTimeDay"]),
     metricValue: getFirstNumber([metrics, row], [apiMetricName]),
     raw: row,
+  };
+}
+
+function normalizeAdCampaignMetadata(
+  record: Record<string, unknown>,
+): TikTokAdCampaignMetadata | null {
+  const candidates = [
+    record,
+    ...getNestedRecordCandidates(record, [
+      "creatives",
+      "creative_infos",
+      "creative_info",
+      "creative_list",
+      "materials",
+    ]),
+  ];
+  const adId = getFirstString(candidates, ["ad_id", "adId"]);
+
+  if (!adId) {
+    return null;
+  }
+
+  return {
+    adId,
+    campaignId: getFirstString(candidates, ["campaign_id", "campaignId"]),
+    tiktokItemId: getFirstString(candidates, [
+      "tiktok_item_id",
+      "tiktokItemId",
+      "item_id",
+      "itemId",
+    ]),
+    adName: getFirstString(candidates, ["ad_name", "adName"]),
+  };
+}
+
+function normalizeCampaignMetadata(
+  record: Record<string, unknown>,
+): TikTokCampaignMetadata | null {
+  const campaignId = getFirstString([record], ["campaign_id", "campaignId"]);
+
+  if (!campaignId) {
+    return null;
+  }
+
+  return {
+    campaignId,
+    campaignName: getFirstString([record], ["campaign_name", "campaignName", "name"]),
   };
 }
 
@@ -1351,6 +1508,7 @@ async function fetchPaidReportRows(args: {
   startDate: string;
   endDate: string;
   metric: TikTokReportMetric;
+  dimensions?: readonly string[];
 }) {
   const cacheKey = getPaidReportCacheKey(args);
   const cached = readPaidReportCache(cacheKey);
@@ -1367,6 +1525,7 @@ async function fetchPaidReportRows(args: {
 
   const requestPromise = (async () => {
     const apiMetricName = tiktokReportMetricMap[args.metric];
+    const dimensions = args.dimensions ?? basePaidReportDimensions;
     const rows: TikTokIntegratedReportRow[] = [];
     const warnings: string[] = [];
 
@@ -1394,7 +1553,7 @@ async function fetchPaidReportRows(args: {
             report_type: "BASIC",
             advertiser_id: args.advertiserId,
             data_level: "AUCTION_AD",
-            dimensions: ["stat_time_day", "ad_id", "item_id"],
+            dimensions,
             metrics: [apiMetricName],
             start_date: toDateOnlyString(windowStart),
             end_date: toDateOnlyString(windowEnd),
@@ -1444,6 +1603,410 @@ async function fetchPaidReportRows(args: {
   } finally {
     pendingPaidReportCache.delete(cacheKey);
   }
+}
+
+async function fetchAdvertiserAdCampaignMetadataWithFields(args: {
+  advertiserId: string;
+  accessToken: string;
+  fields?: readonly string[];
+}) {
+  const ads: TikTokAdCampaignMetadata[] = [];
+  let totalPages = 1;
+
+  for (let page = 1; page <= totalPages && page <= MAX_LIST_PAGES; page += 1) {
+    const payload = await requestTikTokBusinessApi<TikTokListData>({
+      accessToken: args.accessToken,
+      method: "GET",
+      path: "/open_api/v1.3/ad/get/",
+      query: {
+        advertiser_id: args.advertiserId,
+        page,
+        page_size: LIST_PAGE_SIZE,
+        ...(args.fields ? { fields: args.fields } : {}),
+      },
+    });
+
+    const pageAds = getRecordArray(payload, ["list"])
+      .map(normalizeAdCampaignMetadata)
+      .filter((ad): ad is TikTokAdCampaignMetadata => Boolean(ad));
+
+    ads.push(...pageAds);
+    totalPages = getTotalPages(
+      payload,
+      pageAds.length,
+      LIST_PAGE_SIZE,
+      MAX_LIST_PAGES,
+    );
+
+    if (pageAds.length < LIST_PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return ads;
+}
+
+async function fetchAdvertiserAdCampaignMetadataBestEffort(args: {
+  advertiserId: string;
+  accessToken: string;
+}) {
+  let lastError: unknown = null;
+
+  for (const [index, fields] of adCampaignFieldCandidates.entries()) {
+    try {
+      const ads = await fetchAdvertiserAdCampaignMetadataWithFields({
+        advertiserId: args.advertiserId,
+        accessToken: args.accessToken,
+        fields,
+      });
+
+      return {
+        ads,
+        warnings:
+          index > 0
+            ? [
+                "TikTok rejected the richer ad field set, so campaign reconciliation used a simpler ad metadata response.",
+              ]
+            : [],
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  return {
+    ads: [] as TikTokAdCampaignMetadata[],
+    warnings: [
+      lastError instanceof Error
+        ? `Could not load TikTok ad metadata for campaign reconciliation: ${lastError.message}`
+        : "Could not load TikTok ad metadata for campaign reconciliation.",
+    ],
+  };
+}
+
+async function fetchAdvertiserCampaignMetadataWithFields(args: {
+  advertiserId: string;
+  accessToken: string;
+  fields?: readonly string[];
+}) {
+  const campaigns: TikTokCampaignMetadata[] = [];
+  let totalPages = 1;
+
+  for (let page = 1; page <= totalPages && page <= MAX_LIST_PAGES; page += 1) {
+    const payload = await requestTikTokBusinessApi<TikTokListData>({
+      accessToken: args.accessToken,
+      method: "GET",
+      path: "/open_api/v1.3/campaign/get/",
+      query: {
+        advertiser_id: args.advertiserId,
+        page,
+        page_size: LIST_PAGE_SIZE,
+        ...(args.fields ? { fields: args.fields } : {}),
+      },
+    });
+
+    const pageCampaigns = getRecordArray(payload, ["list"])
+      .map(normalizeCampaignMetadata)
+      .filter(
+        (campaign): campaign is TikTokCampaignMetadata => Boolean(campaign),
+      );
+
+    campaigns.push(...pageCampaigns);
+    totalPages = getTotalPages(
+      payload,
+      pageCampaigns.length,
+      LIST_PAGE_SIZE,
+      MAX_LIST_PAGES,
+    );
+
+    if (pageCampaigns.length < LIST_PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return campaigns;
+}
+
+async function fetchAdvertiserCampaignMetadataBestEffort(args: {
+  advertiserId: string;
+  accessToken: string;
+}) {
+  let lastError: unknown = null;
+
+  for (const [index, fields] of campaignFieldCandidates.entries()) {
+    try {
+      const campaigns = await fetchAdvertiserCampaignMetadataWithFields({
+        advertiserId: args.advertiserId,
+        accessToken: args.accessToken,
+        fields,
+      });
+
+      return {
+        campaigns,
+        warnings:
+          index > 0
+            ? [
+                "TikTok rejected the richer campaign field set, so campaign labels may fall back to raw campaign IDs.",
+              ]
+            : [],
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  return {
+    campaigns: [] as TikTokCampaignMetadata[],
+    warnings: [
+      lastError instanceof Error
+        ? `Could not load TikTok campaign metadata: ${lastError.message}`
+        : "Could not load TikTok campaign metadata.",
+    ],
+  };
+}
+
+async function fetchCampaignAwarePaidReportRows(args: {
+  advertiserId: string;
+  accessToken: string;
+  startDate: string;
+  endDate: string;
+  metric: TikTokPaidViewMetric;
+}) {
+  try {
+    return await fetchPaidReportRows({
+      ...args,
+      dimensions: campaignPaidReportDimensions,
+    });
+  } catch {
+    const fallbackReport = await fetchPaidReportRows({
+      ...args,
+      dimensions: basePaidReportDimensions,
+    });
+
+    return {
+      ...fallbackReport,
+      warnings: [
+        ...fallbackReport.warnings,
+        "TikTok did not return campaign_id as a report dimension, so campaign labels were resolved from ad metadata when possible.",
+      ],
+    };
+  }
+}
+
+export async function getTikTokCampaignVideoViewsForOrganization(args: {
+  organizationSlug: string;
+  itemIds: string[];
+  startDate: QueryDateInput;
+  endDate: QueryDateInput;
+  metric?: TikTokPaidViewMetric;
+}): Promise<TikTokCampaignVideoViewsResult> {
+  const membership = await requireOrganizationMembership(args.organizationSlug);
+  const startDate = parseDateInput(args.startDate, "start date");
+  const endDate = parseDateInput(args.endDate, "end date");
+
+  if (endDate < startDate) {
+    throw new Error("End date must be on or after start date.");
+  }
+
+  const metric = args.metric ?? "videoPlayActions";
+  const itemIds = uniqueNonEmptyStrings(args.itemIds);
+  const startDateString = toDateOnlyString(startDate);
+  const endDateString = toDateOnlyString(endDate);
+
+  if (itemIds.length === 0) {
+    return {
+      advertiserId: null,
+      metric,
+      startDate: startDateString,
+      endDate: endDateString,
+      totalPaidViews: 0,
+      reportRowCount: 0,
+      rows: [],
+      warnings: [],
+    };
+  }
+
+  let accountWarnings: string[] = [];
+  let advertiserId: string | null = null;
+  let accessToken: string | null = null;
+
+  try {
+    const accountLookup = await getOrgTikTokAccount(membership.organizationId);
+    advertiserId = accountLookup.account.advertiserId;
+    accessToken = accountLookup.account.accessToken;
+    accountWarnings = accountLookup.warnings;
+  } catch (error) {
+    if (!isMissingOrgTikTokAccountError(error)) {
+      throw error;
+    }
+
+    return {
+      advertiserId: null,
+      metric,
+      startDate: startDateString,
+      endDate: endDateString,
+      totalPaidViews: 0,
+      reportRowCount: 0,
+      rows: [],
+      warnings: [
+        error instanceof Error
+          ? error.message
+          : "No TikTok advertiser account is configured for this organization.",
+      ],
+    };
+  }
+
+  if (!advertiserId || !accessToken) {
+    throw new Error("TikTok advertiser credentials are unavailable.");
+  }
+
+  const report = await fetchCampaignAwarePaidReportRows({
+    advertiserId,
+    accessToken,
+    startDate: startDateString,
+    endDate: endDateString,
+    metric,
+  });
+  const normalizedRows = report.rows.map((row) =>
+    normalizeReportRow(row, report.apiMetricName),
+  );
+  const rowsNeedAdMetadata = normalizedRows.some(
+    (row) => row.adId && (!row.itemId || !row.campaignId),
+  );
+  const adMetadata = rowsNeedAdMetadata
+    ? await fetchAdvertiserAdCampaignMetadataBestEffort({
+        advertiserId,
+        accessToken,
+      })
+    : {
+        ads: [] as TikTokAdCampaignMetadata[],
+        warnings: [] as string[],
+      };
+  const adsById = new Map(adMetadata.ads.map((ad) => [ad.adId, ad] as const));
+  const campaignIds = uniqueNonEmptyStrings([
+    ...normalizedRows.map((row) => row.campaignId),
+    ...adMetadata.ads.map((ad) => ad.campaignId),
+  ]);
+  const campaignMetadata =
+    campaignIds.length > 0
+      ? await fetchAdvertiserCampaignMetadataBestEffort({
+          advertiserId,
+          accessToken,
+        })
+      : {
+          campaigns: [] as TikTokCampaignMetadata[],
+          warnings: [] as string[],
+        };
+  const campaignIdSet = new Set(campaignIds);
+  const campaignsById = new Map(
+    campaignMetadata.campaigns
+      .filter((campaign) => campaignIdSet.has(campaign.campaignId))
+      .map((campaign) => [campaign.campaignId, campaign] as const),
+  );
+  const itemIdSet = new Set(itemIds);
+  const groupedRows = new Map<
+    string,
+    {
+      sourceVideoId: string;
+      tiktokCampaignId: string | null;
+      tiktokCampaignName: string | null;
+      paidViews: number;
+      reportRowCount: number;
+      matchedAdIds: Set<string>;
+      statDates: Set<string>;
+      matchSources: Set<TikTokCampaignVideoMatchSource>;
+    }
+  >();
+
+  for (const row of normalizedRows) {
+    const ad = row.adId ? (adsById.get(row.adId) ?? null) : null;
+    const sourceVideoId = row.itemId ?? ad?.tiktokItemId ?? null;
+
+    if (!sourceVideoId || !itemIdSet.has(sourceVideoId)) {
+      continue;
+    }
+
+    const tiktokCampaignId = row.campaignId ?? ad?.campaignId ?? null;
+    const tiktokCampaignName =
+      row.campaignName ??
+      (tiktokCampaignId
+        ? (campaignsById.get(tiktokCampaignId)?.campaignName ?? null)
+        : null);
+    const groupKey = [
+      sourceVideoId,
+      tiktokCampaignId ?? tiktokCampaignName ?? "unknown-campaign",
+    ].join("::");
+    const group =
+      groupedRows.get(groupKey) ??
+      {
+        sourceVideoId,
+        tiktokCampaignId,
+        tiktokCampaignName,
+        paidViews: 0,
+        reportRowCount: 0,
+        matchedAdIds: new Set<string>(),
+        statDates: new Set<string>(),
+        matchSources: new Set<TikTokCampaignVideoMatchSource>(),
+      };
+
+    group.tiktokCampaignName ??= tiktokCampaignName;
+    group.paidViews += row.metricValue;
+    group.reportRowCount += 1;
+
+    if (row.adId) {
+      group.matchedAdIds.add(row.adId);
+    }
+
+    if (row.statDate) {
+      group.statDates.add(row.statDate);
+    }
+
+    group.matchSources.add(row.itemId ? "report_item_id" : "ad_metadata_item_id");
+
+    if (tiktokCampaignId) {
+      group.matchSources.add(
+        row.campaignId ? "report_campaign_id" : "ad_metadata_campaign_id",
+      );
+    }
+
+    groupedRows.set(groupKey, group);
+  }
+
+  const rows = [...groupedRows.values()]
+    .map((row) => ({
+      sourceVideoId: row.sourceVideoId,
+      tiktokCampaignId: row.tiktokCampaignId,
+      tiktokCampaignName: row.tiktokCampaignName,
+      paidViews: row.paidViews,
+      reportRowCount: row.reportRowCount,
+      matchedAdIds: [...row.matchedAdIds].sort(),
+      statDates: [...row.statDates].sort(),
+      matchSources: [...row.matchSources].sort(),
+    }))
+    .sort(
+      (left, right) =>
+        right.paidViews - left.paidViews ||
+        (left.tiktokCampaignName ?? left.tiktokCampaignId ?? "").localeCompare(
+          right.tiktokCampaignName ?? right.tiktokCampaignId ?? "",
+        ) ||
+        left.sourceVideoId.localeCompare(right.sourceVideoId),
+    );
+
+  return {
+    advertiserId,
+    metric,
+    startDate: startDateString,
+    endDate: endDateString,
+    totalPaidViews: rows.reduce((total, row) => total + row.paidViews, 0),
+    reportRowCount: normalizedRows.length,
+    rows,
+    warnings: uniqueNonEmptyStrings([
+      ...accountWarnings,
+      ...report.warnings,
+      ...adMetadata.warnings,
+      ...campaignMetadata.warnings,
+    ]),
+  };
 }
 
 function getResolvedVideoPaidStatus(args: {
