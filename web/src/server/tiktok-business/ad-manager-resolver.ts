@@ -343,8 +343,18 @@ function normalizeResolvedPost(
   const candidates = [
     record,
     ...getNestedRecordCandidates(record, [
+      "video",
+      "videos",
+      "video_list",
+      "videoList",
+      "video_infos",
+      "videoInfos",
       "video_info",
       "videoInfo",
+      "item",
+      "items",
+      "item_list",
+      "itemList",
       "item_info",
       "itemInfo",
       "post_info",
@@ -357,6 +367,8 @@ function normalizeResolvedPost(
     getFirstString(candidates, [
       "item_id",
       "itemId",
+      "video_id",
+      "videoId",
       "tiktok_item_id",
       "tiktokItemId",
       "aweme_item_id",
@@ -456,6 +468,7 @@ function buildResolvedPostCacheKey(args: {
   identityAuthorizedBcId: string | null;
 }) {
   return [
+    "video-info-v2",
     args.advertiserId,
     args.identityId,
     args.identityType,
@@ -771,6 +784,7 @@ async function fetchIdentityVideoInfo(args: {
       advertiser_id: args.advertiserId,
       identity_type: args.identityType,
       identity_id: args.identityId,
+      video_id: args.itemId,
       item_id: args.itemId,
       ...(args.identityType === "BC_AUTH_TT" && args.identityAuthorizedBcId
         ? {
