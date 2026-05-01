@@ -26,6 +26,7 @@ export type CampaignTikTokReconciliationRow = {
   localVideoId: string | null;
   sourceVideoId: string | null;
   videoUrl: string | null;
+  videoUrlSource: "tiktok_share" | "ads_manager" | "local" | null;
   titleOrCaption: string | null;
   publishedAt: Date | null;
   createdAt: Date | null;
@@ -306,13 +307,22 @@ function getVideoThumbnailUrl(payload: Prisma.JsonValue | null | undefined) {
 function getCampaignVideoLink(args: {
   localVideoUrl: string | null | undefined;
   resolvedPostUrl: string | null | undefined;
+  adsManagerUrl: string | null | undefined;
 }) {
   if (args.resolvedPostUrl) {
-    return args.resolvedPostUrl;
+    return {
+      href: args.resolvedPostUrl,
+      source: "tiktok_share" as const,
+    };
   }
 
   if (!args.localVideoUrl) {
-    return null;
+    return args.adsManagerUrl
+      ? {
+          href: args.adsManagerUrl,
+          source: "ads_manager" as const,
+        }
+      : null;
   }
 
   try {
@@ -321,12 +331,25 @@ function getCampaignVideoLink(args: {
     const pathname = url.pathname.replace(/\/+$/, "");
 
     if (host === "tiktok.com" && /^\/video\/\d+$/.test(pathname)) {
-      return null;
+      return args.adsManagerUrl
+        ? {
+            href: args.adsManagerUrl,
+            source: "ads_manager" as const,
+          }
+        : null;
     }
 
-    return url.toString();
+    return {
+      href: url.toString(),
+      source: "local" as const,
+    };
   } catch {
-    return null;
+    return args.adsManagerUrl
+      ? {
+          href: args.adsManagerUrl,
+          source: "ads_manager" as const,
+        }
+      : null;
   }
 }
 
@@ -439,14 +462,17 @@ export async function getCampaignTikTokVideoReconciliation(args: {
     const video = tiktokRow.sourceVideoId
       ? (videosBySourceVideoId.get(tiktokRow.sourceVideoId) ?? null)
       : null;
+    const videoLink = getCampaignVideoLink({
+      localVideoUrl: video?.videoUrl,
+      resolvedPostUrl: tiktokRow.resolvedPostUrl,
+      adsManagerUrl: tiktokRow.adsManagerUrl,
+    });
 
     return {
       localVideoId: video?.id ?? null,
       sourceVideoId: tiktokRow.sourceVideoId,
-      videoUrl: getCampaignVideoLink({
-        localVideoUrl: video?.videoUrl,
-        resolvedPostUrl: tiktokRow.resolvedPostUrl,
-      }),
+      videoUrl: videoLink?.href ?? null,
+      videoUrlSource: videoLink?.source ?? null,
       titleOrCaption: video?.titleOrCaption ?? tiktokRow.resolvedPostTitle,
       publishedAt: video?.publishedAt ?? null,
       createdAt: video?.createdAt ?? null,

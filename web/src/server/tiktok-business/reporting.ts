@@ -201,6 +201,7 @@ export type TikTokCampaignVideoViewRow = {
   resolvedPostTitle: string | null;
   resolvedPostUrl: string | null;
   resolvedPostCoverUrl: string | null;
+  adsManagerUrl: string | null;
   tiktokCampaignId: string | null;
   tiktokCampaignName: string | null;
   paidViews: number;
@@ -627,6 +628,14 @@ function parseItemDateKey(key: string) {
     itemId,
     statDate,
   };
+}
+
+function buildAdsManagerAdUrl(advertiserId: string, adId: string) {
+  const url = new URL("https://ads.tiktok.com/i18n/perf/advertiser/ad");
+  url.searchParams.set("aadvid", advertiserId);
+  url.searchParams.set("advertiser_id", advertiserId);
+  url.searchParams.set("ad_id", adId);
+  return url.toString();
 }
 
 function addPaidViewsByItemDate(
@@ -2053,20 +2062,27 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
   }
 
   const rows = [...groupedRows.values()]
-    .map((row) => ({
-      rowKey: row.rowKey,
-      sourceVideoId: row.sourceVideoId,
-      resolvedPostTitle: row.resolvedPostTitle,
-      resolvedPostUrl: row.resolvedPostUrl,
-      resolvedPostCoverUrl: row.resolvedPostCoverUrl,
-      tiktokCampaignId: row.tiktokCampaignId,
-      tiktokCampaignName: row.tiktokCampaignName,
-      paidViews: row.paidViews,
-      reportRowCount: row.reportRowCount,
-      matchedAdIds: [...row.matchedAdIds].sort(),
-      statDates: [...row.statDates].sort(),
-      matchSources: [...row.matchSources].sort(),
-    }))
+    .map((row) => {
+      const matchedAdIds = [...row.matchedAdIds].sort();
+
+      return {
+        rowKey: row.rowKey,
+        sourceVideoId: row.sourceVideoId,
+        resolvedPostTitle: row.resolvedPostTitle,
+        resolvedPostUrl: row.resolvedPostUrl,
+        resolvedPostCoverUrl: row.resolvedPostCoverUrl,
+        adsManagerUrl: matchedAdIds[0]
+          ? buildAdsManagerAdUrl(advertiserId, matchedAdIds[0])
+          : null,
+        tiktokCampaignId: row.tiktokCampaignId,
+        tiktokCampaignName: row.tiktokCampaignName,
+        paidViews: row.paidViews,
+        reportRowCount: row.reportRowCount,
+        matchedAdIds,
+        statDates: [...row.statDates].sort(),
+        matchSources: [...row.matchSources].sort(),
+      };
+    })
     .sort(
       (left, right) =>
         right.paidViews - left.paidViews ||
@@ -2092,7 +2108,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       ...resolvedPostLookup.warnings,
       ...(paidViewsBySourceVideoId.size > postLinkLookupItemIds.length
         ? [
-            `TikTok post share URL lookup is limited to the top ${MAX_CAMPAIGN_POST_LINK_LOOKUPS} paid post IDs by metric value, so lower-volume rows may stay unlinked instead of using guessed URLs.`,
+            `Public TikTok share URL lookup is limited to the top ${MAX_CAMPAIGN_POST_LINK_LOOKUPS} paid post IDs by metric value. Rows without a public share URL link to the matching TikTok Ads Manager ad when an ad ID is available.`,
           ]
         : []),
     ]),

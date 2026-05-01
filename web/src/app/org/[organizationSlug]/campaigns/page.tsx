@@ -234,6 +234,21 @@ function getTikTokCampaignLabel(row: CampaignTikTokReconciliationRow) {
   return "Unknown TikTok campaign";
 }
 
+function getVideoLinkSourceLabel(
+  source: CampaignTikTokReconciliationRow["videoUrlSource"],
+) {
+  switch (source) {
+    case "tiktok_share":
+      return "TikTok share link";
+    case "ads_manager":
+      return "Ads Manager ad link";
+    case "local":
+      return "Local video link";
+    default:
+      return null;
+  }
+}
+
 function formatMatchSource(source: CampaignTikTokReconciliationRow["matchSources"][number]) {
   switch (source) {
     case "report_item_id":
@@ -810,6 +825,9 @@ export default async function CampaignsPage({
                     const matchedAdPreview = row.matchedAdIds.slice(0, 2).join(", ");
                     const extraAdCount = Math.max(row.matchedAdIds.length - 2, 0);
                     const videoHref = row.videoUrl;
+                    const videoLinkSourceLabel = getVideoLinkSourceLabel(
+                      row.videoUrlSource,
+                    );
 
                     return (
                       <tr key={row.rowKey} className="align-top">
@@ -856,6 +874,9 @@ export default async function CampaignsPage({
                                   : "TikTok post ID unavailable"}
                                 {row.publishedAt
                                   ? ` / Published ${formatCampaignDateLabel(row.publishedAt)}`
+                                  : ""}
+                                {videoLinkSourceLabel
+                                  ? ` / ${videoLinkSourceLabel}`
                                   : ""}
                               </p>
                             </div>

@@ -379,47 +379,55 @@ function normalizeResolvedPost(
     return null;
   }
 
+  const title = getFirstString(candidates, [
+    "title",
+    "video_title",
+    "videoTitle",
+    "video_name",
+    "videoName",
+    "caption",
+    "description",
+    "desc",
+    "name",
+    "display_name",
+    "displayName",
+  ]);
+  const coverUrl = getFirstString(candidates, [
+    "cover_url",
+    "coverUrl",
+    "video_cover_url",
+    "videoCoverUrl",
+    "poster_url",
+    "posterUrl",
+    "cover_image_url",
+    "coverImageUrl",
+    "thumbnail_url",
+    "thumbnailUrl",
+    "image_url",
+    "imageUrl",
+  ]);
+  const shareUrl = getFirstString(candidates, [
+    "share_url",
+    "shareUrl",
+    "video_share_url",
+    "videoShareUrl",
+    "tiktok_url",
+    "tiktokUrl",
+    "permalink",
+    "permalink_url",
+    "permalinkUrl",
+    "url",
+  ]);
+
+  if (!title && !coverUrl && !shareUrl) {
+    return null;
+  }
+
   return {
     itemId,
-    title: getFirstString(candidates, [
-      "title",
-      "video_title",
-      "videoTitle",
-      "video_name",
-      "videoName",
-      "caption",
-      "description",
-      "desc",
-      "name",
-      "display_name",
-      "displayName",
-    ]),
-    coverUrl: getFirstString(candidates, [
-      "cover_url",
-      "coverUrl",
-      "video_cover_url",
-      "videoCoverUrl",
-      "poster_url",
-      "posterUrl",
-      "cover_image_url",
-      "coverImageUrl",
-      "thumbnail_url",
-      "thumbnailUrl",
-      "image_url",
-      "imageUrl",
-    ]),
-    shareUrl: getFirstString(candidates, [
-      "share_url",
-      "shareUrl",
-      "video_share_url",
-      "videoShareUrl",
-      "tiktok_url",
-      "tiktokUrl",
-      "permalink",
-      "permalink_url",
-      "permalinkUrl",
-      "url",
-    ]),
+    title,
+    coverUrl,
+    shareUrl,
   };
 }
 
@@ -894,11 +902,11 @@ async function fetchResolvedPostsForAds(args: {
         : []),
       ...(resolvedPostsByItemId.size === 0
         ? [
-            "TikTok exposed Spark item IDs, but not the exact underlying post metadata. Those matches use ad-level labels instead.",
+            "TikTok exposed Spark item IDs, but not the exact underlying public post metadata. Those matches use ad-level labels and Ads Manager ad links when available.",
           ]
         : resolvedPostsByItemId.size < candidateItemIds.length
           ? [
-              `Resolved exact post info for ${resolvedPostsByItemId.size} of ${candidateItemIds.length} known Spark item IDs.`,
+              `Resolved exact public post info for ${resolvedPostsByItemId.size} of ${candidateItemIds.length} known Spark item IDs.`,
             ]
           : []),
     ]),
