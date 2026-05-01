@@ -2093,7 +2093,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       ...resolvedPostLookup.warnings,
       ...(paidViewsBySourceVideoId.size > postLinkLookupItemIds.length
         ? [
-            `TikTok post share URL lookup is limited to the top ${MAX_CAMPAIGN_POST_LINK_LOOKUPS} paid post IDs by views, so lower-volume rows may stay unlinked instead of using guessed URLs.`,
+            `TikTok post share URL lookup is limited to the top ${MAX_CAMPAIGN_POST_LINK_LOOKUPS} paid post IDs by metric value, so lower-volume rows may stay unlinked instead of using guessed URLs.`,
           ]
         : []),
     ]),

@@ -705,13 +705,13 @@ export default async function CampaignsPage({
           </article>
           <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
             <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
-              TikTok views
+              TikTok impressions
             </p>
             <p className="mt-2 text-xl font-medium text-foreground">
-              {formatCampaignMetric(reconciliation.totals.tiktokViews)}
+              {formatCampaignMetric(reconciliation.totals.tiktokImpressions)}
             </p>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              Ads Manager video_play_actions matched to those videos
+              Ads Manager impressions matched to those paid videos
             </p>
           </article>
           <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
@@ -755,7 +755,7 @@ export default async function CampaignsPage({
                       : "Unknown TikTok campaign")}
                 </h3>
                 <p className="mt-2 text-lg font-medium text-foreground">
-                  {formatCampaignMetric(campaignTotal.views)} views
+                  {formatCampaignMetric(campaignTotal.impressions)} impressions
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {formatCampaignMetric(campaignTotal.videos)} video
@@ -798,7 +798,7 @@ export default async function CampaignsPage({
                   <tr className="border-b border-white/[0.08] text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
                     <th className="px-4 py-3 font-medium">Paid video</th>
                     <th className="px-4 py-3 font-medium">TikTok campaign</th>
-                    <th className="px-4 py-3 text-right font-medium">TikTok views</th>
+                    <th className="px-4 py-3 text-right font-medium">TikTok impressions</th>
                     <th className="px-4 py-3 font-medium">Local match</th>
                     <th className="px-4 py-3 text-right font-medium">App views</th>
                     <th className="px-4 py-3 font-medium">Evidence</th>
@@ -877,10 +877,10 @@ export default async function CampaignsPage({
                         </td>
                         <td className="px-4 py-4 text-right">
                           <p className="font-medium text-foreground">
-                            {formatCampaignMetric(row.tiktokViews)}
+                            {formatCampaignMetric(row.tiktokImpressions)}
                           </p>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            {formatCampaignCompactMetric(row.tiktokViews)}
+                            {formatCampaignCompactMetric(row.tiktokImpressions)}
                           </p>
                         </td>
                         <td className="px-4 py-4">

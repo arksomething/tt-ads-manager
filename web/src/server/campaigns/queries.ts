@@ -38,7 +38,7 @@ export type CampaignTikTokReconciliationRow = {
   hasLocalVideoMatch: boolean;
   tiktokCampaignId: string | null;
   tiktokCampaignName: string | null;
-  tiktokViews: number;
+  tiktokImpressions: number;
   reportRowCount: number;
   matchedAdIds: string[];
   statDates: string[];
@@ -49,7 +49,7 @@ export type CampaignTikTokReconciliationCampaignTotal = {
   key: string;
   tiktokCampaignId: string | null;
   tiktokCampaignName: string | null;
-  views: number;
+  impressions: number;
   videos: number;
 };
 
@@ -362,7 +362,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
       totals: {
         videos: 0,
         localViews: 0,
-        tiktokViews: 0,
+        tiktokImpressions: 0,
         matchedVideos: 0,
         tiktokCampaigns: 0,
       },
@@ -373,6 +373,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
     organizationSlug: args.organizationSlug,
     startDate: args.startDate,
     endDate: args.endDate,
+    metric: "impressions",
   });
   const sourceVideoIds = uniqueNonEmptyStrings(
     tiktokReport.rows.map((row) => row.sourceVideoId),
@@ -464,7 +465,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
       rowKey: tiktokRow.rowKey,
       tiktokCampaignId: tiktokRow.tiktokCampaignId,
       tiktokCampaignName: tiktokRow.tiktokCampaignName,
-      tiktokViews: tiktokRow.paidViews,
+      tiktokImpressions: tiktokRow.paidViews,
       reportRowCount: tiktokRow.reportRowCount,
       matchedAdIds: tiktokRow.matchedAdIds,
       statDates: tiktokRow.statDates,
@@ -489,18 +490,18 @@ export async function getCampaignTikTokVideoReconciliation(args: {
         key: campaignKey,
         tiktokCampaignId: row.tiktokCampaignId,
         tiktokCampaignName: row.tiktokCampaignName,
-        views: 0,
+        impressions: 0,
         videos: 0,
       };
 
-    existingTotal.views += row.tiktokViews;
+    existingTotal.impressions += row.tiktokImpressions;
     existingTotal.videos += 1;
     campaignTotalsByKey.set(campaignKey, existingTotal);
   }
 
   const campaignTotals = [...campaignTotalsByKey.values()].sort(
     (left, right) =>
-      right.views - left.views ||
+      right.impressions - left.impressions ||
       (left.tiktokCampaignName ?? left.tiktokCampaignId ?? "").localeCompare(
         right.tiktokCampaignName ?? right.tiktokCampaignId ?? "",
       ),
@@ -517,7 +518,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
     totals: {
       videos: rows.length,
       localViews: videos.reduce((total, video) => total + (video.views ?? 0), 0),
-      tiktokViews: tiktokReport.totalPaidViews,
+      tiktokImpressions: tiktokReport.totalPaidViews,
       matchedVideos: matchedVideoIds.size,
       tiktokCampaigns: campaignTotals.length,
     },
