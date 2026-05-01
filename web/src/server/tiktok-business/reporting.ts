@@ -195,7 +195,8 @@ export type TikTokCampaignVideoMatchSource =
   | "ad_metadata_campaign_id";
 
 export type TikTokCampaignVideoViewRow = {
-  sourceVideoId: string;
+  rowKey: string;
+  sourceVideoId: string | null;
   tiktokCampaignId: string | null;
   tiktokCampaignName: string | null;
   paidViews: number;
@@ -1795,7 +1796,7 @@ async function fetchCampaignAwarePaidReportRows(args: {
 
 export async function getTikTokCampaignVideoViewsForOrganization(args: {
   organizationSlug: string;
-  itemIds: string[];
+  itemIds?: string[];
   startDate: QueryDateInput;
   endDate: QueryDateInput;
   metric?: TikTokPaidViewMetric;
@@ -1809,22 +1810,10 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
   }
 
   const metric = args.metric ?? "videoPlayActions";
-  const itemIds = uniqueNonEmptyStrings(args.itemIds);
+  const itemIds = uniqueNonEmptyStrings(args.itemIds ?? []);
+  const itemIdSet = itemIds.length > 0 ? new Set(itemIds) : null;
   const startDateString = toDateOnlyString(startDate);
   const endDateString = toDateOnlyString(endDate);
-
-  if (itemIds.length === 0) {
-    return {
-      advertiserId: null,
-      metric,
-      startDate: startDateString,
-      endDate: endDateString,
-      totalPaidViews: 0,
-      reportRowCount: 0,
-      rows: [],
-      warnings: [],
-    };
-  }
 
   let accountWarnings: string[] = [];
   let advertiserId: string | null = null;
@@ -1903,11 +1892,11 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       .filter((campaign) => campaignIdSet.has(campaign.campaignId))
       .map((campaign) => [campaign.campaignId, campaign] as const),
   );
-  const itemIdSet = new Set(itemIds);
   const groupedRows = new Map<
     string,
     {
-      sourceVideoId: string;
+      rowKey: string;
+      sourceVideoId: string | null;
       tiktokCampaignId: string | null;
       tiktokCampaignName: string | null;
       paidViews: number;
@@ -1919,10 +1908,14 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
   >();
 
   for (const row of normalizedRows) {
+    if (!Number.isFinite(row.metricValue) || row.metricValue <= 0) {
+      continue;
+    }
+
     const ad = row.adId ? (adsById.get(row.adId) ?? null) : null;
     const sourceVideoId = row.itemId ?? ad?.tiktokItemId ?? null;
 
-    if (!sourceVideoId || !itemIdSet.has(sourceVideoId)) {
+    if (itemIdSet && (!sourceVideoId || !itemIdSet.has(sourceVideoId))) {
       continue;
     }
 
@@ -1933,12 +1926,13 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
         ? (campaignsById.get(tiktokCampaignId)?.campaignName ?? null)
         : null);
     const groupKey = [
-      sourceVideoId,
+      sourceVideoId ?? row.adId ?? "unknown-paid-video",
       tiktokCampaignId ?? tiktokCampaignName ?? "unknown-campaign",
     ].join("::");
     const group =
       groupedRows.get(groupKey) ??
       {
+        rowKey: groupKey,
         sourceVideoId,
         tiktokCampaignId,
         tiktokCampaignName,
@@ -1974,6 +1968,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
 
   const rows = [...groupedRows.values()]
     .map((row) => ({
+      rowKey: row.rowKey,
       sourceVideoId: row.sourceVideoId,
       tiktokCampaignId: row.tiktokCampaignId,
       tiktokCampaignName: row.tiktokCampaignName,
@@ -1989,7 +1984,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
         (left.tiktokCampaignName ?? left.tiktokCampaignId ?? "").localeCompare(
           right.tiktokCampaignName ?? right.tiktokCampaignId ?? "",
         ) ||
-        left.sourceVideoId.localeCompare(right.sourceVideoId),
+        (left.sourceVideoId ?? "").localeCompare(right.sourceVideoId ?? ""),
     );
 
   return {

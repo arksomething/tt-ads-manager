@@ -196,7 +196,22 @@ function formatCampaignCompactMetric(
 
 function getVideoTitle(row: CampaignTikTokReconciliationRow) {
   const title = row.titleOrCaption?.trim();
-  return title && title.length > 0 ? title : `${row.creatorName} on TikTok`;
+
+  if (title && title.length > 0) {
+    return title;
+  }
+
+  if (row.creatorName) {
+    return `${row.creatorName} on TikTok`;
+  }
+
+  if (row.sourceVideoId) {
+    return `TikTok post ${row.sourceVideoId}`;
+  }
+
+  return row.matchedAdIds[0]
+    ? `TikTok ad ${row.matchedAdIds[0]}`
+    : "TikTok paid video";
 }
 
 function getHandleLabel(value: string | null | undefined) {
@@ -216,9 +231,7 @@ function getTikTokCampaignLabel(row: CampaignTikTokReconciliationRow) {
     return `TikTok campaign ${row.tiktokCampaignId}`;
   }
 
-  return row.hasTikTokDelivery
-    ? "Unknown TikTok campaign"
-    : "No matched TikTok campaign";
+  return "Unknown TikTok campaign";
 }
 
 function formatMatchSource(source: CampaignTikTokReconciliationRow["matchSources"][number]) {
@@ -626,9 +639,9 @@ export default async function CampaignsPage({
               Videos by TikTok campaign.
             </h2>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
-              This table keeps every local TikTok video in the selected campaigns
-              visible, then overlays TikTok Ads Manager campaign labels and
-              video_play_actions for the selected date window.
+              This table starts from TikTok Ads Manager paid delivery, then
+              attaches the matching local/viral.app video when the TikTok post ID
+              is available.
             </p>
           </div>
 
@@ -681,13 +694,13 @@ export default async function CampaignsPage({
         <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
             <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
-              Local videos
+              Paid video rows
             </p>
             <p className="mt-2 text-xl font-medium text-foreground">
               {formatCampaignMetric(reconciliation.totals.videos)}
             </p>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              TikTok videos linked to the selected local campaigns
+              TikTok paid video/campaign matches in this date window
             </p>
           </article>
           <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
@@ -703,13 +716,13 @@ export default async function CampaignsPage({
           </article>
           <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
             <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
-              Matched videos
+              Matched local videos
             </p>
             <p className="mt-2 text-xl font-medium text-foreground">
               {formatCampaignMetric(reconciliation.totals.matchedVideos)}
             </p>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
-              Videos with at least one TikTok campaign row in range
+              Paid posts that matched a local/viral.app video record
             </p>
           </article>
           <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
@@ -783,10 +796,10 @@ export default async function CampaignsPage({
               <table className="min-w-[1080px] w-full border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-white/[0.08] text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
-                    <th className="px-4 py-3 font-medium">Video</th>
-                    <th className="px-4 py-3 font-medium">Local campaign</th>
+                    <th className="px-4 py-3 font-medium">Paid video</th>
                     <th className="px-4 py-3 font-medium">TikTok campaign</th>
                     <th className="px-4 py-3 text-right font-medium">TikTok views</th>
+                    <th className="px-4 py-3 font-medium">Local match</th>
                     <th className="px-4 py-3 text-right font-medium">App views</th>
                     <th className="px-4 py-3 font-medium">Evidence</th>
                   </tr>
@@ -796,57 +809,61 @@ export default async function CampaignsPage({
                     const handleLabel = getHandleLabel(row.accountHandle);
                     const matchedAdPreview = row.matchedAdIds.slice(0, 2).join(", ");
                     const extraAdCount = Math.max(row.matchedAdIds.length - 2, 0);
+                    const videoHref = row.videoUrl;
 
                     return (
                       <tr key={row.rowKey} className="align-top">
                         <td className="px-4 py-4">
                           <div className="flex min-w-0 items-start gap-3">
-                            <a
-                              aria-label="Open TikTok video"
-                              className="h-14 w-14 shrink-0 rounded-[0.9rem] border border-white/[0.08] bg-white/[0.05]"
-                              href={row.videoUrl}
-                              rel="noreferrer"
-                              style={
-                                row.thumbnailUrl
-                                  ? getBackgroundImageStyle(row.thumbnailUrl)
-                                  : undefined
-                              }
-                              target="_blank"
-                            />
-                            <div className="min-w-0">
+                            {videoHref ? (
                               <a
-                                className="line-clamp-2 font-medium leading-5 text-foreground transition hover:text-[#90FF4D]"
-                                href={row.videoUrl}
+                                aria-label="Open TikTok video"
+                                className="h-14 w-14 shrink-0 rounded-[0.9rem] border border-white/[0.08] bg-white/[0.05]"
+                                href={videoHref}
                                 rel="noreferrer"
+                                style={
+                                  row.thumbnailUrl
+                                    ? getBackgroundImageStyle(row.thumbnailUrl)
+                                    : undefined
+                                }
                                 target="_blank"
-                              >
-                                {getVideoTitle(row)}
-                              </a>
+                              />
+                            ) : (
+                              <div className="h-14 w-14 shrink-0 rounded-[0.9rem] border border-white/[0.08] bg-white/[0.05]" />
+                            )}
+                            <div className="min-w-0">
+                              {videoHref ? (
+                                <a
+                                  className="line-clamp-2 font-medium leading-5 text-foreground transition hover:text-[#90FF4D]"
+                                  href={videoHref}
+                                  rel="noreferrer"
+                                  target="_blank"
+                                >
+                                  {getVideoTitle(row)}
+                                </a>
+                              ) : (
+                                <p className="line-clamp-2 font-medium leading-5 text-foreground">
+                                  {getVideoTitle(row)}
+                                </p>
+                              )}
                               <p className="mt-1 text-xs text-muted-foreground">
-                                {row.creatorName}
+                                {row.creatorName ?? "No local video match"}
                                 {handleLabel ? ` / ${handleLabel}` : ""}
                               </p>
                               <p className="mt-1 text-xs text-muted-foreground">
-                                Post ID {row.sourceVideoId} / Published{" "}
-                                {formatCampaignDateLabel(row.publishedAt)}
+                                {row.sourceVideoId
+                                  ? `Post ID ${row.sourceVideoId}`
+                                  : "TikTok post ID unavailable"}
+                                {row.publishedAt
+                                  ? ` / Published ${formatCampaignDateLabel(row.publishedAt)}`
+                                  : ""}
                               </p>
                             </div>
                           </div>
                         </td>
                         <td className="px-4 py-4">
-                          <span className="inline-flex max-w-[14rem] rounded-full border border-white/[0.08] bg-white/[0.05] px-3 py-1 text-xs text-foreground">
-                            <span className="truncate">
-                              {row.localCampaignName ?? "Unassigned"}
-                            </span>
-                          </span>
-                        </td>
-                        <td className="px-4 py-4">
                           <div
-                            className={`inline-flex max-w-[18rem] rounded-full border px-3 py-1 text-xs ${
-                              row.hasTikTokDelivery
-                                ? "border-[#90FF4D]/20 bg-[#90FF4D]/10 text-[#D7FFBD]"
-                                : "border-white/[0.08] bg-white/[0.05] text-muted-foreground"
-                            }`}
+                            className="inline-flex max-w-[18rem] rounded-full border border-[#90FF4D]/20 bg-[#90FF4D]/10 px-3 py-1 text-xs text-[#D7FFBD]"
                           >
                             <span className="truncate">
                               {getTikTokCampaignLabel(row)}
@@ -865,6 +882,21 @@ export default async function CampaignsPage({
                           <p className="mt-1 text-xs text-muted-foreground">
                             {formatCampaignCompactMetric(row.tiktokViews)}
                           </p>
+                        </td>
+                        <td className="px-4 py-4">
+                          <span
+                            className={`inline-flex max-w-[14rem] rounded-full border px-3 py-1 text-xs ${
+                              row.hasLocalVideoMatch
+                                ? "border-white/[0.08] bg-white/[0.05] text-foreground"
+                                : "border-[#FFD24D]/20 bg-[#FFD24D]/[0.08] text-[#FFEAB1]"
+                            }`}
+                          >
+                            <span className="truncate">
+                              {row.hasLocalVideoMatch
+                                ? (row.localCampaignName ?? "Unassigned")
+                                : "No local/viral.app match"}
+                            </span>
+                          </span>
                         </td>
                         <td className="px-4 py-4 text-right">
                           <p className="font-medium text-foreground">
@@ -900,7 +932,7 @@ export default async function CampaignsPage({
             </div>
           ) : (
             <div className="px-4 py-8 text-sm leading-6 text-muted-foreground">
-              No TikTok videos are linked to the selected local campaigns yet.
+              TikTok returned no paid video rows for the selected date range.
             </div>
           )}
         </div>

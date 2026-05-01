@@ -23,22 +23,22 @@ type ViewerOrganizationMembership = Pick<
 
 export type CampaignTikTokReconciliationRow = {
   rowKey: string;
-  id: string;
-  sourceVideoId: string;
-  videoUrl: string;
+  localVideoId: string | null;
+  sourceVideoId: string | null;
+  videoUrl: string | null;
   titleOrCaption: string | null;
   publishedAt: Date | null;
-  createdAt: Date;
+  createdAt: Date | null;
   localViews: number | null;
-  creatorName: string;
+  creatorName: string | null;
   accountHandle: string | null;
   thumbnailUrl?: string;
   localCampaignId: string | null;
   localCampaignName: string | null;
+  hasLocalVideoMatch: boolean;
   tiktokCampaignId: string | null;
   tiktokCampaignName: string | null;
   tiktokViews: number;
-  hasTikTokDelivery: boolean;
   reportRowCount: number;
   matchedAdIds: string[];
   statDates: string[];
@@ -323,14 +323,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
   const accessibleCampaignIdSet = new Set(
     accessibleCampaigns.map((campaign) => campaign.id),
   );
-  const selectedCampaignIds =
-    args.campaignIds === undefined
-      ? [...accessibleCampaignIdSet]
-      : uniqueNonEmptyStrings(args.campaignIds).filter((campaignId) =>
-          accessibleCampaignIdSet.has(campaignId),
-        );
-
-  if (selectedCampaignIds.length === 0) {
+  if (accessibleCampaignIdSet.size === 0) {
     return {
       startDate: args.startDate,
       endDate: args.endDate,
@@ -349,18 +342,30 @@ export async function getCampaignTikTokVideoReconciliation(args: {
     };
   }
 
+  const tiktokReport = await getTikTokCampaignVideoViewsForOrganization({
+    organizationSlug: args.organizationSlug,
+    startDate: args.startDate,
+    endDate: args.endDate,
+  });
+  const sourceVideoIds = uniqueNonEmptyStrings(
+    tiktokReport.rows.map((row) => row.sourceVideoId),
+  );
   const videos = await prisma.video.findMany({
     where: {
       platform: Platform.TIKTOK,
       sourceVideoId: {
-        not: null,
-      },
-      campaignId: {
-        in: selectedCampaignIds,
+        in: sourceVideoIds,
       },
       creator: {
         organizationId: membership.organizationId,
       },
+      ...(canManageOrganization(membership.role)
+        ? {}
+        : {
+            campaignId: {
+              in: [...accessibleCampaignIdSet],
+            },
+          }),
     },
     select: {
       id: true,
@@ -391,86 +396,52 @@ export async function getCampaignTikTokVideoReconciliation(args: {
     },
     orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
   });
-
-  const sourceVideoIds = uniqueNonEmptyStrings(
-    videos.map((video) => video.sourceVideoId),
+  const videosBySourceVideoId = new Map(
+    videos
+      .map((video) =>
+        video.sourceVideoId ? ([video.sourceVideoId, video] as const) : null,
+      )
+      .filter(
+        (entry): entry is readonly [string, (typeof videos)[number]] =>
+          entry !== null,
+      ),
   );
-  const tiktokReport = await getTikTokCampaignVideoViewsForOrganization({
-    organizationSlug: args.organizationSlug,
-    itemIds: sourceVideoIds,
-    startDate: args.startDate,
-    endDate: args.endDate,
-  });
-  const tiktokRowsBySourceVideoId = new Map<
-    string,
-    typeof tiktokReport.rows
-  >();
 
-  for (const row of tiktokReport.rows) {
-    const existingRows = tiktokRowsBySourceVideoId.get(row.sourceVideoId) ?? [];
-    tiktokRowsBySourceVideoId.set(row.sourceVideoId, [...existingRows, row]);
-  }
+  const rows = tiktokReport.rows.map((tiktokRow) => {
+    const video = tiktokRow.sourceVideoId
+      ? (videosBySourceVideoId.get(tiktokRow.sourceVideoId) ?? null)
+      : null;
 
-  const rows = videos.flatMap((video) => {
-    const sourceVideoId = video.sourceVideoId;
-
-    if (!sourceVideoId) {
-      return [];
-    }
-
-    const tiktokRows = tiktokRowsBySourceVideoId.get(sourceVideoId) ?? [];
-    const baseRow = {
-      id: video.id,
-      sourceVideoId,
-      videoUrl: video.videoUrl,
-      titleOrCaption: video.titleOrCaption,
-      publishedAt: video.publishedAt,
-      createdAt: video.createdAt,
-      localViews: video.views,
-      creatorName: video.creator.displayName,
-      accountHandle: video.creatorPlatformAccount?.handle ?? null,
+    return {
+      localVideoId: video?.id ?? null,
+      sourceVideoId: tiktokRow.sourceVideoId,
+      videoUrl:
+        video?.videoUrl ??
+        (tiktokRow.sourceVideoId
+          ? `https://www.tiktok.com/video/${encodeURIComponent(tiktokRow.sourceVideoId)}`
+          : null),
+      titleOrCaption: video?.titleOrCaption ?? null,
+      publishedAt: video?.publishedAt ?? null,
+      createdAt: video?.createdAt ?? null,
+      localViews: video?.views ?? null,
+      creatorName: video?.creator.displayName ?? null,
+      accountHandle: video?.creatorPlatformAccount?.handle ?? null,
       thumbnailUrl:
-        getVideoThumbnailUrl(video.rawPayload) ??
-        getAccountImageUrl(video.rawPayload) ??
-        getAccountImageUrl(video.creatorPlatformAccount?.rawPayload),
-      localCampaignId: video.campaign?.id ?? null,
-      localCampaignName: video.campaign?.name ?? null,
-    };
-
-    if (tiktokRows.length === 0) {
-      return [
-        {
-          ...baseRow,
-          rowKey: `${video.id}:no-tiktok-campaign`,
-          tiktokCampaignId: null,
-          tiktokCampaignName: null,
-          tiktokViews: 0,
-          hasTikTokDelivery: false,
-          reportRowCount: 0,
-          matchedAdIds: [],
-          statDates: [],
-          matchSources: [],
-        } satisfies CampaignTikTokReconciliationRow,
-      ];
-    }
-
-    return tiktokRows.map((tiktokRow) => ({
-      ...baseRow,
-      rowKey: [
-        video.id,
-        tiktokRow.tiktokCampaignId ??
-          tiktokRow.tiktokCampaignName ??
-          "unknown-tiktok-campaign",
-      ].join(":"),
+        getVideoThumbnailUrl(video?.rawPayload) ??
+        getAccountImageUrl(video?.rawPayload) ??
+        getAccountImageUrl(video?.creatorPlatformAccount?.rawPayload),
+      localCampaignId: video?.campaign?.id ?? null,
+      localCampaignName: video?.campaign?.name ?? null,
+      hasLocalVideoMatch: Boolean(video),
+      rowKey: tiktokRow.rowKey,
       tiktokCampaignId: tiktokRow.tiktokCampaignId,
       tiktokCampaignName: tiktokRow.tiktokCampaignName,
       tiktokViews: tiktokRow.paidViews,
-      hasTikTokDelivery: tiktokRow.paidViews > 0,
       reportRowCount: tiktokRow.reportRowCount,
       matchedAdIds: tiktokRow.matchedAdIds,
       statDates: tiktokRow.statDates,
       matchSources: tiktokRow.matchSources,
-    })) satisfies CampaignTikTokReconciliationRow[];
+    } satisfies CampaignTikTokReconciliationRow;
   });
   const campaignTotalsByKey = new Map<
     string,
@@ -479,11 +450,9 @@ export async function getCampaignTikTokVideoReconciliation(args: {
   const matchedVideoIds = new Set<string>();
 
   for (const row of rows) {
-    if (!row.hasTikTokDelivery) {
-      continue;
+    if (row.localVideoId) {
+      matchedVideoIds.add(row.localVideoId);
     }
-
-    matchedVideoIds.add(row.id);
     const campaignKey =
       row.tiktokCampaignId ?? row.tiktokCampaignName ?? "unknown-tiktok-campaign";
     const existingTotal =
@@ -518,9 +487,9 @@ export async function getCampaignTikTokVideoReconciliation(args: {
     rows,
     campaignTotals,
     totals: {
-      videos: videos.length,
+      videos: rows.length,
       localViews: videos.reduce((total, video) => total + (video.views ?? 0), 0),
-      tiktokViews: rows.reduce((total, row) => total + row.tiktokViews, 0),
+      tiktokViews: tiktokReport.totalPaidViews,
       matchedVideos: matchedVideoIds.size,
       tiktokCampaigns: campaignTotals.length,
     },
