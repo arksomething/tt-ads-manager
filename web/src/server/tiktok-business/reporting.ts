@@ -48,7 +48,23 @@ const campaignPaidReportDimensions = [
   "item_id",
 ] as const;
 const adCampaignFieldCandidates: Array<readonly string[] | undefined> = [
-  ["ad_id", "ad_name", "campaign_id", "adgroup_id", "tiktok_item_id", "item_id"],
+  [
+    "ad_id",
+    "ad_name",
+    "campaign_id",
+    "adgroup_id",
+    "tiktok_item_id",
+    "item_id",
+    "display_name",
+  ],
+  [
+    "ad_id",
+    "ad_name",
+    "campaign_id",
+    "adgroup_id",
+    "tiktok_item_id",
+    "display_name",
+  ],
   ["ad_id", "ad_name", "campaign_id", "adgroup_id", "tiktok_item_id"],
   ["ad_id", "campaign_id", "adgroup_id", "tiktok_item_id"],
   ["ad_id", "campaign_id"],
@@ -131,6 +147,7 @@ type TikTokAdCampaignMetadata = {
   adgroupId: string | null;
   tiktokItemId: string | null;
   adName: string | null;
+  displayName: string | null;
 };
 
 type TikTokCampaignMetadata = {
@@ -242,14 +259,16 @@ export type TikTokCampaignVideoViewRow = {
   tiktokCampaignName: string | null;
   tiktokAdgroupId: string | null;
   tiktokAdgroupName: string | null;
+  tiktokAdSourceName: string | null;
   tiktokAdId: string | null;
   tiktokAdName: string | null;
   paidViews: number;
   spend: number;
   clicks: number;
   conversions: number;
-  attributedRevenue: number;
+  attributedRevenue: number | null;
   singularMatchedRowCount: number;
+  singularRevenueReadyRowCount: number;
   singularMatchSources: TikTokCampaignSingularMatchSource[];
   reportRowCount: number;
   matchedAdIds: string[];
@@ -266,7 +285,7 @@ export type TikTokCampaignVideoViewsResult = {
   totalSpend: number;
   totalClicks: number;
   totalConversions: number;
-  totalAttributedRevenue: number;
+  totalAttributedRevenue: number | null;
   singularCohortPeriod: string | null;
   reportRowCount: number;
   rows: TikTokCampaignVideoViewRow[];
@@ -634,6 +653,7 @@ function normalizeAdCampaignMetadata(
       "itemId",
     ]),
     adName: getFirstString(candidates, ["ad_name", "adName"]),
+    displayName: getFirstString(candidates, ["display_name", "displayName"]),
   };
 }
 
@@ -2496,6 +2516,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       tiktokCampaignName: string | null;
       tiktokAdgroupId: string | null;
       tiktokAdgroupName: string | null;
+      tiktokAdSourceName: string | null;
       tiktokAdId: string | null;
       tiktokAdName: string | null;
       paidViews: number;
@@ -2554,6 +2575,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
         tiktokCampaignName,
         tiktokAdgroupId,
         tiktokAdgroupName,
+        tiktokAdSourceName: ad?.displayName ?? null,
         tiktokAdId: row.adId,
         tiktokAdName: ad?.adName ?? null,
         paidViews: 0,
@@ -2580,6 +2602,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
 
     group.tiktokCampaignName ??= tiktokCampaignName;
     group.tiktokAdgroupName ??= tiktokAdgroupName;
+    group.tiktokAdSourceName ??= ad?.displayName ?? null;
     group.tiktokAdName ??= ad?.adName ?? null;
     group.paidViews += row.metricValue;
     group.spend += row.metricValues?.spend ?? 0;
@@ -2629,6 +2652,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
         tiktokCampaignName: row.tiktokCampaignName,
         tiktokAdgroupId: row.tiktokAdgroupId,
         tiktokAdgroupName: row.tiktokAdgroupName,
+        tiktokAdSourceName: row.tiktokAdSourceName,
         tiktokAdId: row.tiktokAdId,
         tiktokAdName: row.tiktokAdName,
         paidViews: row.paidViews,

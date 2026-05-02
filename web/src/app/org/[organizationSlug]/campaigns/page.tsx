@@ -318,8 +318,25 @@ function getTikTokAdLabel(row: CampaignTikTokReconciliationRow) {
   return "Unknown ad";
 }
 
+function getTikTokSourceContentLabel(row: CampaignTikTokReconciliationRow) {
+  if (row.tiktokAdSourceName) {
+    return row.tiktokAdSourceName;
+  }
+
+  if (row.titleOrCaption) {
+    return row.titleOrCaption;
+  }
+
+  if (row.sourceVideoId) {
+    return `TikTok post ${row.sourceVideoId}`;
+  }
+
+  return null;
+}
+
 function getAdsManagerPathSegments(row: CampaignTikTokReconciliationRow) {
-  return [
+  const sourceContentLabel = getTikTokSourceContentLabel(row);
+  const segments = [
     {
       label: "Campaign",
       name: getTikTokCampaignLabel(row),
@@ -330,12 +347,24 @@ function getAdsManagerPathSegments(row: CampaignTikTokReconciliationRow) {
       name: getTikTokAdgroupLabel(row),
       id: row.tiktokAdgroupId,
     },
+    sourceContentLabel
+      ? {
+          label: "Source content",
+          name: sourceContentLabel,
+          id: row.sourceVideoId,
+        }
+      : null,
     {
       label: "Ad",
       name: getTikTokAdLabel(row),
       id: row.tiktokAdId,
     },
   ];
+
+  return segments.filter(
+    (segment): segment is Exclude<(typeof segments)[number], null> =>
+      segment !== null,
+  );
 }
 
 function getVideoLinkSourceLabel(
