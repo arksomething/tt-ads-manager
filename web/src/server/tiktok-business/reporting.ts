@@ -830,19 +830,23 @@ function addArrayMapEntry<ValueType>(
 
 function getSingularItemMatchSources(args: {
   row: TikTokSingularReportRow;
-  sourceVideoId: string;
+  candidateIds: Set<string>;
 }) {
   const sources: TikTokCampaignSingularMatchSource[] = [];
 
-  if (args.row.creativeId?.trim() === args.sourceVideoId) {
+  const creativeId = args.row.creativeId?.trim() ?? "";
+  const tiktokPostId = args.row.tiktokPostId?.trim() ?? "";
+  const videoIdFromUrl = extractTikTokVideoIdFromUrl(args.row.creativeUrl);
+
+  if (creativeId.length > 0 && args.candidateIds.has(creativeId)) {
     sources.push("singular_creative_id");
   }
 
-  if (args.row.tiktokPostId?.trim() === args.sourceVideoId) {
+  if (tiktokPostId.length > 0 && args.candidateIds.has(tiktokPostId)) {
     sources.push("singular_tiktok_post_id");
   }
 
-  if (extractTikTokVideoIdFromUrl(args.row.creativeUrl) === args.sourceVideoId) {
+  if (videoIdFromUrl && args.candidateIds.has(videoIdFromUrl)) {
     sources.push("singular_post_url");
   }
 
@@ -893,10 +897,16 @@ function buildCampaignSingularMatcher(singular: Awaited<ReturnType<typeof getTik
 
   return (args: {
     sourceVideoId: string | null;
+    candidateIds?: readonly string[];
     tiktokCampaignId: string | null;
     tiktokCampaignName: string | null;
   }) => {
-    if (!args.sourceVideoId) {
+    const candidateIds = uniqueNonEmptyStrings([
+      args.sourceVideoId,
+      ...(args.candidateIds ?? []),
+    ]);
+
+    if (candidateIds.length === 0) {
       return {
         attributedRevenue: null,
         singularMatchedRowCount: 0,
@@ -907,8 +917,10 @@ function buildCampaignSingularMatcher(singular: Awaited<ReturnType<typeof getTik
 
     const candidateRowsByKey = new Map<string, (typeof singular.rows)[number]>();
 
-    for (const row of rowsByItemId.get(args.sourceVideoId) ?? []) {
-      candidateRowsByKey.set(row.rowKey, row);
+    for (const candidateId of candidateIds) {
+      for (const row of rowsByItemId.get(candidateId) ?? []) {
+        candidateRowsByKey.set(row.rowKey, row);
+      }
     }
 
     const candidateRows = [...candidateRowsByKey.values()];
@@ -934,11 +946,12 @@ function buildCampaignSingularMatcher(singular: Awaited<ReturnType<typeof getTik
       campaignMatchedRows.length > 0 ? campaignMatchedRows : candidateRows;
     const revenueReadyRows = matchedRows.filter((row) => row.revenueAvailable);
     const matchSources = new Set<TikTokCampaignSingularMatchSource>();
+    const candidateIdSet = new Set(candidateIds);
 
     for (const row of matchedRows) {
       for (const source of getSingularItemMatchSources({
         row,
-        sourceVideoId: args.sourceVideoId,
+        candidateIds: candidateIdSet,
       })) {
         matchSources.add(source);
       }
@@ -2825,6 +2838,11 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       const singularMetrics =
         matchSingularCampaignRow?.({
           sourceVideoId: row.sourceVideoId,
+          candidateIds: uniqueNonEmptyStrings([
+            row.tiktokAdId,
+            row.tiktokSmartPlusAdId,
+            ...matchedAdIds,
+          ]),
           tiktokCampaignId: row.tiktokCampaignId,
           tiktokCampaignName: row.tiktokCampaignName,
         }) ?? null;
