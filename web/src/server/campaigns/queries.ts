@@ -15,6 +15,8 @@ import {
 
 const CAMPAIGN_CREATOR_PREVIEW_LIMIT = 12;
 const CAMPAIGN_VIDEO_PREVIEW_LIMIT = 12;
+const CAMPAIGN_TIKTOK_RECONCILIATION_CACHE_TTL_MS = 2 * 60 * 1000;
+const CAMPAIGN_TIKTOK_RECONCILIATION_CACHE_MAX_ENTRIES = 40;
 
 type ViewerOrganizationMembership = Pick<
   OrganizationMembership,
@@ -363,13 +365,15 @@ function getCampaignVideoLink(args: {
   }
 }
 
-export async function getCampaignTikTokVideoReconciliation(args: {
-  organizationSlug: string;
-  campaignIds?: string[];
-  startDate: string;
-  endDate: string;
-}) {
-  const membership = await requireOrganizationMembership(args.organizationSlug);
+async function buildCampaignTikTokVideoReconciliation(
+  args: {
+    organizationSlug: string;
+    campaignIds?: string[];
+    startDate: string;
+    endDate: string;
+  },
+  membership: ViewerOrganizationMembership,
+) {
   const accessibleCampaigns = await prisma.campaign.findMany({
     where: getAccessibleCampaignWhere(membership),
     select: {
@@ -644,6 +648,94 @@ export async function getCampaignTikTokVideoReconciliation(args: {
       tiktokCampaigns: campaignTotals.length,
     },
   };
+}
+
+type CampaignTikTokVideoReconciliationResult = Awaited<
+  ReturnType<typeof buildCampaignTikTokVideoReconciliation>
+>;
+
+const campaignTikTokReconciliationCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    promise: Promise<CampaignTikTokVideoReconciliationResult>;
+  }
+>();
+
+function pruneCampaignTikTokReconciliationCache(now: number) {
+  for (const [key, entry] of campaignTikTokReconciliationCache) {
+    if (entry.expiresAt <= now) {
+      campaignTikTokReconciliationCache.delete(key);
+    }
+  }
+
+  while (
+    campaignTikTokReconciliationCache.size >
+    CAMPAIGN_TIKTOK_RECONCILIATION_CACHE_MAX_ENTRIES
+  ) {
+    const oldestKey = campaignTikTokReconciliationCache.keys().next().value;
+
+    if (!oldestKey) {
+      break;
+    }
+
+    campaignTikTokReconciliationCache.delete(oldestKey);
+  }
+}
+
+function getCampaignTikTokReconciliationCacheKey(
+  args: {
+    organizationSlug: string;
+    campaignIds?: string[];
+    startDate: string;
+    endDate: string;
+  },
+  membership: ViewerOrganizationMembership,
+) {
+  return JSON.stringify({
+    organizationId: membership.organizationId,
+    userId: membership.userId,
+    role: membership.role,
+    organizationSlug: args.organizationSlug,
+    campaignIds: [...new Set(args.campaignIds ?? [])].sort(),
+    startDate: args.startDate,
+    endDate: args.endDate,
+  });
+}
+
+export async function getCampaignTikTokVideoReconciliation(args: {
+  organizationSlug: string;
+  campaignIds?: string[];
+  startDate: string;
+  endDate: string;
+}) {
+  const membership = await requireOrganizationMembership(args.organizationSlug);
+  const now = Date.now();
+  pruneCampaignTikTokReconciliationCache(now);
+
+  const cacheKey = getCampaignTikTokReconciliationCacheKey(args, membership);
+  const cached = campaignTikTokReconciliationCache.get(cacheKey);
+
+  if (cached && cached.expiresAt > now) {
+    return cached.promise;
+  }
+
+  const promise = buildCampaignTikTokVideoReconciliation(args, membership);
+
+  campaignTikTokReconciliationCache.set(cacheKey, {
+    expiresAt: now + CAMPAIGN_TIKTOK_RECONCILIATION_CACHE_TTL_MS,
+    promise,
+  });
+
+  promise.catch(() => {
+    const current = campaignTikTokReconciliationCache.get(cacheKey);
+
+    if (current?.promise === promise) {
+      campaignTikTokReconciliationCache.delete(cacheKey);
+    }
+  });
+
+  return promise;
 }
 
 export async function getCampaignAccess(

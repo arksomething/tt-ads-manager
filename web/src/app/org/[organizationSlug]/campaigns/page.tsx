@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { CampaignRole } from "@/lib/prisma-shim";
 import { redirect } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, type ReactNode } from "react";
 
 import {
   CampaignDetailPanel,
@@ -47,6 +47,9 @@ type CampaignDeleteState = {
   payoutsCount: number;
 };
 type ReconciliationView = "performance" | "hierarchy";
+type CampaignTikTokReconciliation = Awaited<
+  ReturnType<typeof getCampaignTikTokVideoReconciliation>
+>;
 type HierarchyMetrics = {
   impressions: number;
   spend: number;
@@ -737,6 +740,54 @@ function getErrorLabel(value: string | undefined) {
   return value.startsWith("NEXT_REDIRECT") ? undefined : value;
 }
 
+async function CampaignTikTokReconciliationLoader({
+  children,
+  reconciliationPromise,
+}: {
+  children: (reconciliation: CampaignTikTokReconciliation) => ReactNode;
+  reconciliationPromise: Promise<CampaignTikTokReconciliation>;
+}) {
+  const reconciliation = await reconciliationPromise;
+
+  return <>{children(reconciliation)}</>;
+}
+
+function CampaignTikTokReconciliationSkeleton() {
+  return (
+    <section className="rounded-[1.7rem] border border-white/[0.08] bg-white/[0.03] p-6 shadow-[0_22px_70px_rgba(0,0,0,0.2)]">
+      <div className="max-w-3xl">
+        <p className="text-[0.62rem] uppercase tracking-[0.24em] text-muted-foreground">
+          TikTok reconciliation
+        </p>
+        <h2 className="mt-3 text-2xl font-medium text-foreground">
+          Loading paid ad rows.
+        </h2>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+          The rest of Campaigns is ready while TikTok Ads Manager data loads.
+        </p>
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-7">
+        {Array.from({ length: 7 }, (_, index) => (
+          <article
+            className="min-h-32 animate-pulse rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4"
+            key={index}
+          >
+            <div className="h-3 w-24 rounded-full bg-white/[0.08]" />
+            <div className="mt-4 h-6 w-16 rounded-full bg-white/[0.08]" />
+            <div className="mt-4 h-3 w-full rounded-full bg-white/[0.06]" />
+            <div className="mt-2 h-3 w-4/5 rounded-full bg-white/[0.06]" />
+          </article>
+        ))}
+      </div>
+
+      <div className="mt-5 rounded-[1.15rem] border border-white/[0.08] bg-black/[0.16] px-4 py-8 text-sm leading-6 text-muted-foreground">
+        Loading TikTok Ads Manager hierarchy and performance rows...
+      </div>
+    </section>
+  );
+}
+
 export default async function CampaignsPage({
   params,
   searchParams,
@@ -754,7 +805,7 @@ export default async function CampaignsPage({
   );
   const reconciliationDateRange =
     getReconciliationDateRange(resolvedSearchParams);
-  const reconciliation = await getCampaignTikTokVideoReconciliation({
+  const reconciliationPromise = getCampaignTikTokVideoReconciliation({
     organizationSlug,
     campaignIds: visibleCampaignIds,
     startDate: reconciliationDateRange.startDate,
@@ -815,14 +866,6 @@ export default async function CampaignsPage({
       : canDeleteActiveCampaign
         ? getCampaignDeleteMessage(activeCampaignDeleteState)
         : "Only organization admins/owners and campaign owners can delete this campaign.";
-  const totalRoas = getCampaignRatio(
-    reconciliation.totals.attributedRevenue,
-    reconciliation.totals.tiktokSpend,
-  );
-  const reconciliationHierarchy =
-    reconciliationView === "hierarchy"
-      ? buildReconciliationHierarchy(reconciliation.rows)
-      : [];
 
   async function createCampaignAction(formData: FormData) {
     "use server";
@@ -1061,6 +1104,21 @@ export default async function CampaignsPage({
         </article>
       </section>
 
+      <Suspense fallback={<CampaignTikTokReconciliationSkeleton />}>
+        <CampaignTikTokReconciliationLoader
+          reconciliationPromise={reconciliationPromise}
+        >
+          {(reconciliation) => {
+            const totalRoas = getCampaignRatio(
+              reconciliation.totals.attributedRevenue,
+              reconciliation.totals.tiktokSpend,
+            );
+            const reconciliationHierarchy =
+              reconciliationView === "hierarchy"
+                ? buildReconciliationHierarchy(reconciliation.rows)
+                : [];
+
+            return (
       <section className="rounded-[1.7rem] border border-white/[0.08] bg-white/[0.03] p-6 shadow-[0_22px_70px_rgba(0,0,0,0.2)]">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="max-w-3xl">
@@ -1763,6 +1821,10 @@ export default async function CampaignsPage({
         </div>
         )}
       </section>
+            );
+          }}
+        </CampaignTikTokReconciliationLoader>
+      </Suspense>
 
       <section className="rounded-[1.7rem] border border-white/[0.08] bg-white/[0.03] p-6 shadow-[0_22px_70px_rgba(0,0,0,0.2)]">
         <p className="text-[0.62rem] uppercase tracking-[0.24em] text-muted-foreground">
