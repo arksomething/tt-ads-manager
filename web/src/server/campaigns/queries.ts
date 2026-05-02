@@ -26,7 +26,8 @@ export type CampaignTikTokReconciliationRow = {
   localVideoId: string | null;
   sourceVideoId: string | null;
   videoUrl: string | null;
-  videoUrlSource: "preview" | "tiktok_share" | "ads_manager" | "local" | null;
+  videoUrlSource: "preview" | "tiktok_share" | "local" | null;
+  tiktokAdsManagerUrl: string | null;
   titleOrCaption: string | null;
   publishedAt: Date | null;
   createdAt: Date | null;
@@ -47,6 +48,8 @@ export type CampaignTikTokReconciliationRow = {
   tiktokSpend: number;
   tiktokClicks: number;
   tiktokConversions: number;
+  attributedRevenue: number;
+  singularMatchedRowCount: number;
   reportRowCount: number;
   matchedAdIds: string[];
   statDates: string[];
@@ -61,6 +64,7 @@ export type CampaignTikTokReconciliationCampaignTotal = {
   spend: number;
   clicks: number;
   conversions: number;
+  revenue: number;
   videos: number;
 };
 
@@ -318,7 +322,6 @@ function getCampaignVideoLink(args: {
   previewUrl: string | null | undefined;
   localVideoUrl: string | null | undefined;
   resolvedPostUrl: string | null | undefined;
-  adsManagerUrl: string | null | undefined;
 }) {
   if (args.previewUrl) {
     return {
@@ -335,12 +338,7 @@ function getCampaignVideoLink(args: {
   }
 
   if (!args.localVideoUrl) {
-    return args.adsManagerUrl
-      ? {
-          href: args.adsManagerUrl,
-          source: "ads_manager" as const,
-        }
-      : null;
+    return null;
   }
 
   try {
@@ -349,12 +347,7 @@ function getCampaignVideoLink(args: {
     const pathname = url.pathname.replace(/\/+$/, "");
 
     if (host === "tiktok.com" && /^\/video\/\d+$/.test(pathname)) {
-      return args.adsManagerUrl
-        ? {
-            href: args.adsManagerUrl,
-            source: "ads_manager" as const,
-          }
-        : null;
+      return null;
     }
 
     return {
@@ -362,12 +355,7 @@ function getCampaignVideoLink(args: {
       source: "local" as const,
     };
   } catch {
-    return args.adsManagerUrl
-      ? {
-          href: args.adsManagerUrl,
-          source: "ads_manager" as const,
-        }
-      : null;
+    return null;
   }
 }
 
@@ -396,6 +384,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
       startDate: args.startDate,
       endDate: args.endDate,
       advertiserId: null,
+      singularCohortPeriod: null as string | null,
       reportRowCount: 0,
       warnings: [] as string[],
       rows: [] as CampaignTikTokReconciliationRow[],
@@ -407,6 +396,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
         tiktokSpend: 0,
         tiktokClicks: 0,
         tiktokConversions: 0,
+        attributedRevenue: 0,
         matchedVideos: 0,
         tiktokCampaigns: 0,
       },
@@ -419,6 +409,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
     endDate: args.endDate,
     metric: "impressions",
     includePerformanceMetrics: true,
+    includeSingularRevenue: true,
   });
   const sourceVideoIds = uniqueNonEmptyStrings(
     tiktokReport.rows.map((row) => row.sourceVideoId),
@@ -536,7 +527,6 @@ export async function getCampaignTikTokVideoReconciliation(args: {
       previewUrl,
       localVideoUrl: video?.videoUrl,
       resolvedPostUrl: tiktokRow.resolvedPostUrl,
-      adsManagerUrl: tiktokRow.adsManagerUrl,
     });
 
     return {
@@ -544,6 +534,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
       sourceVideoId: tiktokRow.sourceVideoId,
       videoUrl: videoLink?.href ?? null,
       videoUrlSource: videoLink?.source ?? null,
+      tiktokAdsManagerUrl: tiktokRow.adsManagerUrl,
       titleOrCaption: video?.titleOrCaption ?? tiktokRow.resolvedPostTitle,
       publishedAt: video?.publishedAt ?? null,
       createdAt: video?.createdAt ?? null,
@@ -570,6 +561,8 @@ export async function getCampaignTikTokVideoReconciliation(args: {
       tiktokSpend: tiktokRow.spend,
       tiktokClicks: tiktokRow.clicks,
       tiktokConversions: tiktokRow.conversions,
+      attributedRevenue: tiktokRow.attributedRevenue,
+      singularMatchedRowCount: tiktokRow.singularMatchedRowCount,
       reportRowCount: tiktokRow.reportRowCount,
       matchedAdIds: tiktokRow.matchedAdIds,
       statDates: tiktokRow.statDates,
@@ -598,6 +591,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
         spend: 0,
         clicks: 0,
         conversions: 0,
+        revenue: 0,
         videos: 0,
       };
 
@@ -605,6 +599,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
     existingTotal.spend += row.tiktokSpend;
     existingTotal.clicks += row.tiktokClicks;
     existingTotal.conversions += row.tiktokConversions;
+    existingTotal.revenue += row.attributedRevenue;
     existingTotal.videos += 1;
     campaignTotalsByKey.set(campaignKey, existingTotal);
   }
@@ -621,6 +616,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
     startDate: tiktokReport.startDate,
     endDate: tiktokReport.endDate,
     advertiserId: tiktokReport.advertiserId,
+    singularCohortPeriod: tiktokReport.singularCohortPeriod,
     reportRowCount: tiktokReport.reportRowCount,
     warnings: [...tiktokReport.warnings, ...previewWarnings],
     rows,
@@ -632,6 +628,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
       tiktokSpend: tiktokReport.totalSpend,
       tiktokClicks: tiktokReport.totalClicks,
       tiktokConversions: tiktokReport.totalConversions,
+      attributedRevenue: tiktokReport.totalAttributedRevenue,
       matchedVideos: matchedVideoIds.size,
       tiktokCampaigns: campaignTotals.length,
     },

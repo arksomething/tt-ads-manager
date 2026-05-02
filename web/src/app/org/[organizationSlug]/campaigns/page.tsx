@@ -244,6 +244,16 @@ function getCampaignRatio(
   return numerator / denominator;
 }
 
+function formatCampaignRoas(value: number | null | undefined, fallback = "--") {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return `${campaignNumberFormatter.format(
+    Math.round(value * 100) / 100,
+  )}x`;
+}
+
 function getVideoTitle(row: CampaignTikTokReconciliationRow) {
   const title = row.titleOrCaption?.trim();
 
@@ -316,8 +326,6 @@ function getVideoLinkSourceLabel(
       return "Preview URL";
     case "tiktok_share":
       return "TikTok share link";
-    case "ads_manager":
-      return "Ads Manager ad link";
     case "local":
       return "Local video link";
     default:
@@ -511,6 +519,10 @@ export default async function CampaignsPage({
       : canDeleteActiveCampaign
         ? getCampaignDeleteMessage(activeCampaignDeleteState)
         : "Only organization admins/owners and campaign owners can delete this campaign.";
+  const totalRoas = getCampaignRatio(
+    reconciliation.totals.attributedRevenue,
+    reconciliation.totals.tiktokSpend,
+  );
 
   async function createCampaignAction(formData: FormData) {
     "use server";
@@ -811,7 +823,7 @@ export default async function CampaignsPage({
           </form>
         </div>
 
-        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-7">
           <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
             <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
               Paid video rows
@@ -858,6 +870,20 @@ export default async function CampaignsPage({
           </article>
           <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
             <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+              ROAS
+            </p>
+            <p className="mt-2 text-xl font-medium text-foreground">
+              {formatCampaignRoas(totalRoas)}
+            </p>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              {formatCampaignCurrency(reconciliation.totals.attributedRevenue)}{" "}
+              {reconciliation.singularCohortPeriod
+                ? `Singular ${reconciliation.singularCohortPeriod} revenue / TikTok cost`
+                : "Singular revenue / TikTok cost"}
+            </p>
+          </article>
+          <article className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.22] p-4">
+            <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
               Matched local videos
             </p>
             <p className="mt-2 text-xl font-medium text-foreground">
@@ -887,6 +913,10 @@ export default async function CampaignsPage({
                 campaignTotal.spend,
                 campaignTotal.conversions,
               );
+              const roas = getCampaignRatio(
+                campaignTotal.revenue,
+                campaignTotal.spend,
+              );
 
               return (
                 <article
@@ -911,6 +941,10 @@ export default async function CampaignsPage({
                     {costPerResult !== null
                       ? ` / ${formatCampaignCurrency(costPerResult)} CPA`
                       : ""}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {formatCampaignCurrency(campaignTotal.revenue)} revenue /{" "}
+                    {formatCampaignRoas(roas)} ROAS
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {formatCampaignMetric(campaignTotal.videos)} paid row
@@ -975,7 +1009,7 @@ export default async function CampaignsPage({
         <div className="mt-5 overflow-hidden rounded-[1.15rem] border border-white/[0.08] bg-black/[0.16]">
           {reconciliation.rows.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="min-w-[1780px] w-full border-collapse text-left text-sm">
+              <table className="min-w-[1900px] w-full border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-white/[0.08] text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
                     <th className="px-4 py-3 font-medium">Paid video</th>
@@ -986,6 +1020,7 @@ export default async function CampaignsPage({
                     <th className="px-4 py-3 text-right font-medium">Cost</th>
                     <th className="px-4 py-3 text-right font-medium">Clicks / CTR</th>
                     <th className="px-4 py-3 text-right font-medium">Results / CPA</th>
+                    <th className="px-4 py-3 text-right font-medium">Revenue / ROAS</th>
                     <th className="px-4 py-3 font-medium">Local match</th>
                     <th className="px-4 py-3 text-right font-medium">App views</th>
                     <th className="px-4 py-3 font-medium">Evidence</th>
@@ -1015,6 +1050,10 @@ export default async function CampaignsPage({
                     const resultRate = getCampaignRatio(
                       row.tiktokConversions,
                       row.tiktokImpressions,
+                    );
+                    const roas = getCampaignRatio(
+                      row.attributedRevenue,
+                      row.tiktokSpend,
                     );
 
                     return (
@@ -1103,6 +1142,16 @@ export default async function CampaignsPage({
                               ID {row.tiktokAdId}
                             </p>
                           ) : null}
+                          {row.tiktokAdsManagerUrl ? (
+                            <a
+                              className="mt-1 inline-flex text-xs font-medium text-[#D7FFBD] underline underline-offset-4"
+                              href={row.tiktokAdsManagerUrl}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              Manage ad
+                            </a>
+                          ) : null}
                         </td>
                         <td className="px-4 py-4 text-right">
                           <p className="font-medium text-foreground">
@@ -1137,6 +1186,19 @@ export default async function CampaignsPage({
                           </p>
                           <p className="mt-1 text-xs text-muted-foreground">
                             {formatCampaignPercent(resultRate)} result rate
+                          </p>
+                        </td>
+                        <td className="px-4 py-4 text-right">
+                          <p className="font-medium text-foreground">
+                            {formatCampaignCurrency(row.attributedRevenue)}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {formatCampaignRoas(roas)} ROAS
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {formatCampaignMetric(row.singularMatchedRowCount)}{" "}
+                            Singular row
+                            {row.singularMatchedRowCount === 1 ? "" : "s"}
                           </p>
                         </td>
                         <td className="px-4 py-4">

@@ -2,7 +2,10 @@ import { Platform, SparkAuthorizationStatus } from "@/lib/prisma-shim";
 
 import { prisma } from "@/lib/db";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
-import { getTikTokSingularOverlay } from "@/server/singular/reporting";
+import {
+  getTikTokSingularOverlay,
+  type TikTokSingularReportRow,
+} from "@/server/singular/reporting";
 
 import {
   getAdProfitabilityReportForAdvertiser,
@@ -221,6 +224,13 @@ export type TikTokCampaignVideoMatchSource =
   | "report_campaign_id"
   | "ad_metadata_campaign_id";
 
+type TikTokCampaignSingularMatchSource =
+  | "singular_creative_id"
+  | "singular_tiktok_post_id"
+  | "singular_post_url"
+  | "singular_campaign_id"
+  | "singular_campaign_name";
+
 export type TikTokCampaignVideoViewRow = {
   rowKey: string;
   sourceVideoId: string | null;
@@ -238,6 +248,9 @@ export type TikTokCampaignVideoViewRow = {
   spend: number;
   clicks: number;
   conversions: number;
+  attributedRevenue: number;
+  singularMatchedRowCount: number;
+  singularMatchSources: TikTokCampaignSingularMatchSource[];
   reportRowCount: number;
   matchedAdIds: string[];
   statDates: string[];
@@ -253,6 +266,8 @@ export type TikTokCampaignVideoViewsResult = {
   totalSpend: number;
   totalClicks: number;
   totalConversions: number;
+  totalAttributedRevenue: number;
+  singularCohortPeriod: string | null;
   reportRowCount: number;
   rows: TikTokCampaignVideoViewRow[];
   warnings: string[];
@@ -702,6 +717,156 @@ function addSetMapEntry<ValueType>(
   }
 
   map.set(key, new Set([value]));
+}
+
+function addArrayMapEntry<ValueType>(
+  map: Map<string, ValueType[]>,
+  key: string | null | undefined,
+  value: ValueType,
+) {
+  const normalizedKey = key?.trim();
+
+  if (!normalizedKey) {
+    return;
+  }
+
+  const existing = map.get(normalizedKey);
+
+  if (existing) {
+    existing.push(value);
+    return;
+  }
+
+  map.set(normalizedKey, [value]);
+}
+
+function getSingularItemMatchSources(args: {
+  row: TikTokSingularReportRow;
+  sourceVideoId: string;
+}) {
+  const sources: TikTokCampaignSingularMatchSource[] = [];
+
+  if (args.row.creativeId?.trim() === args.sourceVideoId) {
+    sources.push("singular_creative_id");
+  }
+
+  if (args.row.tiktokPostId?.trim() === args.sourceVideoId) {
+    sources.push("singular_tiktok_post_id");
+  }
+
+  if (extractTikTokVideoIdFromUrl(args.row.creativeUrl) === args.sourceVideoId) {
+    sources.push("singular_post_url");
+  }
+
+  return sources;
+}
+
+function getSingularCampaignMatchSources(args: {
+  row: TikTokSingularReportRow;
+  tiktokCampaignId: string | null;
+  tiktokCampaignName: string | null;
+}) {
+  const sources: TikTokCampaignSingularMatchSource[] = [];
+  const singularCampaignIds = uniqueNonEmptyStrings([
+    args.row.campaignId,
+    args.row.subCampaignId,
+  ]);
+  const singularCampaignNames = uniqueNonEmptyStrings([
+    args.row.campaignName,
+    args.row.subCampaignName,
+  ]).map((value) => normalizeMatchText(value));
+  const normalizedTikTokCampaignName = normalizeMatchText(args.tiktokCampaignName);
+
+  if (
+    args.tiktokCampaignId &&
+    singularCampaignIds.includes(args.tiktokCampaignId)
+  ) {
+    sources.push("singular_campaign_id");
+  }
+
+  if (
+    normalizedTikTokCampaignName.length > 0 &&
+    singularCampaignNames.includes(normalizedTikTokCampaignName)
+  ) {
+    sources.push("singular_campaign_name");
+  }
+
+  return sources;
+}
+
+function buildCampaignSingularMatcher(singular: Awaited<ReturnType<typeof getTikTokSingularOverlay>>) {
+  const rowsByItemId = new Map<string, typeof singular.rows>();
+
+  for (const row of singular.rows) {
+    addArrayMapEntry(rowsByItemId, row.creativeId, row);
+    addArrayMapEntry(rowsByItemId, row.tiktokPostId, row);
+    addArrayMapEntry(rowsByItemId, extractTikTokVideoIdFromUrl(row.creativeUrl), row);
+  }
+
+  return (args: {
+    sourceVideoId: string | null;
+    tiktokCampaignId: string | null;
+    tiktokCampaignName: string | null;
+  }) => {
+    if (!args.sourceVideoId) {
+      return {
+        attributedRevenue: 0,
+        singularMatchedRowCount: 0,
+        singularMatchSources: [] as TikTokCampaignSingularMatchSource[],
+      };
+    }
+
+    const candidateRowsByKey = new Map<string, (typeof singular.rows)[number]>();
+
+    for (const row of rowsByItemId.get(args.sourceVideoId) ?? []) {
+      candidateRowsByKey.set(row.rowKey, row);
+    }
+
+    const candidateRows = [...candidateRowsByKey.values()];
+
+    if (candidateRows.length === 0) {
+      return {
+        attributedRevenue: 0,
+        singularMatchedRowCount: 0,
+        singularMatchSources: [] as TikTokCampaignSingularMatchSource[],
+      };
+    }
+
+    const campaignMatchedRows = candidateRows.filter(
+      (row) =>
+        getSingularCampaignMatchSources({
+          row,
+          tiktokCampaignId: args.tiktokCampaignId,
+          tiktokCampaignName: args.tiktokCampaignName,
+        }).length > 0,
+    );
+    const matchedRows =
+      campaignMatchedRows.length > 0 ? campaignMatchedRows : candidateRows;
+    const matchSources = new Set<TikTokCampaignSingularMatchSource>();
+
+    for (const row of matchedRows) {
+      for (const source of getSingularItemMatchSources({
+        row,
+        sourceVideoId: args.sourceVideoId,
+      })) {
+        matchSources.add(source);
+      }
+
+      for (const source of getSingularCampaignMatchSources({
+        row,
+        tiktokCampaignId: args.tiktokCampaignId,
+        tiktokCampaignName: args.tiktokCampaignName,
+      })) {
+        matchSources.add(source);
+      }
+    }
+
+    return {
+      attributedRevenue: matchedRows.reduce((total, row) => total + row.revenue, 0),
+      singularMatchedRowCount: matchedRows.length,
+      singularMatchSources: [...matchSources].sort(),
+    };
+  };
 }
 
 function mergeSetMaps<ValueType>(
@@ -2067,6 +2232,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
   endDate: QueryDateInput;
   metric?: TikTokPaidViewMetric;
   includePerformanceMetrics?: boolean;
+  includeSingularRevenue?: boolean;
 }): Promise<TikTokCampaignVideoViewsResult> {
   const membership = await requireOrganizationMembership(args.organizationSlug);
   const startDate = parseDateInput(args.startDate, "start date");
@@ -2105,6 +2271,8 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       totalSpend: 0,
       totalClicks: 0,
       totalConversions: 0,
+      totalAttributedRevenue: 0,
+      singularCohortPeriod: null,
       reportRowCount: 0,
       rows: [],
       warnings: [
@@ -2284,6 +2452,38 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
     }
   }
 
+  let matchSingularCampaignRow: ReturnType<
+    typeof buildCampaignSingularMatcher
+  > | null = null;
+  let singularCohortPeriod: string | null = null;
+  let singularWarnings: string[] = [];
+
+  if (args.includeSingularRevenue === true) {
+    const singular = await getTikTokSingularOverlay({
+      startDate: startDateString,
+      endDate: endDateString,
+    });
+
+    singularCohortPeriod = singular.cohortPeriod;
+
+    if (!singular.configured) {
+      singularWarnings = [
+        ...singular.warnings,
+        "Singular is not configured, so campaign ROAS is unavailable.",
+      ];
+    } else if (singular.isPending) {
+      singularWarnings = singular.warnings;
+    } else if (singular.rows.length === 0) {
+      singularWarnings = uniqueNonEmptyStrings([
+        ...singular.warnings,
+        "Singular returned no TikTok creative revenue rows for this date window, so campaign ROAS is unavailable.",
+      ]);
+    } else {
+      matchSingularCampaignRow = buildCampaignSingularMatcher(singular);
+      singularWarnings = singular.warnings;
+    }
+  }
+
   const groupedRows = new Map<
     string,
     {
@@ -2409,6 +2609,12 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
   const rows = [...groupedRows.values()]
     .map((row) => {
       const matchedAdIds = [...row.matchedAdIds].sort();
+      const singularMetrics =
+        matchSingularCampaignRow?.({
+          sourceVideoId: row.sourceVideoId,
+          tiktokCampaignId: row.tiktokCampaignId,
+          tiktokCampaignName: row.tiktokCampaignName,
+        }) ?? null;
 
       return {
         rowKey: row.rowKey,
@@ -2429,6 +2635,9 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
         spend: row.spend,
         clicks: row.clicks,
         conversions: row.conversions,
+        attributedRevenue: singularMetrics?.attributedRevenue ?? 0,
+        singularMatchedRowCount: singularMetrics?.singularMatchedRowCount ?? 0,
+        singularMatchSources: singularMetrics?.singularMatchSources ?? [],
         reportRowCount: row.reportRowCount,
         matchedAdIds,
         statDates: [...row.statDates].sort(),
@@ -2453,6 +2662,11 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
     totalSpend: rows.reduce((total, row) => total + row.spend, 0),
     totalClicks: rows.reduce((total, row) => total + row.clicks, 0),
     totalConversions: rows.reduce((total, row) => total + row.conversions, 0),
+    totalAttributedRevenue: rows.reduce(
+      (total, row) => total + row.attributedRevenue,
+      0,
+    ),
+    singularCohortPeriod,
     reportRowCount: normalizedRows.length,
     rows,
     warnings: uniqueNonEmptyStrings([
@@ -2462,9 +2676,10 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       ...campaignMetadata.warnings,
       ...adgroupMetadata.warnings,
       ...resolvedPostLookup.warnings,
+      ...singularWarnings,
       ...(paidViewsBySourceVideoId.size > postLinkLookupItemIds.length
         ? [
-            `Public TikTok share URL lookup is limited to the top ${MAX_CAMPAIGN_POST_LINK_LOOKUPS} paid post IDs by metric value. Rows without a public share URL link to the matching TikTok Ads Manager ad when an ad ID is available.`,
+            `Public TikTok share URL lookup is limited to the top ${MAX_CAMPAIGN_POST_LINK_LOOKUPS} paid post IDs by metric value. Rows without a public share URL need an imported TikTok preview CSV or another direct post URL source.`,
           ]
         : []),
     ]),
