@@ -49,8 +49,9 @@ export type CampaignTikTokReconciliationRow = {
   tiktokSpend: number;
   tiktokClicks: number;
   tiktokConversions: number;
-  attributedRevenue: number;
+  attributedRevenue: number | null;
   singularMatchedRowCount: number;
+  singularRevenueReadyRowCount: number;
   reportRowCount: number;
   matchedAdIds: string[];
   statDates: string[];
@@ -65,7 +66,7 @@ export type CampaignTikTokReconciliationCampaignTotal = {
   spend: number;
   clicks: number;
   conversions: number;
-  revenue: number;
+  revenue: number | null;
   videos: number;
 };
 
@@ -397,7 +398,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
         tiktokSpend: 0,
         tiktokClicks: 0,
         tiktokConversions: 0,
-        attributedRevenue: 0,
+        attributedRevenue: null as number | null,
         matchedVideos: 0,
         tiktokCampaigns: 0,
       },
@@ -565,6 +566,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
       tiktokConversions: tiktokRow.conversions,
       attributedRevenue: tiktokRow.attributedRevenue,
       singularMatchedRowCount: tiktokRow.singularMatchedRowCount,
+      singularRevenueReadyRowCount: tiktokRow.singularRevenueReadyRowCount,
       reportRowCount: tiktokRow.reportRowCount,
       matchedAdIds: tiktokRow.matchedAdIds,
       statDates: tiktokRow.statDates,
@@ -593,7 +595,7 @@ export async function getCampaignTikTokVideoReconciliation(args: {
         spend: 0,
         clicks: 0,
         conversions: 0,
-        revenue: 0,
+        revenue: null,
         videos: 0,
       };
 
@@ -601,7 +603,10 @@ export async function getCampaignTikTokVideoReconciliation(args: {
     existingTotal.spend += row.tiktokSpend;
     existingTotal.clicks += row.tiktokClicks;
     existingTotal.conversions += row.tiktokConversions;
-    existingTotal.revenue += row.attributedRevenue;
+    if (typeof row.attributedRevenue === "number") {
+      existingTotal.revenue =
+        (existingTotal.revenue ?? 0) + row.attributedRevenue;
+    }
     existingTotal.videos += 1;
     campaignTotalsByKey.set(campaignKey, existingTotal);
   }

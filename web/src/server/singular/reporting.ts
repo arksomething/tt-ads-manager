@@ -76,6 +76,7 @@ export type TikTokSingularReportRow = {
   currency: string | null;
   spend: number;
   revenue: number;
+  revenueAvailable: boolean;
   installs: number;
   conversions: number;
   roas: number | null;
@@ -269,17 +270,49 @@ function getNestedNumber(
   return null;
 }
 
-function getRevenueNumber(record: Record<string, unknown>, period: string) {
-  const directRevenue = getFirstNumber(record, getRevenueMetricKeys(period));
+function getFirstOptionalNumber(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    if (!(key in record)) {
+      continue;
+    }
 
-  if (directRevenue > 0) {
-    return directRevenue;
+    const value = record[key];
+    const numberValue =
+      typeof value === "number"
+        ? value
+        : typeof value === "string"
+          ? Number(value)
+          : null;
+
+    if (typeof numberValue === "number" && Number.isFinite(numberValue)) {
+      return numberValue;
+    }
+  }
+
+  return null;
+}
+
+function getRevenueValue(record: Record<string, unknown>, period: string) {
+  const directRevenue = getFirstOptionalNumber(record, getRevenueMetricKeys(period));
+
+  if (directRevenue !== null) {
+    return {
+      available: true,
+      value: directRevenue,
+    };
   }
 
   const normalizedPeriod = normalizeCohortPeriod(period);
-  return (
-    getNestedNumber(record, "revenue", uniqueNonEmptyStrings([period.trim(), normalizedPeriod])) ?? 0
+  const nestedRevenue = getNestedNumber(
+    record,
+    "revenue",
+    uniqueNonEmptyStrings([period.trim(), normalizedPeriod]),
   );
+
+  return {
+    available: nestedRevenue !== null,
+    value: nestedRevenue ?? 0,
+  };
 }
 
 function toDateOnlyString(value: Date) {
@@ -356,7 +389,7 @@ function buildRowKey(record: TikTokSingularReportRow) {
 
 function normalizeReportRow(record: Record<string, unknown>, cohortPeriod: string) {
   const spend = getFirstNumber(record, ["adn_cost"]);
-  const revenue = getRevenueNumber(record, cohortPeriod);
+  const revenue = getRevenueValue(record, cohortPeriod);
   const installs = getFirstNumber(record, ["custom_installs", "tracker_installs", "adn_installs"]);
   const conversions = getFirstNumber(record, ["tracker_conversions"]);
 
@@ -384,10 +417,11 @@ function normalizeReportRow(record: Record<string, unknown>, cohortPeriod: strin
     creativeIsVideo: getFirstBoolean(record, ["creative_is_video"]),
     currency: getFirstString(record, ["adn_original_currency"]),
     spend,
-    revenue,
+    revenue: revenue.value,
+    revenueAvailable: revenue.available,
     installs,
     conversions,
-    roas: spend > 0 ? revenue / spend : null,
+    roas: spend > 0 && revenue.available ? revenue.value / spend : null,
     raw: record,
   };
 

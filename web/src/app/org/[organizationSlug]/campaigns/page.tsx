@@ -1245,9 +1245,14 @@ export default async function CampaignsPage({
                             {formatCampaignRoas(roas)} ROAS
                           </p>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            {formatCampaignMetric(row.singularMatchedRowCount)}{" "}
-                            Singular row
-                            {row.singularMatchedRowCount === 1 ? "" : "s"}
+                            {row.singularMatchedRowCount > 0 &&
+                            row.singularRevenueReadyRowCount === 0
+                              ? "Singular revenue pending"
+                              : `${formatCampaignMetric(row.singularRevenueReadyRowCount)} revenue row${
+                                  row.singularRevenueReadyRowCount === 1
+                                    ? ""
+                                    : "s"
+                                }`}
                           </p>
                         </td>
                         <td className="px-4 py-4">

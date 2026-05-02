@@ -830,8 +830,9 @@ function buildCampaignSingularMatcher(singular: Awaited<ReturnType<typeof getTik
   }) => {
     if (!args.sourceVideoId) {
       return {
-        attributedRevenue: 0,
+        attributedRevenue: null,
         singularMatchedRowCount: 0,
+        singularRevenueReadyRowCount: 0,
         singularMatchSources: [] as TikTokCampaignSingularMatchSource[],
       };
     }
@@ -846,8 +847,9 @@ function buildCampaignSingularMatcher(singular: Awaited<ReturnType<typeof getTik
 
     if (candidateRows.length === 0) {
       return {
-        attributedRevenue: 0,
+        attributedRevenue: null,
         singularMatchedRowCount: 0,
+        singularRevenueReadyRowCount: 0,
         singularMatchSources: [] as TikTokCampaignSingularMatchSource[],
       };
     }
@@ -862,6 +864,7 @@ function buildCampaignSingularMatcher(singular: Awaited<ReturnType<typeof getTik
     );
     const matchedRows =
       campaignMatchedRows.length > 0 ? campaignMatchedRows : candidateRows;
+    const revenueReadyRows = matchedRows.filter((row) => row.revenueAvailable);
     const matchSources = new Set<TikTokCampaignSingularMatchSource>();
 
     for (const row of matchedRows) {
@@ -882,8 +885,12 @@ function buildCampaignSingularMatcher(singular: Awaited<ReturnType<typeof getTik
     }
 
     return {
-      attributedRevenue: matchedRows.reduce((total, row) => total + row.revenue, 0),
+      attributedRevenue:
+        revenueReadyRows.length > 0
+          ? revenueReadyRows.reduce((total, row) => total + row.revenue, 0)
+          : null,
       singularMatchedRowCount: matchedRows.length,
+      singularRevenueReadyRowCount: revenueReadyRows.length,
       singularMatchSources: [...matchSources].sort(),
     };
   };
@@ -2498,6 +2505,11 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
         ...singular.warnings,
         "Singular returned no TikTok creative revenue rows for this date window, so campaign ROAS is unavailable.",
       ]);
+    } else if (!singular.rows.some((row) => row.revenueAvailable)) {
+      singularWarnings = uniqueNonEmptyStrings([
+        ...singular.warnings,
+        `Singular returned TikTok creative rows, but ${singular.cohortPeriod} revenue is not ready for this date window yet, so campaign ROAS is unavailable.`,
+      ]);
     } else {
       matchSingularCampaignRow = buildCampaignSingularMatcher(singular);
       singularWarnings = singular.warnings;
@@ -2659,8 +2671,10 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
         spend: row.spend,
         clicks: row.clicks,
         conversions: row.conversions,
-        attributedRevenue: singularMetrics?.attributedRevenue ?? 0,
+        attributedRevenue: singularMetrics?.attributedRevenue ?? null,
         singularMatchedRowCount: singularMetrics?.singularMatchedRowCount ?? 0,
+        singularRevenueReadyRowCount:
+          singularMetrics?.singularRevenueReadyRowCount ?? 0,
         singularMatchSources: singularMetrics?.singularMatchSources ?? [],
         reportRowCount: row.reportRowCount,
         matchedAdIds,
@@ -2686,10 +2700,11 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
     totalSpend: rows.reduce((total, row) => total + row.spend, 0),
     totalClicks: rows.reduce((total, row) => total + row.clicks, 0),
     totalConversions: rows.reduce((total, row) => total + row.conversions, 0),
-    totalAttributedRevenue: rows.reduce(
-      (total, row) => total + row.attributedRevenue,
-      0,
-    ),
+    totalAttributedRevenue: rows.some(
+      (row) => typeof row.attributedRevenue === "number",
+    )
+      ? rows.reduce((total, row) => total + (row.attributedRevenue ?? 0), 0)
+      : null,
     singularCohortPeriod,
     reportRowCount: normalizedRows.length,
     rows,
