@@ -318,6 +318,26 @@ function getTikTokAdLabel(row: CampaignTikTokReconciliationRow) {
   return "Unknown ad";
 }
 
+function getAdsManagerPathSegments(row: CampaignTikTokReconciliationRow) {
+  return [
+    {
+      label: "Campaign",
+      name: getTikTokCampaignLabel(row),
+      id: row.tiktokCampaignId,
+    },
+    {
+      label: "Ad group",
+      name: getTikTokAdgroupLabel(row),
+      id: row.tiktokAdgroupId,
+    },
+    {
+      label: "Ad",
+      name: getTikTokAdLabel(row),
+      id: row.tiktokAdId,
+    },
+  ];
+}
+
 function getVideoLinkSourceLabel(
   source: CampaignTikTokReconciliationRow["videoUrlSource"],
 ) {
@@ -1009,13 +1029,11 @@ export default async function CampaignsPage({
         <div className="mt-5 overflow-hidden rounded-[1.15rem] border border-white/[0.08] bg-black/[0.16]">
           {reconciliation.rows.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="min-w-[1900px] w-full border-collapse text-left text-sm">
+              <table className="min-w-[1780px] w-full border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-white/[0.08] text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
                     <th className="px-4 py-3 font-medium">Paid video</th>
-                    <th className="px-4 py-3 font-medium">TikTok campaign</th>
-                    <th className="px-4 py-3 font-medium">Ad group</th>
-                    <th className="px-4 py-3 font-medium">Ad</th>
+                    <th className="px-4 py-3 font-medium">Ads Manager path</th>
                     <th className="px-4 py-3 text-right font-medium">TikTok impressions</th>
                     <th className="px-4 py-3 text-right font-medium">Cost</th>
                     <th className="px-4 py-3 text-right font-medium">Clicks / CTR</th>
@@ -1055,6 +1073,7 @@ export default async function CampaignsPage({
                       row.attributedRevenue,
                       row.tiktokSpend,
                     );
+                    const adsManagerPathSegments = getAdsManagerPathSegments(row);
 
                     return (
                       <tr key={row.rowKey} className="align-top">
@@ -1110,38 +1129,39 @@ export default async function CampaignsPage({
                           </div>
                         </td>
                         <td className="px-4 py-4">
-                          <div
-                            className="inline-flex max-w-[18rem] rounded-full border border-[#90FF4D]/20 bg-[#90FF4D]/10 px-3 py-1 text-xs text-[#D7FFBD]"
-                          >
-                            <span className="truncate">
-                              {getTikTokCampaignLabel(row)}
-                            </span>
+                          <div className="min-w-[28rem] max-w-[34rem] rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-3">
+                            <div className="space-y-2 font-mono text-xs leading-5">
+                              {adsManagerPathSegments.map((segment, index) => (
+                                <div
+                                  className={
+                                    index === 0
+                                      ? ""
+                                      : index === 1
+                                        ? "pl-4"
+                                        : "pl-8"
+                                  }
+                                  key={segment.label}
+                                >
+                                  <p className="flex min-w-0 gap-2">
+                                    <span className="shrink-0 text-muted-foreground">
+                                      {segment.label}/
+                                    </span>
+                                    <span
+                                      className="truncate font-sans font-medium text-foreground"
+                                      title={segment.name}
+                                    >
+                                      {segment.name}
+                                    </span>
+                                  </p>
+                                  {segment.id ? (
+                                    <p className="mt-0.5 text-[0.68rem] text-muted-foreground">
+                                      ID {segment.id}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                          {row.tiktokCampaignId ? (
-                            <p className="mt-2 text-xs text-muted-foreground">
-                              ID {row.tiktokCampaignId}
-                            </p>
-                          ) : null}
-                        </td>
-                        <td className="px-4 py-4">
-                          <p className="max-w-[16rem] truncate font-medium text-foreground">
-                            {getTikTokAdgroupLabel(row)}
-                          </p>
-                          {row.tiktokAdgroupId ? (
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              ID {row.tiktokAdgroupId}
-                            </p>
-                          ) : null}
-                        </td>
-                        <td className="px-4 py-4">
-                          <p className="max-w-[18rem] truncate font-medium text-foreground">
-                            {getTikTokAdLabel(row)}
-                          </p>
-                          {row.tiktokAdId ? (
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              ID {row.tiktokAdId}
-                            </p>
-                          ) : null}
                           {row.tiktokAdsManagerUrl ? (
                             <a
                               className="mt-1 inline-flex text-xs font-medium text-[#D7FFBD] underline underline-offset-4"
