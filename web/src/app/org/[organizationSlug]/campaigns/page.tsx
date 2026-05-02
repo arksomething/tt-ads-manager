@@ -46,6 +46,37 @@ type CampaignDeleteState = {
   videosCount: number;
   payoutsCount: number;
 };
+type ReconciliationView = "performance" | "hierarchy";
+type HierarchyMetrics = {
+  impressions: number;
+  spend: number;
+  clicks: number;
+  conversions: number;
+  revenue: number | null;
+  rows: number;
+};
+type ReconciliationHierarchyAd = {
+  key: string;
+  name: string;
+  id: string | null;
+  isSmartPlus: boolean;
+  metrics: HierarchyMetrics;
+  rows: CampaignTikTokReconciliationRow[];
+};
+type ReconciliationHierarchyAdGroup = {
+  key: string;
+  name: string;
+  id: string | null;
+  metrics: HierarchyMetrics;
+  ads: ReconciliationHierarchyAd[];
+};
+type ReconciliationHierarchyCampaign = {
+  key: string;
+  name: string;
+  id: string | null;
+  metrics: HierarchyMetrics;
+  adgroups: ReconciliationHierarchyAdGroup[];
+};
 
 const campaignDateFormatter = new Intl.DateTimeFormat("en-US", {
   month: "short",
@@ -72,6 +103,16 @@ const campaignListFormatter = new Intl.ListFormat("en-US", {
   style: "long",
   type: "conjunction",
 });
+const reconciliationViewOptions = [
+  {
+    value: "performance",
+    label: "Performance table",
+  },
+  {
+    value: "hierarchy",
+    label: "Ads Manager hierarchy",
+  },
+] as const satisfies Array<{ value: ReconciliationView; label: string }>;
 
 function getSearchParamValue(
   searchParams: DashboardSearchParams,
@@ -158,6 +199,14 @@ function getCampaignSearchValue(searchParams: DashboardSearchParams) {
 
 function getActiveCampaignSearchValue(searchParams: DashboardSearchParams) {
   return getSearchParamValue(searchParams, "campaign");
+}
+
+function getReconciliationView(
+  searchParams: DashboardSearchParams,
+): ReconciliationView {
+  const value = getSearchParamValue(searchParams, "view");
+
+  return value === "hierarchy" ? "hierarchy" : "performance";
 }
 
 function getActionErrorMessage(error: unknown) {
@@ -415,6 +464,207 @@ function formatEvidenceLabel(row: CampaignTikTokReconciliationRow) {
   return details.join(" / ");
 }
 
+function createEmptyHierarchyMetrics(): HierarchyMetrics {
+  return {
+    impressions: 0,
+    spend: 0,
+    clicks: 0,
+    conversions: 0,
+    revenue: null,
+    rows: 0,
+  };
+}
+
+function addHierarchyMetrics(
+  metrics: HierarchyMetrics,
+  row: CampaignTikTokReconciliationRow,
+) {
+  metrics.impressions += row.tiktokImpressions;
+  metrics.spend += row.tiktokSpend;
+  metrics.clicks += row.tiktokClicks;
+  metrics.conversions += row.tiktokConversions;
+  metrics.rows += 1;
+
+  if (typeof row.attributedRevenue === "number") {
+    metrics.revenue = (metrics.revenue ?? 0) + row.attributedRevenue;
+  }
+}
+
+function getHierarchyKey(id: string | null | undefined, name: string) {
+  return id?.trim() || name.trim().toLowerCase() || "unknown";
+}
+
+function compareHierarchyLabels(
+  left: { name: string; id: string | null },
+  right: { name: string; id: string | null },
+) {
+  return (
+    left.name.localeCompare(right.name, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    }) || (left.id ?? "").localeCompare(right.id ?? "", undefined, { numeric: true })
+  );
+}
+
+function buildReconciliationHierarchy(
+  rows: CampaignTikTokReconciliationRow[],
+): ReconciliationHierarchyCampaign[] {
+  const campaigns = new Map<
+    string,
+    ReconciliationHierarchyCampaign & {
+      adgroupMap: Map<
+        string,
+        ReconciliationHierarchyAdGroup & {
+          adMap: Map<string, ReconciliationHierarchyAd>;
+        }
+      >;
+    }
+  >();
+
+  for (const row of rows) {
+    const campaignName = getTikTokCampaignLabel(row);
+    const campaignKey = getHierarchyKey(row.tiktokCampaignId, campaignName);
+    const campaign =
+      campaigns.get(campaignKey) ??
+      {
+        key: campaignKey,
+        name: campaignName,
+        id: row.tiktokCampaignId,
+        metrics: createEmptyHierarchyMetrics(),
+        adgroups: [],
+        adgroupMap: new Map(),
+      };
+    campaigns.set(campaignKey, campaign);
+    addHierarchyMetrics(campaign.metrics, row);
+
+    const adgroupName = getTikTokAdgroupLabel(row);
+    const adgroupKey = `${campaignKey}::${getHierarchyKey(
+      row.tiktokAdgroupId,
+      adgroupName,
+    )}`;
+    const adgroup =
+      campaign.adgroupMap.get(adgroupKey) ??
+      {
+        key: adgroupKey,
+        name: adgroupName,
+        id: row.tiktokAdgroupId,
+        metrics: createEmptyHierarchyMetrics(),
+        ads: [],
+        adMap: new Map(),
+      };
+    campaign.adgroupMap.set(adgroupKey, adgroup);
+    addHierarchyMetrics(adgroup.metrics, row);
+
+    const smartPlusAdName = getTikTokSmartPlusAdLabel(row);
+    const adName = smartPlusAdName ?? getTikTokAdLabel(row);
+    const adId = row.tiktokSmartPlusAdId ?? row.tiktokAdId;
+    const adKey = `${adgroupKey}::${getHierarchyKey(adId, adName)}`;
+    const ad =
+      adgroup.adMap.get(adKey) ??
+      {
+        key: adKey,
+        name: adName,
+        id: adId,
+        isSmartPlus: Boolean(row.tiktokSmartPlusAdId),
+        metrics: createEmptyHierarchyMetrics(),
+        rows: [],
+      };
+    adgroup.adMap.set(adKey, ad);
+    addHierarchyMetrics(ad.metrics, row);
+    ad.rows.push(row);
+  }
+
+  return [...campaigns.values()]
+    .sort(compareHierarchyLabels)
+    .map((campaign) => ({
+      key: campaign.key,
+      name: campaign.name,
+      id: campaign.id,
+      metrics: campaign.metrics,
+      adgroups: [...campaign.adgroupMap.values()]
+        .sort(compareHierarchyLabels)
+        .map((adgroup) => ({
+          key: adgroup.key,
+          name: adgroup.name,
+          id: adgroup.id,
+          metrics: adgroup.metrics,
+          ads: [...adgroup.adMap.values()]
+            .sort(compareHierarchyLabels)
+            .map((ad) => ({
+              ...ad,
+              rows: [...ad.rows].sort(
+                (left, right) =>
+                  getTikTokAdLabel(left).localeCompare(
+                    getTikTokAdLabel(right),
+                    undefined,
+                    { numeric: true, sensitivity: "base" },
+                  ) ||
+                  (left.sourceVideoId ?? "").localeCompare(
+                    right.sourceVideoId ?? "",
+                    undefined,
+                    { numeric: true },
+                  ),
+              ),
+            })),
+        })),
+    }));
+}
+
+function HierarchyMetricSummary({ metrics }: { metrics: HierarchyMetrics }) {
+  const roas = getCampaignRatio(metrics.revenue, metrics.spend);
+
+  return (
+    <div className="flex flex-wrap gap-2 text-[0.68rem] text-muted-foreground">
+      <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-1">
+        {formatCampaignMetric(metrics.impressions)} impressions
+      </span>
+      <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-1">
+        {formatCampaignCurrency(metrics.spend)} cost
+      </span>
+      <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-1">
+        {formatCampaignMetric(metrics.conversions)} results
+      </span>
+      <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-1">
+        {formatCampaignRoas(roas)} ROAS
+      </span>
+      <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-1">
+        {formatCampaignMetric(metrics.rows)} paid row{metrics.rows === 1 ? "" : "s"}
+      </span>
+    </div>
+  );
+}
+
+function HierarchyNodeHeader({
+  id,
+  label,
+  metrics,
+  name,
+}: {
+  id: string | null;
+  label: string;
+  metrics: HierarchyMetrics;
+  name: string;
+}) {
+  return (
+    <summary className="flex cursor-pointer list-none flex-col gap-3 px-4 py-3 marker:hidden sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <p className="text-[0.6rem] uppercase tracking-[0.2em] text-muted-foreground">
+          {label}
+        </p>
+        <h3 className="mt-1 truncate text-sm font-medium text-foreground">
+          {name}
+        </h3>
+        {id ? (
+          <p className="mt-1 font-mono text-[0.68rem] text-muted-foreground">
+            ID {id}
+          </p>
+        ) : null}
+      </div>
+      <HierarchyMetricSummary metrics={metrics} />
+    </summary>
+  );
+}
+
 function getBackgroundImageStyle(imageUrl: string) {
   return {
     backgroundImage: `url(${JSON.stringify(imageUrl)})`,
@@ -512,6 +762,7 @@ export default async function CampaignsPage({
   });
   const campaignFilterValue = getCampaignSearchValue(resolvedSearchParams);
   const activeCampaignValue = getActiveCampaignSearchValue(resolvedSearchParams);
+  const reconciliationView = getReconciliationView(resolvedSearchParams);
   const requestedCampaignId = getSearchParamValue(resolvedSearchParams, "campaign");
   const activeCampaignSummary =
     visibleCampaigns.find((campaign) => campaign.id === requestedCampaignId) ??
@@ -568,6 +819,10 @@ export default async function CampaignsPage({
     reconciliation.totals.attributedRevenue,
     reconciliation.totals.tiktokSpend,
   );
+  const reconciliationHierarchy =
+    reconciliationView === "hierarchy"
+      ? buildReconciliationHierarchy(reconciliation.rows)
+      : [];
 
   async function createCampaignAction(formData: FormData) {
     "use server";
@@ -823,7 +1078,7 @@ export default async function CampaignsPage({
           </div>
 
           <form
-            className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+            className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"
             method="get"
           >
             {campaignFilterValue ? (
@@ -855,6 +1110,23 @@ export default async function CampaignsPage({
                 name="endDate"
                 type="date"
               />
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+                View
+              </span>
+              <select
+                className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
+                defaultValue={reconciliationView}
+                name="view"
+              >
+                {reconciliationViewOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <div className="flex items-end">
@@ -1051,6 +1323,191 @@ export default async function CampaignsPage({
           </form>
         ) : null}
 
+        {reconciliationView === "hierarchy" ? (
+          <div className="mt-5 space-y-3">
+            {reconciliationHierarchy.length > 0 ? (
+              reconciliationHierarchy.map((campaign) => (
+                <details
+                  className="overflow-hidden rounded-[1.15rem] border border-white/[0.08] bg-black/[0.16]"
+                  key={campaign.key}
+                  open
+                >
+                  <HierarchyNodeHeader
+                    id={campaign.id}
+                    label="Campaign"
+                    metrics={campaign.metrics}
+                    name={campaign.name}
+                  />
+                  <div className="space-y-3 border-t border-white/[0.06] p-3">
+                    {campaign.adgroups.map((adgroup) => (
+                      <details
+                        className="overflow-hidden rounded-[0.95rem] border border-white/[0.08] bg-white/[0.03]"
+                        key={adgroup.key}
+                        open
+                      >
+                        <HierarchyNodeHeader
+                          id={adgroup.id}
+                          label="Ad group"
+                          metrics={adgroup.metrics}
+                          name={adgroup.name}
+                        />
+                        <div className="space-y-3 border-t border-white/[0.06] p-3">
+                          {adgroup.ads.map((ad) => (
+                            <details
+                              className="overflow-hidden rounded-[0.85rem] border border-white/[0.08] bg-black/[0.18]"
+                              key={ad.key}
+                              open
+                            >
+                              <HierarchyNodeHeader
+                                id={ad.id}
+                                label="Ad"
+                                metrics={ad.metrics}
+                                name={ad.name}
+                              />
+                              <div className="divide-y divide-white/[0.06] border-t border-white/[0.06]">
+                                {ad.rows.map((row) => {
+                                  const videoHref = row.videoUrl;
+                                  const videoLinkSourceLabel =
+                                    getVideoLinkSourceLabel(row.videoUrlSource);
+                                  const cpm =
+                                    row.tiktokImpressions > 0
+                                      ? (row.tiktokSpend /
+                                          row.tiktokImpressions) *
+                                        1000
+                                      : null;
+                                  const roas = getCampaignRatio(
+                                    row.attributedRevenue,
+                                    row.tiktokSpend,
+                                  );
+
+                                  return (
+                                    <div
+                                      className="grid gap-3 px-4 py-3 text-sm lg:grid-cols-[minmax(18rem,1.2fr)_minmax(16rem,1fr)_minmax(14rem,0.8fr)]"
+                                      key={row.rowKey}
+                                    >
+                                      <div className="min-w-0">
+                                        <p className="text-[0.6rem] uppercase tracking-[0.2em] text-muted-foreground">
+                                          {ad.isSmartPlus ? "Creative" : "Post"}
+                                        </p>
+                                        <p className="mt-1 truncate font-medium text-foreground">
+                                          {ad.isSmartPlus
+                                            ? getTikTokAdLabel(row)
+                                            : getVideoTitle(row)}
+                                        </p>
+                                        <p className="mt-1 font-mono text-[0.68rem] text-muted-foreground">
+                                          ID{" "}
+                                          {ad.isSmartPlus
+                                            ? (row.tiktokAdId ?? "unknown")
+                                            : (row.tiktokAdId ??
+                                              row.sourceVideoId ??
+                                              "unknown")}
+                                        </p>
+                                        {row.sourceVideoId ? (
+                                          <p className="mt-1 text-xs text-muted-foreground">
+                                            Post ID {row.sourceVideoId}
+                                          </p>
+                                        ) : null}
+                                        {row.tiktokAdsManagerUrl ? (
+                                          <a
+                                            className="mt-2 inline-flex text-xs font-medium text-[#D7FFBD] underline underline-offset-4"
+                                            href={row.tiktokAdsManagerUrl}
+                                            rel="noreferrer"
+                                            target="_blank"
+                                          >
+                                            Manage ad
+                                          </a>
+                                        ) : null}
+                                      </div>
+
+                                      <div className="min-w-0">
+                                        <p className="text-[0.6rem] uppercase tracking-[0.2em] text-muted-foreground">
+                                          Post / local match
+                                        </p>
+                                        {videoHref ? (
+                                          <a
+                                            className="mt-1 block truncate font-medium text-foreground underline-offset-4 transition hover:text-[#90FF4D] hover:underline"
+                                            href={videoHref}
+                                            rel="noreferrer"
+                                            target="_blank"
+                                          >
+                                            {getVideoTitle(row)}
+                                          </a>
+                                        ) : (
+                                          <p className="mt-1 truncate font-medium text-foreground">
+                                            {getVideoTitle(row)}
+                                          </p>
+                                        )}
+                                        <p className="mt-1 text-xs text-muted-foreground">
+                                          {row.hasLocalVideoMatch
+                                            ? (row.localCampaignName ??
+                                              "Local video matched")
+                                            : "No local/viral.app match"}
+                                          {videoLinkSourceLabel
+                                            ? ` / ${videoLinkSourceLabel}`
+                                            : ""}
+                                        </p>
+                                      </div>
+
+                                      <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3 lg:grid-cols-2">
+                                        <div>
+                                          <p className="text-muted-foreground">
+                                            Impressions
+                                          </p>
+                                          <p className="mt-1 font-medium text-foreground">
+                                            {formatCampaignMetric(
+                                              row.tiktokImpressions,
+                                            )}
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <p className="text-muted-foreground">
+                                            Cost
+                                          </p>
+                                          <p className="mt-1 font-medium text-foreground">
+                                            {formatCampaignCurrency(row.tiktokSpend)}
+                                          </p>
+                                          <p className="mt-1 text-muted-foreground">
+                                            {formatCampaignCurrency(cpm)} CPM
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <p className="text-muted-foreground">
+                                            Results
+                                          </p>
+                                          <p className="mt-1 font-medium text-foreground">
+                                            {formatCampaignMetric(
+                                              row.tiktokConversions,
+                                            )}
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <p className="text-muted-foreground">
+                                            ROAS
+                                          </p>
+                                          <p className="mt-1 font-medium text-foreground">
+                                            {formatCampaignRoas(roas)}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </details>
+                          ))}
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                </details>
+              ))
+            ) : (
+              <div className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.16] px-4 py-8 text-sm leading-6 text-muted-foreground">
+                TikTok returned no paid video rows for the selected date range.
+              </div>
+            )}
+          </div>
+        ) : (
         <div className="mt-5 overflow-hidden rounded-[1.15rem] border border-white/[0.08] bg-black/[0.16]">
           {reconciliation.rows.length > 0 ? (
             <div className="overflow-x-auto">
@@ -1304,6 +1761,7 @@ export default async function CampaignsPage({
             </div>
           )}
         </div>
+        )}
       </section>
 
       <section className="rounded-[1.7rem] border border-white/[0.08] bg-white/[0.03] p-6 shadow-[0_22px_70px_rgba(0,0,0,0.2)]">
