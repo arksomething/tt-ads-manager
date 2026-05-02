@@ -42,6 +42,8 @@ export type CampaignTikTokReconciliationRow = {
   tiktokCampaignName: string | null;
   tiktokAdgroupId: string | null;
   tiktokAdgroupName: string | null;
+  tiktokSmartPlusAdId: string | null;
+  tiktokSmartPlusAdName: string | null;
   tiktokAdSourceName: string | null;
   tiktokAdId: string | null;
   tiktokAdName: string | null;
@@ -557,6 +559,8 @@ export async function getCampaignTikTokVideoReconciliation(args: {
       tiktokCampaignName: tiktokRow.tiktokCampaignName,
       tiktokAdgroupId: tiktokRow.tiktokAdgroupId,
       tiktokAdgroupName: tiktokRow.tiktokAdgroupName,
+      tiktokSmartPlusAdId: tiktokRow.tiktokSmartPlusAdId,
+      tiktokSmartPlusAdName: tiktokRow.tiktokSmartPlusAdName,
       tiktokAdSourceName: tiktokRow.tiktokAdSourceName,
       tiktokAdId: tiktokRow.tiktokAdId,
       tiktokAdName: tiktokRow.tiktokAdName,

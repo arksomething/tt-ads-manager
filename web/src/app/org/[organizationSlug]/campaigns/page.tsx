@@ -318,24 +318,20 @@ function getTikTokAdLabel(row: CampaignTikTokReconciliationRow) {
   return "Unknown ad";
 }
 
-function getTikTokSourceContentLabel(row: CampaignTikTokReconciliationRow) {
-  if (row.tiktokAdSourceName) {
-    return row.tiktokAdSourceName;
+function getTikTokSmartPlusAdLabel(row: CampaignTikTokReconciliationRow) {
+  if (row.tiktokSmartPlusAdName) {
+    return row.tiktokSmartPlusAdName;
   }
 
-  if (row.titleOrCaption) {
-    return row.titleOrCaption;
-  }
-
-  if (row.sourceVideoId) {
-    return `TikTok post ${row.sourceVideoId}`;
+  if (row.tiktokSmartPlusAdId) {
+    return `TikTok Smart+ ad ${row.tiktokSmartPlusAdId}`;
   }
 
   return null;
 }
 
 function getAdsManagerPathSegments(row: CampaignTikTokReconciliationRow) {
-  const sourceContentLabel = getTikTokSourceContentLabel(row);
+  const smartPlusAdLabel = getTikTokSmartPlusAdLabel(row);
   const segments = [
     {
       label: "Campaign",
@@ -347,15 +343,15 @@ function getAdsManagerPathSegments(row: CampaignTikTokReconciliationRow) {
       name: getTikTokAdgroupLabel(row),
       id: row.tiktokAdgroupId,
     },
-    sourceContentLabel
+    smartPlusAdLabel
       ? {
-          label: "Source content",
-          name: sourceContentLabel,
-          id: row.sourceVideoId,
+          label: "Ad",
+          name: smartPlusAdLabel,
+          id: row.tiktokSmartPlusAdId,
         }
       : null,
     {
-      label: "Ad",
+      label: smartPlusAdLabel ? "Creative" : "Ad",
       name: getTikTokAdLabel(row),
       id: row.tiktokAdId,
     },

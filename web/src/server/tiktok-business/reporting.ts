@@ -51,6 +51,7 @@ const adCampaignFieldCandidates: Array<readonly string[] | undefined> = [
   [
     "ad_id",
     "ad_name",
+    "smart_plus_ad_id",
     "campaign_id",
     "adgroup_id",
     "tiktok_item_id",
@@ -60,13 +61,21 @@ const adCampaignFieldCandidates: Array<readonly string[] | undefined> = [
   [
     "ad_id",
     "ad_name",
+    "smart_plus_ad_id",
     "campaign_id",
     "adgroup_id",
     "tiktok_item_id",
     "display_name",
   ],
-  ["ad_id", "ad_name", "campaign_id", "adgroup_id", "tiktok_item_id"],
-  ["ad_id", "campaign_id", "adgroup_id", "tiktok_item_id"],
+  [
+    "ad_id",
+    "ad_name",
+    "smart_plus_ad_id",
+    "campaign_id",
+    "adgroup_id",
+    "tiktok_item_id",
+  ],
+  ["ad_id", "smart_plus_ad_id", "campaign_id", "adgroup_id", "tiktok_item_id"],
   ["ad_id", "campaign_id"],
   undefined,
 ] as const;
@@ -145,9 +154,19 @@ type TikTokAdCampaignMetadata = {
   adId: string;
   campaignId: string | null;
   adgroupId: string | null;
+  smartPlusAdId: string | null;
   tiktokItemId: string | null;
   adName: string | null;
   displayName: string | null;
+};
+
+type TikTokSmartPlusAdMetadata = {
+  smartPlusAdId: string;
+  campaignId: string | null;
+  campaignName: string | null;
+  adgroupId: string | null;
+  adgroupName: string | null;
+  adName: string | null;
 };
 
 type TikTokCampaignMetadata = {
@@ -259,6 +278,8 @@ export type TikTokCampaignVideoViewRow = {
   tiktokCampaignName: string | null;
   tiktokAdgroupId: string | null;
   tiktokAdgroupName: string | null;
+  tiktokSmartPlusAdId: string | null;
+  tiktokSmartPlusAdName: string | null;
   tiktokAdSourceName: string | null;
   tiktokAdId: string | null;
   tiktokAdName: string | null;
@@ -646,6 +667,12 @@ function normalizeAdCampaignMetadata(
     adId,
     campaignId: getFirstString(candidates, ["campaign_id", "campaignId"]),
     adgroupId: getFirstString(candidates, ["adgroup_id", "adgroupId"]),
+    smartPlusAdId: getFirstString(candidates, [
+      "smart_plus_ad_id",
+      "smartPlusAdId",
+      "ad_id_v2",
+      "adIdV2",
+    ]),
     tiktokItemId: getFirstString(candidates, [
       "tiktok_item_id",
       "tiktokItemId",
@@ -654,6 +681,37 @@ function normalizeAdCampaignMetadata(
     ]),
     adName: getFirstString(candidates, ["ad_name", "adName"]),
     displayName: getFirstString(candidates, ["display_name", "displayName"]),
+  };
+}
+
+function normalizeSmartPlusAdMetadata(
+  record: Record<string, unknown>,
+): TikTokSmartPlusAdMetadata | null {
+  const smartPlusAdId = getFirstString([record], [
+    "smart_plus_ad_id",
+    "smartPlusAdId",
+    "ad_id_v2",
+    "adIdV2",
+  ]);
+
+  if (!smartPlusAdId) {
+    return null;
+  }
+
+  return {
+    smartPlusAdId,
+    campaignId: getFirstString([record], ["campaign_id", "campaignId"]),
+    campaignName: getFirstString([record], [
+      "campaign_name",
+      "campaignName",
+    ]),
+    adgroupId: getFirstString([record], ["adgroup_id", "adgroupId"]),
+    adgroupName: getFirstString([record], [
+      "adgroup_name",
+      "adgroupName",
+      "name",
+    ]),
+    adName: getFirstString([record], ["ad_name", "adName"]),
   };
 }
 
@@ -694,6 +752,16 @@ function normalizeCampaignMetadata(
 
 function uniqueNonEmptyStrings(values: Array<string | null | undefined>) {
   return [...new Set(values.filter((value): value is string => Boolean(value && value.trim())))];
+}
+
+function chunkValues<T>(values: readonly T[], size: number) {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+
+  return chunks;
 }
 
 function normalizeMatchText(value: string | null | undefined) {
@@ -2034,6 +2102,82 @@ async function fetchAdvertiserAdCampaignMetadataBestEffort(args: {
   };
 }
 
+async function fetchAdvertiserSmartPlusAdMetadata(args: {
+  advertiserId: string;
+  accessToken: string;
+  smartPlusAdIds: readonly string[];
+}) {
+  const smartPlusAdIds = uniqueNonEmptyStrings([...args.smartPlusAdIds]);
+  const ads: TikTokSmartPlusAdMetadata[] = [];
+
+  for (const idChunk of chunkValues(smartPlusAdIds, 100)) {
+    let totalPages = 1;
+
+    for (let page = 1; page <= totalPages && page <= MAX_LIST_PAGES; page += 1) {
+      const payload = await requestTikTokBusinessApi<TikTokListData>({
+        accessToken: args.accessToken,
+        method: "GET",
+        path: "/open_api/v1.3/smart_plus/ad/get/",
+        query: {
+          advertiser_id: args.advertiserId,
+          filtering: {
+            smart_plus_ad_ids: idChunk,
+          },
+          page,
+          page_size: LIST_PAGE_SIZE,
+        },
+      });
+
+      const pageAds = getRecordArray(payload, ["list"])
+        .map(normalizeSmartPlusAdMetadata)
+        .filter((ad): ad is TikTokSmartPlusAdMetadata => Boolean(ad));
+
+      ads.push(...pageAds);
+      totalPages = getTotalPages(
+        payload,
+        pageAds.length,
+        LIST_PAGE_SIZE,
+        MAX_LIST_PAGES,
+      );
+
+      if (pageAds.length < LIST_PAGE_SIZE) {
+        break;
+      }
+    }
+  }
+
+  return ads;
+}
+
+async function fetchAdvertiserSmartPlusAdMetadataBestEffort(args: {
+  advertiserId: string;
+  accessToken: string;
+  smartPlusAdIds: readonly string[];
+}) {
+  if (args.smartPlusAdIds.length === 0) {
+    return {
+      ads: [] as TikTokSmartPlusAdMetadata[],
+      warnings: [] as string[],
+    };
+  }
+
+  try {
+    return {
+      ads: await fetchAdvertiserSmartPlusAdMetadata(args),
+      warnings: [] as string[],
+    };
+  } catch (error) {
+    return {
+      ads: [] as TikTokSmartPlusAdMetadata[],
+      warnings: [
+        error instanceof Error
+          ? `Could not load TikTok Smart+ ad metadata, so Smart+ parent ad names may fall back to raw IDs: ${error.message}`
+          : "Could not load TikTok Smart+ ad metadata, so Smart+ parent ad names may fall back to raw IDs.",
+      ],
+    };
+  }
+}
+
 async function fetchAdvertiserCampaignMetadataWithFields(args: {
   advertiserId: string;
   accessToken: string;
@@ -2378,13 +2522,32 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
         warnings: [] as string[],
       };
   const adsById = new Map(adMetadata.ads.map((ad) => [ad.adId, ad] as const));
+  const smartPlusAdIds = uniqueNonEmptyStrings(
+    adMetadata.ads.map((ad) => ad.smartPlusAdId),
+  );
+  const smartPlusAdMetadata =
+    smartPlusAdIds.length > 0
+      ? await fetchAdvertiserSmartPlusAdMetadataBestEffort({
+          advertiserId,
+          accessToken,
+          smartPlusAdIds,
+        })
+      : {
+          ads: [] as TikTokSmartPlusAdMetadata[],
+          warnings: [] as string[],
+        };
+  const smartPlusAdsById = new Map(
+    smartPlusAdMetadata.ads.map((ad) => [ad.smartPlusAdId, ad] as const),
+  );
   const campaignIds = uniqueNonEmptyStrings([
     ...normalizedRows.map((row) => row.campaignId),
     ...adMetadata.ads.map((ad) => ad.campaignId),
+    ...smartPlusAdMetadata.ads.map((ad) => ad.campaignId),
   ]);
   const adgroupIds = uniqueNonEmptyStrings([
     ...normalizedRows.map((row) => row.adgroupId),
     ...adMetadata.ads.map((ad) => ad.adgroupId),
+    ...smartPlusAdMetadata.ads.map((ad) => ad.adgroupId),
   ]);
   const campaignMetadata =
     campaignIds.length > 0
@@ -2528,6 +2691,8 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       tiktokCampaignName: string | null;
       tiktokAdgroupId: string | null;
       tiktokAdgroupName: string | null;
+      tiktokSmartPlusAdId: string | null;
+      tiktokSmartPlusAdName: string | null;
       tiktokAdSourceName: string | null;
       tiktokAdId: string | null;
       tiktokAdName: string | null;
@@ -2554,18 +2719,26 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       continue;
     }
 
-    const tiktokCampaignId = row.campaignId ?? ad?.campaignId ?? null;
+    const tiktokSmartPlusAdId = ad?.smartPlusAdId ?? null;
+    const smartPlusAd = tiktokSmartPlusAdId
+      ? (smartPlusAdsById.get(tiktokSmartPlusAdId) ?? null)
+      : null;
+    const tiktokCampaignId =
+      row.campaignId ?? ad?.campaignId ?? smartPlusAd?.campaignId ?? null;
     const resolvedPost = sourceVideoId
       ? (resolvedPostsByItemId.get(sourceVideoId) ?? null)
       : null;
     const tiktokCampaignName =
       row.campaignName ??
+      smartPlusAd?.campaignName ??
       (tiktokCampaignId
         ? (campaignsById.get(tiktokCampaignId)?.campaignName ?? null)
         : null);
-    const tiktokAdgroupId = row.adgroupId ?? ad?.adgroupId ?? null;
+    const tiktokAdgroupId =
+      row.adgroupId ?? ad?.adgroupId ?? smartPlusAd?.adgroupId ?? null;
     const tiktokAdgroupName =
       row.adgroupName ??
+      smartPlusAd?.adgroupName ??
       (tiktokAdgroupId
         ? (adgroupsById.get(tiktokAdgroupId)?.adgroupName ?? null)
         : null);
@@ -2573,6 +2746,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       sourceVideoId ?? row.adId ?? "unknown-paid-video",
       tiktokCampaignId ?? tiktokCampaignName ?? "unknown-campaign",
       tiktokAdgroupId ?? tiktokAdgroupName ?? "unknown-adgroup",
+      tiktokSmartPlusAdId ?? "unknown-smart-plus-ad",
       row.adId ?? "unknown-ad",
     ].join("::");
     const group =
@@ -2587,6 +2761,8 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
         tiktokCampaignName,
         tiktokAdgroupId,
         tiktokAdgroupName,
+        tiktokSmartPlusAdId,
+        tiktokSmartPlusAdName: smartPlusAd?.adName ?? null,
         tiktokAdSourceName: ad?.displayName ?? null,
         tiktokAdId: row.adId,
         tiktokAdName: ad?.adName ?? null,
@@ -2614,6 +2790,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
 
     group.tiktokCampaignName ??= tiktokCampaignName;
     group.tiktokAdgroupName ??= tiktokAdgroupName;
+    group.tiktokSmartPlusAdName ??= smartPlusAd?.adName ?? null;
     group.tiktokAdSourceName ??= ad?.displayName ?? null;
     group.tiktokAdName ??= ad?.adName ?? null;
     group.paidViews += row.metricValue;
@@ -2644,6 +2821,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
   const rows = [...groupedRows.values()]
     .map((row) => {
       const matchedAdIds = [...row.matchedAdIds].sort();
+      const adsManagerAdId = row.tiktokSmartPlusAdId ?? matchedAdIds[0] ?? null;
       const singularMetrics =
         matchSingularCampaignRow?.({
           sourceVideoId: row.sourceVideoId,
@@ -2657,13 +2835,15 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
         resolvedPostTitle: row.resolvedPostTitle,
         resolvedPostUrl: row.resolvedPostUrl,
         resolvedPostCoverUrl: row.resolvedPostCoverUrl,
-        adsManagerUrl: matchedAdIds[0]
-          ? buildAdsManagerAdUrl(advertiserId, matchedAdIds[0])
+        adsManagerUrl: adsManagerAdId
+          ? buildAdsManagerAdUrl(advertiserId, adsManagerAdId)
           : null,
         tiktokCampaignId: row.tiktokCampaignId,
         tiktokCampaignName: row.tiktokCampaignName,
         tiktokAdgroupId: row.tiktokAdgroupId,
         tiktokAdgroupName: row.tiktokAdgroupName,
+        tiktokSmartPlusAdId: row.tiktokSmartPlusAdId,
+        tiktokSmartPlusAdName: row.tiktokSmartPlusAdName,
         tiktokAdSourceName: row.tiktokAdSourceName,
         tiktokAdId: row.tiktokAdId,
         tiktokAdName: row.tiktokAdName,
@@ -2712,6 +2892,7 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
       ...accountWarnings,
       ...report.warnings,
       ...adMetadata.warnings,
+      ...smartPlusAdMetadata.warnings,
       ...campaignMetadata.warnings,
       ...adgroupMetadata.warnings,
       ...resolvedPostLookup.warnings,
