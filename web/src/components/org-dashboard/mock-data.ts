@@ -15,6 +15,7 @@ export type DashboardSectionKey =
   | "view-tally"
   | "ugc-pay"
   | "tiktok-paid-views"
+  | "revenue"
   | "campaigns"
   | "payouts"
   | "viral-videos"
@@ -209,6 +210,12 @@ export const dashboardNavGroups: DashboardNavGroup[] = [
         icon: "integrations",
       },
       {
+        key: "revenue",
+        label: "Revenue",
+        segment: "revenue",
+        icon: "revenue",
+      },
+      {
         key: "michael",
         label: "Michael",
         segment: "michael",
@@ -301,6 +308,13 @@ export const dashboardRouteMeta: Record<DashboardSectionKey, DashboardRouteMeta>
     title: "See the most profitable TikTok ads without leaving the organization workspace.",
     description:
       "This route connects TikTok Business reporting with revenue overlays so operators can quickly rank ads by profit, ROAS, and paid delivery.",
+  },
+  revenue: {
+    groupLabel: "Analytics",
+    navLabel: "Revenue",
+    title: "Break mobile app revenue into TikTok-attributed and UGC buckets.",
+    description:
+      "This route reads Adapty revenue analytics, classifies TikTok attribution segments, and derives UGC as total revenue minus TikTok revenue.",
   },
   "tracking-options": {
     groupLabel: "Analytics",
@@ -829,6 +843,23 @@ export const placeholderSectionData: Record<
       { label: "OAuth connection", value: "Required", status: "Ready" },
       { label: "Revenue overlay", value: "Singular", status: "Ready" },
       { label: "Ad dashboard", value: "Live page", status: "Ready" },
+    ],
+  },
+  revenue: {
+    eyebrow: "Revenue attribution",
+    spotlightTitle: "Revenue splits into TikTok and UGC buckets here.",
+    spotlightDescription:
+      "The live route reads Adapty analytics, classifies matching TikTok attribution segments, and calculates UGC revenue from the remaining total.",
+    highlights: ["Adapty revenue", "TikTok share", "UGC remainder"],
+    statCards: [
+      { label: "Source", value: "Adapty" },
+      { label: "Default range", value: "Last 7 days" },
+      { label: "Formula", value: "Total - TikTok" },
+    ],
+    rows: [
+      { label: "Total revenue", value: "Adapty revenue chart", status: "Ready" },
+      { label: "TikTok match", value: "Configurable attribution segment", status: "Ready" },
+      { label: "UGC bucket", value: "Derived from total", status: "Ready" },
     ],
   },
   "tracking-options": {

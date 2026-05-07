@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { type ReactNode } from "react";
 
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
 import {
@@ -76,6 +77,10 @@ function getCurrencyFormatter(currency: string) {
 
 function formatMoney(value: number, currency = "USD") {
   return getCurrencyFormatter(currency).format(value);
+}
+
+function formatOptionalMoney(value: number | null | undefined, currency = "USD") {
+  return value == null ? "None" : formatMoney(value, currency);
 }
 
 function formatMetricValue(value: number, compact = false) {
@@ -168,6 +173,50 @@ function getErrorLabel(value: string | undefined) {
   return value;
 }
 
+function DealTerm({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-[0.85rem] border border-white/[0.08] bg-black/[0.14] px-3 py-2.5">
+      <p className="text-[0.58rem] uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-1 truncate text-sm font-medium text-foreground">{value}</p>
+      {detail ? (
+        <p className="mt-1 truncate text-xs text-muted-foreground">{detail}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function FieldLabel({
+  label,
+  children,
+  className = "",
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <label className={`block ${className}`.trim()}>
+      <span className="mb-1.5 block text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+const dealInputClassName =
+  "w-full rounded-[0.75rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60";
+
 export default async function PayoutsPage({
   params,
   searchParams,
@@ -195,6 +244,8 @@ export default async function PayoutsPage({
           fixedFee: getTrimmedFormValue(formData, "fixedFee") || undefined,
           fixedFeeRecognitionDate:
             getTrimmedFormValue(formData, "fixedFeeRecognitionDate") || undefined,
+          fixedFeePerVideo:
+            getTrimmedFormValue(formData, "fixedFeePerVideo") || undefined,
           cpmAmount: getTrimmedFormValue(formData, "cpmAmount") || undefined,
           paidTrafficMetric:
             getTrimmedFormValue(formData, "paidTrafficMetric") || undefined,
@@ -473,329 +524,333 @@ export default async function PayoutsPage({
       </section>
 
       <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
               Creator Deals
             </p>
             <h2 className="mt-2 text-lg font-medium tracking-[-0.04em] text-foreground">
-              Creator costs
+              All creator deal terms
             </h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+              Review every creator attached to the selected campaign scope, edit their
+              pricing terms, then save the override directly on the row.
+            </p>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Each row shows creator, views, and pay. Open Edit deal when terms differ.
-          </p>
+          <div className="flex flex-wrap gap-2 text-[0.62rem] uppercase tracking-[0.18em]">
+            <span className="rounded-full border border-white/[0.08] bg-black/[0.2] px-2.5 py-1 text-muted-foreground">
+              {formatMetricValue(data.creators.length)} creators
+            </span>
+            <span className="rounded-full border border-[#90FF4D]/20 bg-[#90FF4D]/10 px-2.5 py-1 text-[#D4FFB2]">
+              {formatMetricValue(data.summary.creatorRowsWithDeals)} custom
+            </span>
+          </div>
         </div>
 
         <div className="mt-5 overflow-hidden rounded-[1.2rem] border border-white/[0.08] bg-black/[0.18]">
-          {data.creators.map((row, index) => (
-            <details
-              key={row.campaignCreatorId}
-              className={`${index > 0 ? "border-t border-white/[0.08]" : ""} group`}
-            >
-              <summary className="grid cursor-pointer list-none gap-3 px-4 py-4 md:grid-cols-[minmax(0,1.8fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_auto] md:items-center">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="truncate text-sm font-medium text-foreground">
-                      {row.creatorName}
-                    </h3>
-                    <span
-                      className={`rounded-full border px-2 py-0.5 text-[0.62rem] uppercase tracking-[0.16em] ${
-                        row.hasCustomDeal
-                          ? "border-white/[0.08] bg-white/[0.05] text-muted-foreground"
-                          : "border-[#90FF4D]/20 bg-[#90FF4D]/10 text-[#D4FFB2]"
-                      }`}
-                    >
-                      {row.hasCustomDeal ? "custom" : "default"}
-                    </span>
-                    {row.videoCapReached ? (
-                      <span className="rounded-full border border-[#FFD24D]/20 bg-[#FFD24D]/10 px-2 py-0.5 text-[0.62rem] uppercase tracking-[0.16em] text-[#FFE7A6]">
-                        capped
+          {data.creators.length > 0 ? (
+            data.creators.map((row, index) => (
+              <details
+                key={row.campaignCreatorId}
+                className={`${index > 0 ? "border-t border-white/[0.08]" : ""} group`}
+              >
+                <summary className="grid cursor-pointer list-none gap-3 px-4 py-4 lg:grid-cols-[minmax(13rem,1.25fr)_repeat(4,minmax(8rem,0.8fr))_auto] lg:items-center">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="truncate text-sm font-medium text-foreground">
+                        {row.creatorName}
+                      </h3>
+                      <span
+                        className={`rounded-full border px-2 py-0.5 text-[0.58rem] uppercase tracking-[0.16em] ${
+                          row.hasCustomDeal
+                            ? "border-[#90FF4D]/20 bg-[#90FF4D]/10 text-[#D4FFB2]"
+                            : "border-white/[0.08] bg-white/[0.05] text-muted-foreground"
+                        }`}
+                      >
+                        {row.hasCustomDeal ? "custom" : "default"}
                       </span>
-                    ) : null}
+                      {!row.canEditDeal ? (
+                        <span className="rounded-full border border-[#FFD24D]/20 bg-[#FFD24D]/10 px-2 py-0.5 text-[0.58rem] uppercase tracking-[0.16em] text-[#FFE7A6]">
+                          read only
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 truncate text-xs text-muted-foreground">
+                      {row.campaignName}
+                      {row.tiktokHandle ? ` - @${row.tiktokHandle}` : ""}
+                    </p>
                   </div>
-                  <p className="mt-1 truncate text-xs text-muted-foreground">
-                    {row.campaignName}
-                    {row.tiktokHandle ? ` · @${row.tiktokHandle}` : ""}
-                  </p>
-                </div>
 
-                <div>
-                  <p className="text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                    Views
-                  </p>
-                  <p className="mt-1 text-sm text-foreground">
-                    {formatMetricValue(row.payableViews, true)}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {formatMetricValue(row.grossViews, true)} gross
-                  </p>
-                </div>
+                  <DealTerm
+                    detail={row.deal.fixedFeePerVideo != null ? "per-video fee enabled" : undefined}
+                    label="Fixed"
+                    value={`${formatOptionalMoney(row.deal.fixedFee, row.currency)} base${
+                      row.deal.fixedFeePerVideo != null
+                        ? ` + ${formatMoney(row.deal.fixedFeePerVideo, row.currency)}/video`
+                        : ""
+                    }`}
+                  />
+                  <DealTerm
+                    detail={row.deal.deductPaidTraffic ? "paid traffic deducted" : "gross views"}
+                    label="CPM"
+                    value={formatMoney(row.deal.cpmAmount, row.currency)}
+                  />
+                  <DealTerm
+                    detail={
+                      row.deal.effectiveEndDate
+                        ? `Ends ${formatDateLabel(row.deal.effectiveEndDate)}`
+                        : "No end date"
+                    }
+                    label="Window"
+                    value={`${formatMetricValue(row.deal.viewWindowDays)} days`}
+                  />
+                  <DealTerm
+                    detail={
+                      row.deal.payoutCapTotal != null
+                        ? `${formatMoney(row.deal.payoutCapTotal, row.currency)} total cap`
+                        : "No total cap"
+                    }
+                    label="Caps"
+                    value={`${formatOptionalMoney(row.deal.payoutCapPerVideo, row.currency)}/video`}
+                  />
 
-                <div>
-                  <p className="text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                    Pay
-                  </p>
-                  <p className="mt-1 text-sm font-medium text-foreground">
-                    {formatMoney(row.totalCost, row.currency)}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {formatMoney(row.fixedCost, row.currency)} fixed +{" "}
-                    {formatMoney(row.variableCost, row.currency)} variable
-                  </p>
-                </div>
-
-                <div className="flex items-center md:justify-end">
-                  <span className="inline-flex items-center rounded-[0.85rem] border border-white/[0.1] bg-white/[0.05] px-3 py-2 text-sm text-foreground transition group-open:border-white/[0.16] group-open:bg-white/[0.08]">
-                    Edit deal
-                  </span>
-                </div>
-              </summary>
-
-              <div className="border-t border-white/[0.08] px-4 py-4">
-                <div className="flex flex-wrap gap-2 text-[0.62rem] uppercase tracking-[0.18em]">
-                  <span className="rounded-full border border-white/[0.08] bg-white/[0.05] px-2.5 py-1 text-muted-foreground">
-                    {formatMetricValue(row.grossViews, true)} gross
-                  </span>
-                  <span className="rounded-full border border-white/[0.08] bg-white/[0.05] px-2.5 py-1 text-muted-foreground">
-                    {formatMetricValue(row.paidViewsDeducted, true)} paid impressions deducted
-                  </span>
-                  <span className="rounded-full border border-[#90FF4D]/20 bg-[#90FF4D]/10 px-2.5 py-1 text-[#D4FFB2]">
-                    {formatMetricValue(row.payableViews, true)} payable
-                  </span>
-                  <span className="rounded-full border border-white/[0.08] bg-white/[0.05] px-2.5 py-1 text-muted-foreground">
-                    {row.tiktokVideoCount} TikTok videos
-                  </span>
-                  <span className="rounded-full border border-white/[0.08] bg-white/[0.05] px-2.5 py-1 text-muted-foreground">
-                    {row.exactPaidVideoCount} exact paid matches
-                  </span>
-                  {row.creatorTotalCapApplied ? (
-                    <span className="rounded-full border border-[#FF7E54]/20 bg-[#FF7E54]/10 px-2.5 py-1 text-[#FFD3C5]">
-                      total cap applied
+                  <div className="flex items-center lg:justify-end">
+                    <span className="inline-flex min-h-10 items-center justify-center rounded-[0.85rem] border border-white/[0.1] bg-white/[0.05] px-3 text-sm text-foreground transition group-open:border-white/[0.16] group-open:bg-white/[0.08]">
+                      Edit
                     </span>
+                  </div>
+                </summary>
+
+                <div className="border-t border-white/[0.08] px-4 py-4">
+                  <div className="grid gap-3 md:grid-cols-4">
+                    <DealTerm
+                      detail={`${formatMetricValue(row.grossViews, true)} gross views`}
+                      label="Current Range"
+                      value={formatMoney(row.totalCost, row.currency)}
+                    />
+                    <DealTerm
+                      detail={`${formatMoney(row.fixedCost, row.currency)} fixed`}
+                      label="Variable Cost"
+                      value={formatMoney(row.variableCost, row.currency)}
+                    />
+                    <DealTerm
+                      detail={`${formatMetricValue(row.paidViewsDeducted, true)} paid removed`}
+                      label="Payable Views"
+                      value={formatMetricValue(row.payableViews, true)}
+                    />
+                    <DealTerm
+                      detail={`${row.exactPaidVideoCount} exact paid matches`}
+                      label="Tracked Videos"
+                      value={formatMetricValue(row.tiktokVideoCount)}
+                    />
+                  </div>
+
+                  {row.warnings.length > 0 ? (
+                    <p className="mt-3 text-sm leading-6 text-[#FFE7A6]">
+                      {row.warnings[0]}
+                    </p>
                   ) : null}
-                  {row.unsupportedPaidVideoCount > 0 ? (
-                    <span className="rounded-full border border-[#FFD24D]/20 bg-[#FFD24D]/10 px-2.5 py-1 text-[#FFE7A6]">
-                      {row.unsupportedPaidVideoCount} unresolved paid row
-                      {row.unsupportedPaidVideoCount === 1 ? "" : "s"}
-                    </span>
-                  ) : null}
-                </div>
 
-                {row.warnings.length > 0 ? (
-                  <p className="mt-3 text-sm leading-6 text-[#FFE7A6]">
-                    {row.warnings[0]}
-                  </p>
-                ) : null}
+                  <form action={saveDealAction} className="mt-5 space-y-5">
+                    <input name="campaignCreatorId" type="hidden" value={row.campaignCreatorId} />
 
-                <form action={saveDealAction} className="mt-4 grid gap-3 xl:grid-cols-6">
-                  <input name="campaignCreatorId" type="hidden" value={row.campaignCreatorId} />
+                    <div>
+                      <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+                        Dates and Rates
+                      </p>
+                      <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+                        <FieldLabel label="Currency">
+                          <input
+                            className={dealInputClassName}
+                            defaultValue={row.currency}
+                            disabled={!row.canEditDeal}
+                            maxLength={3}
+                            name="currency"
+                          />
+                        </FieldLabel>
+                        <FieldLabel label="Deal Start">
+                          <input
+                            className={dealInputClassName}
+                            defaultValue={
+                              formatDateInputValue(row.deal.effectiveStartDate) ||
+                              data.startDate
+                            }
+                            disabled={!row.canEditDeal}
+                            name="effectiveStartDate"
+                            type="date"
+                          />
+                        </FieldLabel>
+                        <FieldLabel label="Deal End">
+                          <input
+                            className={dealInputClassName}
+                            defaultValue={formatDateInputValue(row.deal.effectiveEndDate)}
+                            disabled={!row.canEditDeal}
+                            name="effectiveEndDate"
+                            type="date"
+                          />
+                        </FieldLabel>
+                        <FieldLabel label="Base Fixed Fee">
+                          <input
+                            className={dealInputClassName}
+                            defaultValue={row.deal.fixedFee ?? ""}
+                            disabled={!row.canEditDeal}
+                            name="fixedFee"
+                            placeholder="0.00"
+                            step="0.01"
+                            type="number"
+                          />
+                        </FieldLabel>
+                        <FieldLabel label="Fixed Fee Date">
+                          <input
+                            className={dealInputClassName}
+                            defaultValue={formatDateInputValue(row.deal.fixedFeeRecognitionDate)}
+                            disabled={!row.canEditDeal}
+                            name="fixedFeeRecognitionDate"
+                            type="date"
+                          />
+                        </FieldLabel>
+                        <FieldLabel label="Fixed / Video">
+                          <input
+                            className={dealInputClassName}
+                            defaultValue={row.deal.fixedFeePerVideo ?? ""}
+                            disabled={!row.canEditDeal}
+                            name="fixedFeePerVideo"
+                            placeholder="0.00"
+                            step="0.01"
+                            type="number"
+                          />
+                        </FieldLabel>
+                      </div>
+                    </div>
 
-                  <label className="block">
-                    <span className="mb-1.5 block text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                      Currency
-                    </span>
-                    <input
-                      className="w-full rounded-[0.9rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
-                      defaultValue={row.currency}
-                      disabled={!row.canEditDeal}
-                      maxLength={3}
-                      name="currency"
-                    />
-                  </label>
+                    <div>
+                      <p className="text-[0.62rem] uppercase tracking-[0.2em] text-muted-foreground">
+                        View Pricing and Caps
+                      </p>
+                      <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+                        <FieldLabel label="CPM">
+                          <input
+                            className={dealInputClassName}
+                            defaultValue={row.deal.cpmAmount}
+                            disabled={!row.canEditDeal}
+                            name="cpmAmount"
+                            placeholder="0.00"
+                            step="0.01"
+                            type="number"
+                          />
+                        </FieldLabel>
+                        <FieldLabel label="View Window">
+                          <input
+                            className={dealInputClassName}
+                            defaultValue={row.deal.viewWindowDays}
+                            disabled={!row.canEditDeal}
+                            min="1"
+                            name="viewWindowDays"
+                            step="1"
+                            type="number"
+                          />
+                        </FieldLabel>
+                        <FieldLabel label="Paid Metric">
+                          <select
+                            className={dealInputClassName}
+                            defaultValue={row.deal.paidTrafficMetric}
+                            disabled={!row.canEditDeal}
+                            name="paidTrafficMetric"
+                          >
+                            <option value="IMPRESSIONS">Impressions</option>
+                          </select>
+                        </FieldLabel>
+                        <FieldLabel label="View Cap / Video">
+                          <input
+                            className={dealInputClassName}
+                            defaultValue={row.deal.viewCapPerVideo ?? ""}
+                            disabled={!row.canEditDeal}
+                            name="viewCapPerVideo"
+                            placeholder="100000"
+                            step="1"
+                            type="number"
+                          />
+                        </FieldLabel>
+                        <FieldLabel label="Payout Cap / Video">
+                          <input
+                            className={dealInputClassName}
+                            defaultValue={row.deal.payoutCapPerVideo}
+                            disabled={!row.canEditDeal}
+                            name="payoutCapPerVideo"
+                            placeholder="100.00"
+                            step="0.01"
+                            type="number"
+                          />
+                        </FieldLabel>
+                        <FieldLabel label="Total Payout Cap">
+                          <input
+                            className={dealInputClassName}
+                            defaultValue={row.deal.payoutCapTotal ?? ""}
+                            disabled={!row.canEditDeal}
+                            name="payoutCapTotal"
+                            placeholder="0.00"
+                            step="0.01"
+                            type="number"
+                          />
+                        </FieldLabel>
+                      </div>
+                    </div>
 
-                  <label className="block">
-                    <span className="mb-1.5 block text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                      Deal Start
-                    </span>
-                    <input
-                      className="w-full rounded-[0.9rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
-                      defaultValue={
-                        formatDateInputValue(row.deal.effectiveStartDate) || data.startDate
-                      }
-                      disabled={!row.canEditDeal}
-                      name="effectiveStartDate"
-                      type="date"
-                    />
-                  </label>
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+                      <FieldLabel label="Notes">
+                        <input
+                          className={dealInputClassName}
+                          defaultValue={row.deal.notes ?? ""}
+                          disabled={!row.canEditDeal}
+                          name="notes"
+                          placeholder="Contract notes, exceptions, or manual payout rules"
+                        />
+                      </FieldLabel>
+                      <label className="flex min-h-10 items-center gap-3 rounded-[0.75rem] border border-white/[0.08] bg-black/[0.14] px-3 py-2.5 text-sm text-foreground">
+                        <input
+                          defaultChecked={row.deal.deductPaidTraffic}
+                          disabled={!row.canEditDeal}
+                          name="deductPaidTraffic"
+                          type="checkbox"
+                        />
+                        Deduct paid traffic
+                      </label>
+                    </div>
 
-                  <label className="block">
-                    <span className="mb-1.5 block text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                      Deal End
-                    </span>
-                    <input
-                      className="w-full rounded-[0.9rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
-                      defaultValue={formatDateInputValue(row.deal.effectiveEndDate)}
-                      disabled={!row.canEditDeal}
-                      name="effectiveEndDate"
-                      type="date"
-                    />
-                  </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        className="inline-flex min-h-10 items-center justify-center rounded-[0.85rem] border border-[#90FF4D]/24 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68] disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={!row.canEditDeal}
+                        type="submit"
+                      >
+                        Save deal
+                      </button>
+                      {!row.canEditDeal ? (
+                        <span className="text-sm text-muted-foreground">
+                          You do not have edit access for this campaign.
+                        </span>
+                      ) : null}
+                    </div>
+                  </form>
 
-                  <label className="block">
-                    <span className="mb-1.5 block text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                      Fixed Fee
-                    </span>
-                    <input
-                      className="w-full rounded-[0.9rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
-                      defaultValue={row.deal.fixedFee ?? ""}
-                      disabled={!row.canEditDeal}
-                      name="fixedFee"
-                      placeholder="0.00"
-                      step="0.01"
-                      type="number"
-                    />
-                  </label>
-
-                  <label className="block">
-                    <span className="mb-1.5 block text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                      Fixed Fee Date
-                    </span>
-                    <input
-                      className="w-full rounded-[0.9rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
-                      defaultValue={formatDateInputValue(row.deal.fixedFeeRecognitionDate)}
-                      disabled={!row.canEditDeal}
-                      name="fixedFeeRecognitionDate"
-                      type="date"
-                    />
-                  </label>
-
-                  <label className="block">
-                    <span className="mb-1.5 block text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                      CPM
-                    </span>
-                    <input
-                      className="w-full rounded-[0.9rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
-                      defaultValue={row.deal.cpmAmount}
-                      disabled={!row.canEditDeal}
-                      name="cpmAmount"
-                      placeholder="0.00"
-                      step="0.01"
-                      type="number"
-                    />
-                  </label>
-
-                  <label className="block">
-                    <span className="mb-1.5 block text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                      View Window (Days)
-                    </span>
-                    <input
-                      className="w-full rounded-[0.9rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
-                      defaultValue={row.deal.viewWindowDays}
-                      disabled={!row.canEditDeal}
-                      min="1"
-                      name="viewWindowDays"
-                      step="1"
-                      type="number"
-                    />
-                  </label>
-
-                  <label className="block">
-                    <span className="mb-1.5 block text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                      Paid Metric
-                    </span>
-                    <select
-                      className="w-full rounded-[0.9rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
-                      defaultValue="IMPRESSIONS"
-                      disabled={!row.canEditDeal}
-                      name="paidTrafficMetric"
-                    >
-                      <option value="IMPRESSIONS">Impressions</option>
-                    </select>
-                  </label>
-
-                  <label className="block">
-                    <span className="mb-1.5 block text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                      View Cap / Video
-                    </span>
-                    <input
-                      className="w-full rounded-[0.9rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
-                      defaultValue={row.deal.viewCapPerVideo ?? ""}
-                      disabled={!row.canEditDeal}
-                      name="viewCapPerVideo"
-                      placeholder="100000"
-                      step="1"
-                      type="number"
-                    />
-                  </label>
-
-                  <label className="block">
-                    <span className="mb-1.5 block text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                      Payout Cap / Video
-                    </span>
-                    <input
-                      className="w-full rounded-[0.9rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
-                      defaultValue={row.deal.payoutCapPerVideo}
-                      disabled={!row.canEditDeal}
-                      name="payoutCapPerVideo"
-                      placeholder="100.00"
-                      step="0.01"
-                      type="number"
-                    />
-                  </label>
-
-                  <label className="block">
-                    <span className="mb-1.5 block text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                      Total Payout Cap
-                    </span>
-                    <input
-                      className="w-full rounded-[0.9rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
-                      defaultValue={row.deal.payoutCapTotal ?? ""}
-                      disabled={!row.canEditDeal}
-                      name="payoutCapTotal"
-                      placeholder="0.00"
-                      step="0.01"
-                      type="number"
-                    />
-                  </label>
-
-                  <label className="flex items-center gap-3 rounded-[0.9rem] border border-white/[0.08] bg-black/[0.14] px-3 py-2.5 text-sm text-foreground">
-                    <input
-                      defaultChecked={row.deal.deductPaidTraffic}
-                      disabled={!row.canEditDeal}
-                      name="deductPaidTraffic"
-                      type="checkbox"
-                    />
-                    Deduct paid traffic before CPM
-                  </label>
-
-                  <label className="block xl:col-span-2">
-                    <span className="mb-1.5 block text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                      Notes
-                    </span>
-                    <input
-                      className="w-full rounded-[0.9rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16] disabled:cursor-not-allowed disabled:opacity-60"
-                      defaultValue={row.deal.notes ?? ""}
-                      disabled={!row.canEditDeal}
-                      name="notes"
-                      placeholder="Contract notes, exceptions, or manual payout rules"
-                    />
-                  </label>
-
-                  <div className="flex items-end gap-2 xl:col-span-6">
+                  <form action={clearDealAction} className="mt-2">
+                    <input name="campaignCreatorId" type="hidden" value={row.campaignCreatorId} />
                     <button
-                      className="inline-flex items-center justify-center rounded-[0.9rem] border border-white/[0.1] bg-white/[0.06] px-4 py-2.5 text-sm text-foreground transition hover:border-white/[0.16] hover:bg-white/[0.1] disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={!row.canEditDeal}
+                      className="text-sm text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={!row.canEditDeal || !row.hasCustomDeal}
                       type="submit"
                     >
-                      Save deal
+                      Remove custom override
                     </button>
-                  </div>
-                </form>
-
-                <form action={clearDealAction} className="mt-2">
-                  <input name="campaignCreatorId" type="hidden" value={row.campaignCreatorId} />
-                  <button
-                    className="text-sm text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={!row.canEditDeal || !row.hasCustomDeal}
-                    type="submit"
-                  >
-                    Remove custom override
-                  </button>
-                </form>
-              </div>
-            </details>
-          ))}
+                  </form>
+                </div>
+              </details>
+            ))
+          ) : (
+            <div className="px-4 py-10 text-sm text-muted-foreground">
+              No creator campaign links are available for the selected filters.
+            </div>
+          )}
         </div>
       </section>
 

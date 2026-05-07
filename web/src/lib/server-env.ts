@@ -80,6 +80,24 @@ const singularEnvSchema = z.object({
   SINGULAR_COHORT_PERIOD: z.string().min(1).default("7d"),
 });
 
+const adaptyRevenueSegmentationValues = [
+  "attribution_source",
+  "attribution_channel",
+  "attribution_campaign",
+  "attribution_adgroup",
+  "attribution_adset",
+  "attribution_creative",
+] as const;
+
+const adaptyEnvSchema = z.object({
+  ADAPTY_API_BASE_URL: z.url().default("https://api-admin.adapty.io"),
+  ADAPTY_API_KEY: z.string().min(1),
+  ADAPTY_TIKTOK_SOURCE_PATTERNS: z.string().min(1).default("tiktok,tik tok"),
+  ADAPTY_TIKTOK_SEGMENTATION: z
+    .enum(adaptyRevenueSegmentationValues)
+    .default("attribution_source"),
+});
+
 const viewsBaseEnvSchema = z.object({
   VIEWSBASE_BASE_URL: z.url().default("https://www.viewsbase.com"),
   VIEWSBASE_SESSION_COOKIE_NAME: z
@@ -99,6 +117,7 @@ type TwilioEnv = z.infer<typeof twilioEnvSchema>;
 type TikTokBusinessEnv = z.infer<typeof tikTokBusinessEnvSchema>;
 type TikTokBusinessOauthEnv = z.infer<typeof tikTokBusinessOauthEnvSchema>;
 type SingularEnv = z.infer<typeof singularEnvSchema>;
+type AdaptyEnv = z.infer<typeof adaptyEnvSchema>;
 type ViewsBaseEnv = z.infer<typeof viewsBaseEnvSchema>;
 
 let cachedAuthEnv: AuthEnv | undefined;
@@ -110,6 +129,7 @@ let cachedTwilioEnv: TwilioEnv | undefined;
 let cachedTikTokBusinessEnv: TikTokBusinessEnv | undefined;
 let cachedTikTokBusinessOauthEnv: TikTokBusinessOauthEnv | undefined;
 let cachedSingularEnv: SingularEnv | undefined;
+let cachedAdaptyEnv: AdaptyEnv | undefined;
 let cachedViewsBaseEnv: ViewsBaseEnv | undefined;
 
 function getSupabaseUrlEnv() {
@@ -291,6 +311,26 @@ export function getSingularEnv() {
   }
 
   return cachedSingularEnv;
+}
+
+export function hasAdaptyEnv() {
+  return Boolean(process.env.ADAPTY_API_KEY);
+}
+
+export function getAdaptyEnv() {
+  if (!cachedAdaptyEnv) {
+    cachedAdaptyEnv = adaptyEnvSchema.parse({
+      ADAPTY_API_BASE_URL:
+        process.env.ADAPTY_API_BASE_URL || "https://api-admin.adapty.io",
+      ADAPTY_API_KEY: process.env.ADAPTY_API_KEY,
+      ADAPTY_TIKTOK_SOURCE_PATTERNS:
+        process.env.ADAPTY_TIKTOK_SOURCE_PATTERNS || "tiktok,tik tok",
+      ADAPTY_TIKTOK_SEGMENTATION:
+        process.env.ADAPTY_TIKTOK_SEGMENTATION || "attribution_source",
+    });
+  }
+
+  return cachedAdaptyEnv;
 }
 
 export function hasViewsBaseEnv() {

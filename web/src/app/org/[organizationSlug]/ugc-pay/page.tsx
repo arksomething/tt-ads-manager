@@ -2,6 +2,9 @@ import { DashboardIcon } from "@/components/org-dashboard/org-icons";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
 import {
   getOrganizationUgcPayData,
+  type UgcPayMode,
+  type UgcPayVideoFetchMode,
+  type UgcPayViewWindowMode,
   type UgcPayCreatorRow,
   type UgcPayVideoRow,
 } from "@/server/ugc-pay/queries";
@@ -115,6 +118,25 @@ function getPaidStatusLabel(video: UgcPayVideoRow) {
     default:
       return "Unknown";
   }
+}
+
+function getPayModeLabel(payMode: UgcPayMode) {
+  return payMode === "gained" ? "Gained views" : "Posted in range";
+}
+
+function getViewWindowModeLabel(
+  viewWindowMode: UgcPayViewWindowMode,
+  globalViewWindowDays: number,
+) {
+  return viewWindowMode === "first-days"
+    ? `First ${formatMetricValue(globalViewWindowDays)} days`
+    : "All report views";
+}
+
+function getVideoFetchModeLabel(videoFetchMode: UgcPayVideoFetchMode) {
+  return videoFetchMode === "per-creator"
+    ? "Accurate creators"
+    : "Global top 100";
 }
 
 function SummaryCard({
@@ -333,6 +355,23 @@ export default async function UgcPayPage({
     organizationSlug,
     searchParams: resolvedSearchParams,
   });
+  const isGainedViewMode = data.payMode === "gained";
+  const isGlobalViewWindowMode = data.viewWindowMode === "first-days";
+  const isAccurateCreatorFetchMode = data.videoFetchMode === "per-creator";
+  const rangeDetail = isGainedViewMode
+    ? `${data.reportTimeZone} report dates. Paying views gained in range for videos posted since ${formatDateLabel(data.videoWindowStartDate)}. Fixed per-video fees only count for videos posted in range.`
+    : `${data.reportTimeZone} report dates. Videos posted in range; views use this View Tally period.`;
+  const viewWindowDetail = isGlobalViewWindowMode
+    ? `Payable views are clipped to the first ${formatMetricValue(data.globalViewWindowDays)} days after each video was posted.`
+    : "Payable views use the full selected View Tally period.";
+  const videoFetchDetail = isGainedViewMode
+    ? isAccurateCreatorFetchMode
+      ? "Using account-scoped creator queries for more complete gained-view rows."
+      : "Using the fast global top-100 View Tally video feed."
+    : null;
+  const emptyCreatorLabel = isGainedViewMode
+    ? "No View Tally videos gained views in the selected range for matched creators in this campaign."
+    : "No View Tally videos matched creators in this campaign for the selected range.";
 
   return (
     <div className="space-y-4">
@@ -357,72 +396,206 @@ export default async function UgcPayPage({
             <p className="mt-2 text-foreground">
               {formatDateLabel(data.startDate)} to {formatDateLabel(data.endDate)}
             </p>
+            <p className="mt-1 text-xs">{rangeDetail}</p>
+            <p className="mt-1 text-xs">{viewWindowDetail}</p>
+            {videoFetchDetail ? (
+              <p className="mt-1 text-xs">{videoFetchDetail}</p>
+            ) : null}
             <p className="mt-1 text-xs">
-              {data.reportTimeZone} report dates. Videos posted in range; views use this View Tally period.
-            </p>
-            <p className="mt-1 text-xs">
-              {formatMetricValue(data.summary.customDeals)} custom deals
+              {getPayModeLabel(data.payMode)} - {getViewWindowModeLabel(data.viewWindowMode, data.globalViewWindowDays)} - {getVideoFetchModeLabel(data.videoFetchMode)} - {formatMetricValue(data.summary.customDeals)} custom deals
             </p>
           </div>
         </div>
 
         <form
-          className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.25fr)_auto]"
+          className="mt-5 space-y-3"
           method="get"
         >
-          <label className="block">
-            <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
-              Start date
-            </span>
-            <input
-              className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
-              defaultValue={data.startDate}
-              name="startDate"
-              type="date"
-            />
-          </label>
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.25fr)_auto]">
+            <label className="block">
+              <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
+                Start date
+              </span>
+              <input
+                className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
+                defaultValue={data.startDate}
+                name="startDate"
+                type="date"
+              />
+            </label>
 
-          <label className="block">
-            <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
-              End date
-            </span>
-            <input
-              className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
-              defaultValue={data.endDate}
-              name="endDate"
-              type="date"
-            />
-          </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
+                End date
+              </span>
+              <input
+                className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
+                defaultValue={data.endDate}
+                name="endDate"
+                type="date"
+              />
+            </label>
 
-          <label className="block">
-            <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
-              Campaign
-            </span>
-            <select
-              className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
-              defaultValue={data.selectedCampaignId ?? ""}
-              disabled={data.campaignOptions.length === 0}
-              name="campaign"
-            >
-              {data.campaignOptions.length === 0 ? (
-                <option value="">No campaigns</option>
-              ) : null}
-              {data.campaignOptions.map((campaign) => (
-                <option key={campaign.id} value={campaign.id}>
-                  {campaign.label}
-                </option>
-              ))}
-            </select>
-          </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
+                Campaign
+              </span>
+              <select
+                className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
+                defaultValue={data.selectedCampaignId ?? ""}
+                disabled={data.campaignOptions.length === 0}
+                name="campaign"
+              >
+                {data.campaignOptions.length === 0 ? (
+                  <option value="">No campaigns</option>
+                ) : null}
+                {data.campaignOptions.map((campaign) => (
+                  <option key={campaign.id} value={campaign.id}>
+                    {campaign.label}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <div className="flex items-end">
-            <button
-              className="inline-flex w-full items-center justify-center gap-2 rounded-[0.95rem] border border-white/[0.1] bg-white/[0.06] px-4 py-2.5 text-sm text-foreground transition hover:border-white/[0.16] hover:bg-white/[0.1]"
-              type="submit"
-            >
-              <DashboardIcon className="h-4 w-4" name="refresh" />
-              Apply
-            </button>
+            <div className="flex items-end">
+              <button
+                className="inline-flex w-full items-center justify-center gap-2 rounded-[0.95rem] border border-white/[0.1] bg-white/[0.06] px-4 py-2.5 text-sm text-foreground transition hover:border-white/[0.16] hover:bg-white/[0.1]"
+                type="submit"
+              >
+                <DashboardIcon className="h-4 w-4" name="refresh" />
+                Apply
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+            <fieldset>
+              <legend className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
+                Calculation
+              </legend>
+              <div className="grid grid-cols-2 gap-1 rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-1">
+                <label className="block">
+                  <input
+                    className="peer sr-only"
+                    defaultChecked={data.payMode === "posted"}
+                    name="payMode"
+                    type="radio"
+                    value="posted"
+                  />
+                  <span className="flex min-h-10 items-center justify-center rounded-[0.75rem] px-3 text-center text-sm text-muted-foreground transition peer-checked:bg-white/[0.1] peer-checked:text-foreground">
+                    Posted in range
+                  </span>
+                </label>
+                <label className="block">
+                  <input
+                    className="peer sr-only"
+                    defaultChecked={isGainedViewMode}
+                    name="payMode"
+                    type="radio"
+                    value="gained"
+                  />
+                  <span className="flex min-h-10 items-center justify-center rounded-[0.75rem] px-3 text-center text-sm text-muted-foreground transition peer-checked:bg-white/[0.1] peer-checked:text-foreground">
+                    Gained views
+                  </span>
+                </label>
+              </div>
+            </fieldset>
+
+            {isGainedViewMode ? (
+              <label className="block">
+                <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
+                  Video window start
+                </span>
+                <input
+                  className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
+                  defaultValue={data.videoWindowStartDate}
+                  name="videoWindowStartDate"
+                  type="date"
+                />
+              </label>
+            ) : null}
+          </div>
+
+          {isGainedViewMode ? (
+            <fieldset>
+              <legend className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
+                Video rows
+              </legend>
+              <div className="grid gap-1 rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-1 sm:grid-cols-2">
+                <label className="block">
+                  <input
+                    className="peer sr-only"
+                    defaultChecked={data.videoFetchMode === "global"}
+                    name="videoFetchMode"
+                    type="radio"
+                    value="global"
+                  />
+                  <span className="flex min-h-10 items-center justify-center rounded-[0.75rem] px-3 text-center text-sm text-muted-foreground transition peer-checked:bg-white/[0.1] peer-checked:text-foreground">
+                    Fast global top 100
+                  </span>
+                </label>
+                <label className="block">
+                  <input
+                    className="peer sr-only"
+                    defaultChecked={isAccurateCreatorFetchMode}
+                    name="videoFetchMode"
+                    type="radio"
+                    value="per-creator"
+                  />
+                  <span className="flex min-h-10 items-center justify-center rounded-[0.75rem] px-3 text-center text-sm text-muted-foreground transition peer-checked:bg-white/[0.1] peer-checked:text-foreground">
+                    Accurate creator queries
+                  </span>
+                </label>
+              </div>
+            </fieldset>
+          ) : null}
+
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+            <fieldset>
+              <legend className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
+                View window
+              </legend>
+              <div className="grid grid-cols-2 gap-1 rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-1">
+                <label className="block">
+                  <input
+                    className="peer sr-only"
+                    defaultChecked={data.viewWindowMode === "all"}
+                    name="viewWindowMode"
+                    type="radio"
+                    value="all"
+                  />
+                  <span className="flex min-h-10 items-center justify-center rounded-[0.75rem] px-3 text-center text-sm text-muted-foreground transition peer-checked:bg-white/[0.1] peer-checked:text-foreground">
+                    All report views
+                  </span>
+                </label>
+                <label className="block">
+                  <input
+                    className="peer sr-only"
+                    defaultChecked={isGlobalViewWindowMode}
+                    name="viewWindowMode"
+                    type="radio"
+                    value="first-days"
+                  />
+                  <span className="flex min-h-10 items-center justify-center rounded-[0.75rem] px-3 text-center text-sm text-muted-foreground transition peer-checked:bg-white/[0.1] peer-checked:text-foreground">
+                    First days
+                  </span>
+                </label>
+              </div>
+            </fieldset>
+
+            <label className="block">
+              <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
+                Window days
+              </span>
+              <input
+                className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
+                defaultValue={data.globalViewWindowDays}
+                min={1}
+                max={365}
+                name="globalViewWindowDays"
+                type="number"
+              />
+            </label>
           </div>
         </form>
       </section>
@@ -490,7 +663,7 @@ export default async function UgcPayPage({
             ))
           ) : (
             <div className="px-4 py-10 text-sm text-muted-foreground">
-              No View Tally videos matched creators in this campaign for the selected range.
+              {emptyCreatorLabel}
             </div>
           )}
         </div>

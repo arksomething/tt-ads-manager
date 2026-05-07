@@ -14,6 +14,7 @@ import {
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
 import {
   getOrganizationViewTallyData,
+  type OrganizationViewTallyData,
   type ViewTallyListItem,
 } from "@/server/videos/queries";
 
@@ -21,8 +22,17 @@ const DEFAULT_DEAL_CURRENCY = "USD";
 const DEFAULT_DEAL_CPM_AMOUNT = 1;
 const DEFAULT_DEAL_VIEW_WINDOW_DAYS = 30;
 const DEFAULT_DEAL_PAYOUT_CAP_PER_VIDEO = 100;
+const DEFAULT_GLOBAL_VIEW_WINDOW_DAYS = 7;
 const DEFAULT_REPORT_TIME_ZONE = "America/New_York";
 const VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD = 100;
+const GAINED_VIEW_CAP_CONTEXT_BATCH_SIZE = 150;
+const UGC_PAY_CREATOR_QUERY_CONCURRENCY = 2;
+
+export type UgcPayMode = "posted" | "gained";
+export type UgcPayViewWindowMode = "all" | "first-days";
+export type UgcPayVideoFetchMode = "global" | "per-creator";
+
+type ViewTallyCreatorOption = OrganizationViewTallyData["creatorOptions"][number];
 
 type CampaignCreatorUgcPayRow = {
   id: string;
@@ -95,6 +105,24 @@ type CreatorAccumulator = {
   videos: UgcPayVideoRow[];
 };
 
+type LocalVideoViewCapRow = {
+  id: string;
+  sourceVideoId: string | null;
+  views: number | null;
+  lastSyncedAt: Date | null;
+};
+
+type LocalVideoMetricsSnapshotRow = {
+  videoId: string;
+  capturedAt: Date;
+  views: number | null;
+};
+
+type GainedViewCapContext = {
+  grossViewsBeforePeriod: number;
+  grossViewsAtPeriodEnd: number;
+};
+
 export type UgcPayVideoRow = {
   campaignCreatorId: string;
   campaignId: string;
@@ -154,6 +182,11 @@ export type OrganizationUgcPayData = {
   selectedCampaignLabel: string | null;
   startDate: string;
   endDate: string;
+  payMode: UgcPayMode;
+  videoWindowStartDate: string;
+  viewWindowMode: UgcPayViewWindowMode;
+  videoFetchMode: UgcPayVideoFetchMode;
+  globalViewWindowDays: number;
   reportTimeZone: string;
   warnings: string[];
   errorMessage: string | null;
@@ -227,6 +260,22 @@ function addDateOnlyDays(value: string, days: number) {
   const nextValue = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
   nextValue.setUTCDate(nextValue.getUTCDate() + days);
   return toDateOnlyString(nextValue);
+}
+
+function addDateOnlyMonths(value: string, months: number) {
+  const parts = parseDateOnlyParts(value);
+
+  if (!parts) {
+    return null;
+  }
+
+  const targetMonthStart = new Date(Date.UTC(parts.year, parts.month - 1 + months, 1));
+  const targetYear = targetMonthStart.getUTCFullYear();
+  const targetMonth = targetMonthStart.getUTCMonth();
+  const lastTargetMonthDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
+  const targetDay = Math.min(parts.day, lastTargetMonthDay);
+
+  return toDateOnlyString(new Date(Date.UTC(targetYear, targetMonth, targetDay)));
 }
 
 function getReportTimeZone() {
@@ -362,6 +411,14 @@ function isVideoPostedInReportDateRange(args: {
   return postedAt ? postedAt >= args.start && postedAt < args.endExclusive : false;
 }
 
+function isVideoPostedInVideoWindow(args: {
+  row: ViewTallyListItem;
+  start: Date;
+  endExclusive: Date;
+}) {
+  return isVideoPostedInReportDateRange(args);
+}
+
 function getDateOnlySearchParam(
   searchParams: DashboardSearchParams | undefined,
   key: string,
@@ -401,6 +458,62 @@ function getSelectedDateRange(
   };
 }
 
+function getSelectedPayMode(searchParams: DashboardSearchParams | undefined): UgcPayMode {
+  return getSearchParamValue(searchParams, "payMode") === "gained"
+    ? "gained"
+    : "posted";
+}
+
+function getDefaultVideoWindowStartDate(startDate: string) {
+  return addDateOnlyMonths(startDate, -1) ?? startDate;
+}
+
+function getSelectedVideoWindowStartDate(
+  searchParams: DashboardSearchParams | undefined,
+  startDate: string,
+  endDate: string,
+) {
+  const fallbackDate = getDefaultVideoWindowStartDate(startDate);
+  const selectedDate =
+    getDateOnlySearchParam(searchParams, "videoWindowStartDate") ?? fallbackDate;
+
+  return selectedDate <= endDate ? selectedDate : fallbackDate;
+}
+
+function getSelectedViewWindowMode(
+  searchParams: DashboardSearchParams | undefined,
+): UgcPayViewWindowMode {
+  return getSearchParamValue(searchParams, "viewWindowMode") === "first-days"
+    ? "first-days"
+    : "all";
+}
+
+function getSelectedVideoFetchMode(
+  searchParams: DashboardSearchParams | undefined,
+): UgcPayVideoFetchMode {
+  return getSearchParamValue(searchParams, "videoFetchMode") === "per-creator"
+    ? "per-creator"
+    : "global";
+}
+
+function getSelectedGlobalViewWindowDays(
+  searchParams: DashboardSearchParams | undefined,
+): number {
+  const rawValue = getSearchParamValue(searchParams, "globalViewWindowDays");
+  const parsedValue = rawValue ? Number(rawValue) : null;
+
+  if (
+    typeof parsedValue === "number" &&
+    Number.isInteger(parsedValue) &&
+    parsedValue >= 1 &&
+    parsedValue <= 365
+  ) {
+    return parsedValue;
+  }
+
+  return DEFAULT_GLOBAL_VIEW_WINDOW_DAYS;
+}
+
 function normalizeMoney(value: number) {
   return Number(value.toFixed(2));
 }
@@ -413,6 +526,42 @@ function normalizeHandle(value: string | null | undefined) {
 function normalizeName(value: string | null | undefined) {
   const normalized = value?.trim().replace(/\s+/g, " ").toLowerCase();
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function chunkArray<T>(values: T[], size: number) {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+
+  return chunks;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>,
+) {
+  const results: R[] = [];
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        const item = items[currentIndex];
+
+        if (item !== undefined) {
+          results[currentIndex] = await mapper(item);
+        }
+      }
+    }),
+  );
+
+  return results;
 }
 
 function setUniqueLookupValue<T>(
@@ -437,6 +586,242 @@ function getTikTokHandle(row: CampaignCreatorUgcPayRow) {
     row.creator.platformAccounts.find((account) => account.platform === Platform.TIKTOK)?.handle ??
     null
   );
+}
+
+function getCampaignCreatorTikTokHandles(row: CampaignCreatorUgcPayRow) {
+  return row.creator.platformAccounts
+    .filter((account) => account.platform === Platform.TIKTOK)
+    .map((account) => normalizeHandle(account.handle))
+    .filter((handle): handle is string => Boolean(handle));
+}
+
+function getMatchedViewTallyCreatorOptions(args: {
+  campaignCreators: CampaignCreatorUgcPayRow[];
+  creatorOptions: ViewTallyCreatorOption[];
+}) {
+  const optionsByHandle = new Map<string, ViewTallyCreatorOption | null>();
+  const optionsByName = new Map<string, ViewTallyCreatorOption | null>();
+
+  for (const option of args.creatorOptions) {
+    setUniqueLookupValue(optionsByHandle, normalizeHandle(option.meta), option);
+    setUniqueLookupValue(optionsByHandle, normalizeHandle(option.label), option);
+    setUniqueLookupValue(optionsByName, normalizeName(option.label), option);
+  }
+
+  const matchedOptions: ViewTallyCreatorOption[] = [];
+  const matchedOptionIds = new Set<string>();
+  const unmatchedCampaignCreators: CampaignCreatorUgcPayRow[] = [];
+
+  for (const campaignCreator of args.campaignCreators) {
+    const matches = new Map<string, ViewTallyCreatorOption>();
+
+    for (const handle of getCampaignCreatorTikTokHandles(campaignCreator)) {
+      const option = optionsByHandle.get(handle) ?? null;
+
+      if (option) {
+        matches.set(option.id, option);
+      }
+    }
+
+    if (matches.size === 0) {
+      const option =
+        optionsByName.get(normalizeName(campaignCreator.creator.displayName) ?? "") ?? null;
+
+      if (option) {
+        matches.set(option.id, option);
+      }
+    }
+
+    if (matches.size === 0) {
+      unmatchedCampaignCreators.push(campaignCreator);
+      continue;
+    }
+
+    for (const option of matches.values()) {
+      if (matchedOptionIds.has(option.id)) {
+        continue;
+      }
+
+      matchedOptionIds.add(option.id);
+      matchedOptions.push(option);
+    }
+  }
+
+  return {
+    matchedOptions,
+    unmatchedCampaignCreators,
+  };
+}
+
+function mergeViewTallyRowsBySourceVideoId(rowGroups: ViewTallyListItem[][]) {
+  const rowsBySourceVideoId = new Map<string, ViewTallyListItem>();
+
+  for (const rows of rowGroups) {
+    for (const row of rows) {
+      const existingRow = rowsBySourceVideoId.get(row.sourceVideoId);
+
+      if (!existingRow || (row.views ?? 0) >= (existingRow.views ?? 0)) {
+        rowsBySourceVideoId.set(row.sourceVideoId, row);
+      }
+    }
+  }
+
+  return [...rowsBySourceVideoId.values()].sort(
+    (left, right) => (right.views ?? 0) - (left.views ?? 0),
+  );
+}
+
+function getMatchedViewTallyCreatorOptionsForRows(args: {
+  rows: ViewTallyListItem[];
+  creatorOptions: ViewTallyCreatorOption[];
+}) {
+  const optionsByHandle = new Map<string, ViewTallyCreatorOption | null>();
+  const optionsByName = new Map<string, ViewTallyCreatorOption | null>();
+
+  for (const option of args.creatorOptions) {
+    setUniqueLookupValue(optionsByHandle, normalizeHandle(option.meta), option);
+    setUniqueLookupValue(optionsByHandle, normalizeHandle(option.label), option);
+    setUniqueLookupValue(optionsByName, normalizeName(option.label), option);
+  }
+
+  const matchedOptions: ViewTallyCreatorOption[] = [];
+  const matchedOptionIds = new Set<string>();
+
+  for (const row of args.rows) {
+    const option =
+      optionsByHandle.get(normalizeHandle(row.accountHandle) ?? "") ??
+      optionsByHandle.get(normalizeHandle(row.creatorName) ?? "") ??
+      optionsByName.get(normalizeName(row.creatorName) ?? "") ??
+      null;
+
+    if (!option || matchedOptionIds.has(option.id)) {
+      continue;
+    }
+
+    matchedOptionIds.add(option.id);
+    matchedOptions.push(option);
+  }
+
+  return matchedOptions;
+}
+
+async function getPerCreatorViewTallyRowsForOptions(args: {
+  organizationSlug: string;
+  creatorOptions: ViewTallyCreatorOption[];
+  baseData: OrganizationViewTallyData;
+  startDate: string;
+  endDate: string;
+  warningPrefix: string;
+}) {
+  const warnings: string[] = [];
+
+  if (args.creatorOptions.length === 0) {
+    return {
+      rows: args.baseData.rows,
+      warnings,
+    };
+  }
+
+  const creatorResults = await mapWithConcurrency(
+    args.creatorOptions,
+    UGC_PAY_CREATOR_QUERY_CONCURRENCY,
+    async (creatorOption) => {
+      const data = await getOrganizationViewTallyData({
+        organizationSlug: args.organizationSlug,
+        searchParams: {
+          startDate: args.startDate,
+          endDate: args.endDate,
+          creator: creatorOption.id,
+        },
+        includeAdSpend: false,
+        includeSummaryAnalytics: false,
+      });
+
+      return {
+        creatorOption,
+        data,
+      };
+    },
+  );
+
+  for (const result of creatorResults) {
+    warnings.push(...result.data.warnings);
+
+    if (result.data.errorMessage) {
+      warnings.push(
+        `Could not load ${args.warningPrefix} for ${result.creatorOption.label}: ${result.data.errorMessage}`,
+      );
+    }
+
+    if (result.data.rows.length >= VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD) {
+      warnings.push(
+        `Viral.app returned 100 videos for ${result.creatorOption.label} from ${args.startDate} to ${args.endDate}. Lower-view videos for this creator may still be missing.`,
+      );
+    }
+  }
+
+  const mergedRows = mergeViewTallyRowsBySourceVideoId([
+    args.baseData.rows,
+    ...creatorResults.map((result) => result.data.rows),
+  ]);
+
+  return {
+    rows: mergedRows,
+    warnings,
+  };
+}
+
+async function getPerCreatorViewTallyRows(args: {
+  organizationSlug: string;
+  campaignCreators: CampaignCreatorUgcPayRow[];
+  baseData: OrganizationViewTallyData;
+  startDate: string;
+  endDate: string;
+}) {
+  const { matchedOptions, unmatchedCampaignCreators } =
+    getMatchedViewTallyCreatorOptions({
+      campaignCreators: args.campaignCreators,
+      creatorOptions: args.baseData.creatorOptions,
+    });
+  const warnings: string[] = [];
+
+  if (matchedOptions.length === 0) {
+    return {
+      rows: args.baseData.rows,
+      warnings: [
+        "Accurate creator queries could not find matching tracked TikTok accounts for this campaign.",
+      ],
+    };
+  }
+
+  if (unmatchedCampaignCreators.length > 0) {
+    const examples = unmatchedCampaignCreators
+      .slice(0, 5)
+      .map((creator) => creator.creator.displayName)
+      .join(", ");
+    warnings.push(
+      `Accurate creator queries could not match ${unmatchedCampaignCreators.length} campaign creator${unmatchedCampaignCreators.length === 1 ? "" : "s"} to tracked TikTok accounts${examples ? `: ${examples}` : ""}.`,
+    );
+  }
+
+  const expandedRows = await getPerCreatorViewTallyRowsForOptions({
+    organizationSlug: args.organizationSlug,
+    creatorOptions: matchedOptions,
+    baseData: args.baseData,
+    startDate: args.startDate,
+    endDate: args.endDate,
+    warningPrefix: "accurate creator videos",
+  });
+
+  warnings.push(...expandedRows.warnings);
+  warnings.push(
+    `Accurate creator queries checked ${matchedOptions.length} tracked creator account${matchedOptions.length === 1 ? "" : "s"} and expanded the report from ${args.baseData.rows.length} global video row${args.baseData.rows.length === 1 ? "" : "s"} to ${expandedRows.rows.length} merged video row${expandedRows.rows.length === 1 ? "" : "s"}.`,
+  );
+
+  return {
+    rows: expandedRows.rows,
+    warnings,
+  };
 }
 
 function isDealActiveInRange(
@@ -487,17 +872,478 @@ function getFixedPayForRange(deal: ResolvedUgcPayDeal, start: Date, end: Date) {
   return recognitionDate >= start && recognitionDate <= end ? deal.fixedFee : 0;
 }
 
+function getPerVideoGrossViewCap(args: {
+  deal: ResolvedUgcPayDeal;
+  fixedFeePerVideo: number;
+}) {
+  const viewCaps: number[] = [];
+
+  if (typeof args.deal.viewCapPerVideo === "number") {
+    viewCaps.push(args.deal.viewCapPerVideo);
+  }
+
+  if (args.deal.cpmAmount > 0) {
+    if (args.deal.perVideoCapScope === CreatorDealPerVideoCapScope.CPM) {
+      viewCaps.push((args.deal.payoutCapPerVideo / args.deal.cpmAmount) * 1_000);
+    } else if (args.deal.perVideoCapScope === CreatorDealPerVideoCapScope.TOTAL) {
+      const cpmCap = Math.max(
+        args.deal.payoutCapPerVideo - args.fixedFeePerVideo,
+        0,
+      );
+      viewCaps.push((cpmCap / args.deal.cpmAmount) * 1_000);
+    }
+  }
+
+  return viewCaps.length > 0 ? Math.min(...viewCaps) : null;
+}
+
+function getGrossViewsInsideCap(args: {
+  grossViewsInPeriod: number;
+  viewCap: number | null;
+  context: GainedViewCapContext | null;
+}) {
+  if (!args.context || typeof args.viewCap !== "number") {
+    return args.grossViewsInPeriod;
+  }
+
+  return Math.max(
+    Math.min(args.context.grossViewsAtPeriodEnd, args.viewCap) -
+      Math.min(args.context.grossViewsBeforePeriod, args.viewCap),
+    0,
+  );
+}
+
+function getVideoPostedDateOnly(row: ViewTallyListItem, timeZone: string) {
+  const postedAt = getVideoPostedAt(row);
+  return postedAt ? toDateOnlyStringInTimeZone(postedAt, timeZone) : null;
+}
+
+async function applyGlobalViewWindowToRows(args: {
+  organizationSlug: string;
+  rows: ViewTallyListItem[];
+  startDate: string;
+  endDate: string;
+  reportTimeZone: string;
+  videoFetchMode: UgcPayVideoFetchMode;
+  globalViewWindowDays: number;
+}) {
+  const reportEndExclusiveDate = addDateOnlyDays(args.endDate, 1);
+
+  if (!reportEndExclusiveDate) {
+    return {
+      rows: args.rows,
+      warnings: [] as string[],
+    };
+  }
+
+  const keptRows: ViewTallyListItem[] = [];
+  const clippedRowGroups = new Map<
+    string,
+    {
+      startDate: string;
+      endDate: string;
+      rows: ViewTallyListItem[];
+    }
+  >();
+
+  for (const row of args.rows) {
+    const postedDate = getVideoPostedDateOnly(row, args.reportTimeZone);
+    const windowEndExclusiveDate = postedDate
+      ? addDateOnlyDays(postedDate, args.globalViewWindowDays)
+      : null;
+
+    if (!postedDate || !windowEndExclusiveDate) {
+      continue;
+    }
+
+    const overlapStartDate =
+      postedDate > args.startDate ? postedDate : args.startDate;
+    const overlapEndExclusiveDate =
+      windowEndExclusiveDate < reportEndExclusiveDate
+        ? windowEndExclusiveDate
+        : reportEndExclusiveDate;
+
+    if (overlapStartDate >= overlapEndExclusiveDate) {
+      continue;
+    }
+
+    const overlapEndDate = addDateOnlyDays(overlapEndExclusiveDate, -1);
+
+    if (!overlapEndDate || overlapEndDate < overlapStartDate) {
+      continue;
+    }
+
+    if (overlapStartDate === args.startDate && overlapEndDate === args.endDate) {
+      keptRows.push(row);
+      continue;
+    }
+
+    const groupKey = `${overlapStartDate}:${overlapEndDate}`;
+    const group =
+      clippedRowGroups.get(groupKey) ??
+      {
+        startDate: overlapStartDate,
+        endDate: overlapEndDate,
+        rows: [],
+      };
+
+    group.rows.push(row);
+    clippedRowGroups.set(groupKey, group);
+  }
+
+  const warnings: string[] = [];
+
+  for (const group of clippedRowGroups.values()) {
+    const clippedData = await getOrganizationViewTallyData({
+      organizationSlug: args.organizationSlug,
+      searchParams: {
+        startDate: group.startDate,
+        endDate: group.endDate,
+      },
+      includeAdSpend: false,
+      includeSummaryAnalytics: false,
+    });
+    warnings.push(...clippedData.warnings);
+
+    if (clippedData.errorMessage) {
+      warnings.push(
+        `Could not fully apply the ${args.globalViewWindowDays}-day view window for ${group.startDate} to ${group.endDate}: ${clippedData.errorMessage}`,
+      );
+    }
+
+    let clippedRows = clippedData.rows;
+
+    if (args.videoFetchMode === "per-creator") {
+      const creatorOptions = getMatchedViewTallyCreatorOptionsForRows({
+        rows: group.rows,
+        creatorOptions: clippedData.creatorOptions,
+      });
+      const expandedClippedRows = await getPerCreatorViewTallyRowsForOptions({
+        organizationSlug: args.organizationSlug,
+        creatorOptions,
+        baseData: clippedData,
+        startDate: group.startDate,
+        endDate: group.endDate,
+        warningPrefix: "accurate view-window videos",
+      });
+
+      clippedRows = expandedClippedRows.rows;
+      warnings.push(...expandedClippedRows.warnings);
+    }
+
+    if (
+      args.videoFetchMode === "global" &&
+      clippedData.rows.length >= VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD
+    ) {
+      warnings.push(
+        `View Tally returned 100 video rows while applying the ${args.globalViewWindowDays}-day view window for ${group.startDate} to ${group.endDate}. Lower-view rows may be missing from this clipped window.`,
+      );
+    }
+
+    const clippedRowsBySourceVideoId = new Map(
+      clippedRows.map((row) => [row.sourceVideoId, row]),
+    );
+
+    for (const originalRow of group.rows) {
+      const clippedRow = clippedRowsBySourceVideoId.get(originalRow.sourceVideoId);
+
+      if (!clippedRow || (clippedRow.views ?? 0) <= 0) {
+        continue;
+      }
+
+      keptRows.push({
+        ...clippedRow,
+        publishedAt: originalRow.publishedAt ?? clippedRow.publishedAt,
+        createdAt: originalRow.createdAt,
+      });
+    }
+  }
+
+  return {
+    rows: keptRows,
+    warnings,
+  };
+}
+
+function getLocalGainedViewCapContext(args: {
+  row: ViewTallyListItem;
+  video: LocalVideoViewCapRow | null;
+  snapshots: LocalVideoMetricsSnapshotRow[];
+  periodStart: Date;
+  periodEndExclusive: Date;
+}) {
+  if (!args.video) {
+    return null;
+  }
+
+  const grossViewsInPeriod = args.row.views ?? 0;
+  const points = args.snapshots
+    .filter((snapshot) => typeof snapshot.views === "number")
+    .map((snapshot) => ({
+      capturedAt: snapshot.capturedAt,
+      views: snapshot.views as number,
+    }));
+
+  if (
+    typeof args.video.views === "number" &&
+    args.video.lastSyncedAt &&
+    args.video.lastSyncedAt < args.periodEndExclusive
+  ) {
+    points.push({
+      capturedAt: args.video.lastSyncedAt,
+      views: args.video.views,
+    });
+  }
+
+  points.sort((left, right) => left.capturedAt.getTime() - right.capturedAt.getTime());
+
+  let grossViewsBeforePeriod: number | null = null;
+  let grossViewsAtPeriodEnd: number | null = null;
+
+  for (const point of points) {
+    if (point.capturedAt < args.periodStart) {
+      grossViewsBeforePeriod = Math.max(grossViewsBeforePeriod ?? 0, point.views);
+    }
+
+    if (point.capturedAt < args.periodEndExclusive) {
+      grossViewsAtPeriodEnd = Math.max(grossViewsAtPeriodEnd ?? 0, point.views);
+    }
+  }
+
+  if (grossViewsBeforePeriod != null) {
+    return {
+      grossViewsBeforePeriod,
+      grossViewsAtPeriodEnd: Math.max(
+        grossViewsAtPeriodEnd ?? 0,
+        grossViewsBeforePeriod + grossViewsInPeriod,
+      ),
+    };
+  }
+
+  if (grossViewsAtPeriodEnd != null && grossViewsAtPeriodEnd >= grossViewsInPeriod) {
+    return {
+      grossViewsBeforePeriod: grossViewsAtPeriodEnd - grossViewsInPeriod,
+      grossViewsAtPeriodEnd,
+    };
+  }
+
+  return null;
+}
+
+async function getLocalGainedViewCapContexts(args: {
+  organizationId: string;
+  rows: ViewTallyListItem[];
+  periodStart: Date;
+  periodEndExclusive: Date;
+}) {
+  const sourceVideoIds = [
+    ...new Set(
+      args.rows
+        .map((row) => row.sourceVideoId)
+        .filter((value): value is string => value.length > 0),
+    ),
+  ];
+
+  if (sourceVideoIds.length === 0) {
+    return new Map<string, GainedViewCapContext>();
+  }
+
+  const videos: LocalVideoViewCapRow[] = [];
+
+  for (const sourceVideoIdBatch of chunkArray(
+    sourceVideoIds,
+    GAINED_VIEW_CAP_CONTEXT_BATCH_SIZE,
+  )) {
+    videos.push(
+      ...((await prisma.video.findMany({
+        where: {
+          platform: Platform.TIKTOK,
+          sourceVideoId: {
+            in: sourceVideoIdBatch,
+          },
+          creator: {
+            organizationId: args.organizationId,
+          },
+        },
+        select: {
+          id: true,
+          sourceVideoId: true,
+          views: true,
+          lastSyncedAt: true,
+        },
+      })) as LocalVideoViewCapRow[]),
+    );
+  }
+
+  if (videos.length === 0) {
+    return new Map<string, GainedViewCapContext>();
+  }
+
+  const snapshots: LocalVideoMetricsSnapshotRow[] = [];
+
+  for (const videoIdBatch of chunkArray(
+    videos.map((video) => video.id),
+    GAINED_VIEW_CAP_CONTEXT_BATCH_SIZE,
+  )) {
+    snapshots.push(
+      ...((await prisma.videoMetricsSnapshot.findMany({
+        where: {
+          videoId: {
+            in: videoIdBatch,
+          },
+          capturedAt: {
+            lt: args.periodEndExclusive,
+          },
+        },
+        select: {
+          videoId: true,
+          capturedAt: true,
+          views: true,
+        },
+        orderBy: [{ capturedAt: "asc" }],
+      })) as LocalVideoMetricsSnapshotRow[]),
+    );
+  }
+
+  const videosBySourceVideoId = new Map(
+    videos
+      .filter((video) => video.sourceVideoId != null)
+      .map((video) => [video.sourceVideoId as string, video]),
+  );
+  const snapshotsByVideoId = new Map<string, LocalVideoMetricsSnapshotRow[]>();
+
+  for (const snapshot of snapshots) {
+    const existing = snapshotsByVideoId.get(snapshot.videoId) ?? [];
+    existing.push(snapshot);
+    snapshotsByVideoId.set(snapshot.videoId, existing);
+  }
+
+  const contexts = new Map<string, GainedViewCapContext>();
+
+  for (const row of args.rows) {
+    const video = videosBySourceVideoId.get(row.sourceVideoId) ?? null;
+    const context = getLocalGainedViewCapContext({
+      row,
+      video,
+      snapshots: video ? (snapshotsByVideoId.get(video.id) ?? []) : [],
+      periodStart: args.periodStart,
+      periodEndExclusive: args.periodEndExclusive,
+    });
+
+    if (context) {
+      contexts.set(row.sourceVideoId, context);
+    }
+  }
+
+  return contexts;
+}
+
+async function getProviderGainedViewCapContexts(args: {
+  organizationSlug: string;
+  rows: ViewTallyListItem[];
+  startDate: string;
+  endDate: string;
+}) {
+  if (args.rows.length === 0) {
+    return {
+      contexts: new Map<string, GainedViewCapContext>(),
+      warnings: [] as string[],
+    };
+  }
+
+  const cumulativeData = await getOrganizationViewTallyData({
+    organizationSlug: args.organizationSlug,
+    searchParams: {
+      startDate: args.startDate,
+      endDate: args.endDate,
+    },
+    includeAdSpend: false,
+    includePaidViews: false,
+    includeSummaryAnalytics: false,
+  });
+  const cumulativeRowsBySourceVideoId = new Map(
+    cumulativeData.rows.map((row) => [row.sourceVideoId, row]),
+  );
+  const contexts = new Map<string, GainedViewCapContext>();
+
+  for (const row of args.rows) {
+    const grossViewsInPeriod = row.views ?? 0;
+    const cumulativeGrossViews =
+      cumulativeRowsBySourceVideoId.get(row.sourceVideoId)?.views ?? null;
+
+    if (
+      typeof cumulativeGrossViews !== "number" ||
+      cumulativeGrossViews < grossViewsInPeriod
+    ) {
+      continue;
+    }
+
+    contexts.set(row.sourceVideoId, {
+      grossViewsBeforePeriod: cumulativeGrossViews - grossViewsInPeriod,
+      grossViewsAtPeriodEnd: cumulativeGrossViews,
+    });
+  }
+
+  return {
+    contexts,
+    warnings: [
+      ...cumulativeData.warnings,
+      ...(cumulativeData.errorMessage
+        ? [
+            `Could not load cumulative View Tally context for gained-view caps: ${cumulativeData.errorMessage}`,
+          ]
+        : []),
+    ],
+  };
+}
+
+function getFallbackGainedViewCapContext(row: ViewTallyListItem) {
+  const grossViewsInPeriod = row.views ?? 0;
+
+  if (
+    typeof row.currentViews !== "number" ||
+    row.currentViews < grossViewsInPeriod
+  ) {
+    return null;
+  }
+
+  return {
+    grossViewsBeforePeriod: row.currentViews - grossViewsInPeriod,
+    grossViewsAtPeriodEnd: row.currentViews,
+  };
+}
+
 function calculateVideoPay(args: {
   row: ViewTallyListItem;
   campaignCreator: CampaignCreatorUgcPayRow;
   deal: ResolvedUgcPayDeal;
+  includeFixedFeePerVideo: boolean;
+  gainedViewCapContext: GainedViewCapContext | null;
+  payMode: UgcPayMode;
 }): UgcPayVideoRow {
   const grossViews = args.row.views ?? 0;
-  const paidViewsDeducted =
+  const fixedFeePerVideo = args.includeFixedFeePerVideo
+    ? (args.deal.fixedFeePerVideo ?? 0)
+    : 0;
+  const perVideoGrossViewCap = getPerVideoGrossViewCap({
+    deal: args.deal,
+    fixedFeePerVideo,
+  });
+  const grossViewsInsideCap =
+    args.payMode === "gained"
+      ? getGrossViewsInsideCap({
+          grossViewsInPeriod: grossViews,
+          viewCap: perVideoGrossViewCap,
+          context: args.gainedViewCapContext,
+        })
+      : grossViews;
+  const paidViewsDeducted = Math.min(
     args.deal.deductPaidTraffic && args.row.paidStatus === "yes"
       ? (args.row.paidViews ?? 0)
-      : 0;
-  const uncappedPayableViews = Math.max(grossViews - paidViewsDeducted, 0);
+      : 0,
+    grossViewsInsideCap,
+  );
+  const uncappedPayableViews = Math.max(grossViewsInsideCap - paidViewsDeducted, 0);
   let payableViews = uncappedPayableViews;
 
   if (typeof args.deal.viewCapPerVideo === "number") {
@@ -506,7 +1352,6 @@ function calculateVideoPay(args: {
 
   const cpmPay =
     args.deal.cpmAmount > 0 ? (payableViews / 1_000) * args.deal.cpmAmount : 0;
-  const fixedFeePerVideo = args.deal.fixedFeePerVideo ?? 0;
   let cappedCpmPay = cpmPay;
   let videoPay = fixedFeePerVideo + cpmPay;
 
@@ -519,6 +1364,7 @@ function calculateVideoPay(args: {
   }
 
   const viewCapReached =
+    grossViewsInsideCap < grossViews ||
     payableViews < uncappedPayableViews ||
     videoPay < fixedFeePerVideo + cpmPay;
 
@@ -678,6 +1524,11 @@ function getEmptyData(args: {
   selectedCampaignLabel: string | null;
   startDate: string;
   endDate: string;
+  payMode: UgcPayMode;
+  videoWindowStartDate: string;
+  viewWindowMode: UgcPayViewWindowMode;
+  videoFetchMode: UgcPayVideoFetchMode;
+  globalViewWindowDays: number;
   reportTimeZone: string;
   warnings?: string[];
   errorMessage?: string | null;
@@ -688,6 +1539,11 @@ function getEmptyData(args: {
     selectedCampaignLabel: args.selectedCampaignLabel,
     startDate: args.startDate,
     endDate: args.endDate,
+    payMode: args.payMode,
+    videoWindowStartDate: args.videoWindowStartDate,
+    viewWindowMode: args.viewWindowMode,
+    videoFetchMode: args.videoFetchMode,
+    globalViewWindowDays: args.globalViewWindowDays,
     reportTimeZone: args.reportTimeZone,
     warnings: args.warnings ?? [],
     errorMessage: args.errorMessage ?? null,
@@ -731,6 +1587,15 @@ export async function getOrganizationUgcPayData(args: {
     args.searchParams,
     reportTimeZone,
   );
+  const payMode = getSelectedPayMode(args.searchParams);
+  const videoWindowStartDate = getSelectedVideoWindowStartDate(
+    args.searchParams,
+    startDate,
+    endDate,
+  );
+  const viewWindowMode = getSelectedViewWindowMode(args.searchParams);
+  const videoFetchMode = getSelectedVideoFetchMode(args.searchParams);
+  const globalViewWindowDays = getSelectedGlobalViewWindowDays(args.searchParams);
   const start = parseDateOnly(startDate);
   const end = parseDateOnly(endDate);
   const reportDateBounds = getReportDateRangeBounds({
@@ -738,14 +1603,24 @@ export async function getOrganizationUgcPayData(args: {
     endDate,
     timeZone: reportTimeZone,
   });
+  const videoWindowDateBounds = getReportDateRangeBounds({
+    startDate: videoWindowStartDate,
+    endDate,
+    timeZone: reportTimeZone,
+  });
 
-  if (!start || !end || !reportDateBounds) {
+  if (!start || !end || !reportDateBounds || !videoWindowDateBounds) {
     return getEmptyData({
       campaignOptions,
       selectedCampaignId: selectedCampaign?.id ?? null,
       selectedCampaignLabel: selectedCampaign?.label ?? null,
       startDate,
       endDate,
+      payMode,
+      videoWindowStartDate,
+      viewWindowMode,
+      videoFetchMode,
+      globalViewWindowDays,
       reportTimeZone,
       errorMessage: "The selected date range was invalid.",
     });
@@ -758,6 +1633,11 @@ export async function getOrganizationUgcPayData(args: {
       selectedCampaignLabel: null,
       startDate,
       endDate,
+      payMode,
+      videoWindowStartDate,
+      viewWindowMode,
+      videoFetchMode,
+      globalViewWindowDays,
       reportTimeZone,
       warnings: ["Create a campaign before running UGC pay."],
     });
@@ -844,24 +1724,96 @@ export async function getOrganizationUgcPayData(args: {
       endDate,
     },
     includeAdSpend: false,
+    includeSummaryAnalytics: false,
   });
   const warnings = [...viewTallyData.warnings];
-  const postedInRangeRows = viewTallyData.rows.filter((row) =>
-    isVideoPostedInReportDateRange({
-      row,
-      start: reportDateBounds.start,
-      endExclusive: reportDateBounds.endExclusive,
-    }),
-  );
+  let viewTallyRows = viewTallyData.rows;
+
+  if (payMode === "gained" && videoFetchMode === "per-creator") {
+    const perCreatorRows = await getPerCreatorViewTallyRows({
+      organizationSlug: args.organizationSlug,
+      campaignCreators,
+      baseData: viewTallyData,
+      startDate,
+      endDate,
+    });
+    viewTallyRows = perCreatorRows.rows;
+    warnings.push(...perCreatorRows.warnings);
+  }
+
+  const candidatePayableRows =
+    payMode === "gained"
+      ? viewTallyRows.filter((row) => {
+          return (
+            (row.views ?? 0) > 0 &&
+            isVideoPostedInVideoWindow({
+              row,
+              start: videoWindowDateBounds.start,
+              endExclusive: videoWindowDateBounds.endExclusive,
+            })
+          );
+        })
+      : viewTallyRows.filter((row) =>
+          isVideoPostedInReportDateRange({
+            row,
+            start: reportDateBounds.start,
+            endExclusive: reportDateBounds.endExclusive,
+          }),
+        );
   let unmatchedVideos = 0;
 
-  if (viewTallyData.rows.length >= VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD) {
+  const viewWindowAdjustedRows =
+    viewWindowMode === "first-days"
+      ? await applyGlobalViewWindowToRows({
+          organizationSlug: args.organizationSlug,
+          rows: candidatePayableRows,
+          startDate,
+          endDate,
+          reportTimeZone,
+          videoFetchMode,
+          globalViewWindowDays,
+        })
+      : {
+          rows: candidatePayableRows,
+          warnings: [] as string[],
+        };
+  const payableRows = viewWindowAdjustedRows.rows;
+  warnings.push(...viewWindowAdjustedRows.warnings);
+
+  if (
+    videoFetchMode === "global" &&
+    viewTallyData.rows.length >= VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD
+  ) {
     warnings.push(
       "View Tally returned 100 video rows for this date range. If more videos exist, lower-view rows may not be included in this UGC pay report.",
     );
   }
 
+  let providerGainedViewCapContexts = new Map<string, GainedViewCapContext>();
+  let localGainedViewCapContexts = new Map<string, GainedViewCapContext>();
+
+  if (payMode === "gained") {
+    if (viewWindowMode === "all") {
+      const providerContextResult = await getProviderGainedViewCapContexts({
+        organizationSlug: args.organizationSlug,
+        rows: payableRows,
+        startDate: videoWindowStartDate,
+        endDate,
+      });
+      providerGainedViewCapContexts = providerContextResult.contexts;
+      warnings.push(...providerContextResult.warnings);
+    }
+
+    localGainedViewCapContexts = await getLocalGainedViewCapContexts({
+      organizationId: membership.organizationId,
+      rows: payableRows,
+      periodStart: reportDateBounds.start,
+      periodEndExclusive: reportDateBounds.endExclusive,
+    });
+  }
+
   const accumulators = new Map<string, CreatorAccumulator>();
+  let missingGainedViewCapContextCount = 0;
 
   for (const campaignCreator of campaignCreators) {
     const activeCustomDeal =
@@ -881,7 +1833,7 @@ export async function getOrganizationUgcPayData(args: {
     }
   }
 
-  for (const row of postedInRangeRows) {
+  for (const row of payableRows) {
     const campaignCreator = getCampaignCreatorForViewTallyRow({
       row,
       byHandle,
@@ -899,10 +1851,42 @@ export async function getOrganizationUgcPayData(args: {
       start,
       end,
     });
+    const includeFixedFeePerVideo =
+      payMode === "posted" ||
+      isVideoPostedInReportDateRange({
+        row,
+        start: reportDateBounds.start,
+        endExclusive: reportDateBounds.endExclusive,
+      });
+    const fixedFeePerVideo = includeFixedFeePerVideo
+      ? (accumulator.deal.fixedFeePerVideo ?? 0)
+      : 0;
+    const perVideoGrossViewCap = getPerVideoGrossViewCap({
+      deal: accumulator.deal,
+      fixedFeePerVideo,
+    });
+    const gainedViewCapContext =
+      payMode === "gained" && typeof perVideoGrossViewCap === "number"
+        ? (providerGainedViewCapContexts.get(row.sourceVideoId) ??
+          localGainedViewCapContexts.get(row.sourceVideoId) ??
+          getFallbackGainedViewCapContext(row))
+        : null;
+
+    if (
+      payMode === "gained" &&
+      typeof perVideoGrossViewCap === "number" &&
+      !gainedViewCapContext
+    ) {
+      missingGainedViewCapContextCount += 1;
+    }
+
     const videoPay = calculateVideoPay({
       row,
       campaignCreator,
       deal: accumulator.deal,
+      includeFixedFeePerVideo,
+      gainedViewCapContext,
+      payMode,
     });
 
     accumulator.grossViews += videoPay.grossViews;
@@ -923,6 +1907,12 @@ export async function getOrganizationUgcPayData(args: {
   if (unmatchedVideos > 0) {
     warnings.push(
       `${unmatchedVideos} View Tally video${unmatchedVideos === 1 ? "" : "s"} could not be matched to creators in ${selectedCampaign.label}.`,
+    );
+  }
+
+  if (missingGainedViewCapContextCount > 0) {
+    warnings.push(
+      `${missingGainedViewCapContextCount} gained-view video${missingGainedViewCapContextCount === 1 ? "" : "s"} did not have cumulative view context, so per-video caps were applied to selected-period views only for those rows.`,
     );
   }
 
@@ -952,6 +1942,11 @@ export async function getOrganizationUgcPayData(args: {
     selectedCampaignLabel: selectedCampaign.label,
     startDate: viewTallyData.startDate,
     endDate: viewTallyData.endDate,
+    payMode,
+    videoWindowStartDate,
+    viewWindowMode,
+    videoFetchMode,
+    globalViewWindowDays,
     reportTimeZone,
     warnings: [...new Set(warnings)],
     errorMessage: viewTallyData.errorMessage,

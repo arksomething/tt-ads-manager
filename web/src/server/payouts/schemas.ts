@@ -48,6 +48,7 @@ export const upsertCampaignCreatorDealSchema = z
     effectiveEndDate: optionalDateField,
     fixedFee: optionalCurrencyField,
     fixedFeeRecognitionDate: optionalDateField,
+    fixedFeePerVideo: optionalCurrencyField,
     cpmAmount: optionalCurrencyField.default(1),
     paidTrafficMetric: z
       .nativeEnum(CreatorDealPaidTrafficMetric)

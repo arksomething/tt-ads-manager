@@ -100,6 +100,7 @@ export type ViewTallyListItem = {
   publishedAt: Date | null;
   createdAt: Date;
   views: number | null;
+  currentViews: number | null;
   paidViews: number | null;
   organicViewsEstimate: number | null;
   paidStatus: TikTokVideoPaidStatus;
@@ -284,6 +285,12 @@ type ProviderAnalyticsVideoRecord = Record<string, unknown> & {
   viewsInPeriod?: number | string | null;
   viewCountDelta?: number | string | null;
   viewDelta?: number | string | null;
+  viewCount?: number | string | null;
+  view_count?: number | string | null;
+  currentViews?: number | string | null;
+  current_views?: number | string | null;
+  totalViews?: number | string | null;
+  total_views?: number | string | null;
   orgAccountId?: string | null;
   org_account_id?: string | null;
 };
@@ -524,6 +531,18 @@ function getAnalyticsPeriodViewCount(record: Record<string, unknown>) {
     normalizeProviderNumber(record.viewCountDelta) ??
     normalizeProviderNumber(record.viewDelta) ??
     normalizeProviderNumber(record.views)
+  );
+}
+
+function getAnalyticsCurrentViewCount(record: Record<string, unknown>) {
+  return (
+    normalizeProviderNumber(record.viewCount) ??
+    normalizeProviderNumber(record.view_count) ??
+    normalizeProviderNumber(record.currentViews) ??
+    normalizeProviderNumber(record.current_views) ??
+    normalizeProviderNumber(record.totalViews) ??
+    normalizeProviderNumber(record.total_views) ??
+    null
   );
 }
 
@@ -1576,6 +1595,8 @@ export async function getOrganizationViewTallyData(args: {
   organizationSlug: string;
   searchParams?: DashboardSearchParams;
   includeAdSpend?: boolean;
+  includePaidViews?: boolean;
+  includeSummaryAnalytics?: boolean;
 }): Promise<OrganizationViewTallyData> {
   const shellData = await getOrganizationDashboardShellData(args.organizationSlug);
   const organizationId = shellData.membership.organizationId;
@@ -1749,63 +1770,79 @@ export async function getOrganizationViewTallyData(args: {
   const creatorOptionsById = new Map(
     creatorOptions.map((creator) => [creator.id, creator]),
   );
+  const includeSummaryAnalytics = args.includeSummaryAnalytics !== false;
   let analyticsViewTotal: number | null = null;
   let analyticsTopVideoRecords: ProviderAnalyticsVideoRecord[] = [];
   let analyticsTopAccountRecords: ProviderAnalyticsAccountRecord[] = [];
 
-  const [
-    analyticsViewTotalResult,
-    analyticsTopVideoRecordsResult,
-    analyticsTopAccountRecordsResult,
-  ] = await Promise.allSettled([
-    getProviderAnalyticsViewTotal(
-      selectedAnalyticsOrgAccountId,
-      startDate,
-      endDate,
-    ),
-    getProviderAnalyticsTopVideos(
-      selectedAnalyticsOrgAccountId,
-      startDate,
-      endDate,
-    ),
-    getProviderAnalyticsTopAccounts(
-      selectedAnalyticsOrgAccountId,
-      startDate,
-      endDate,
-      topLimit,
-    ),
-  ]);
+  if (includeSummaryAnalytics) {
+    const [
+      analyticsViewTotalResult,
+      analyticsTopVideoRecordsResult,
+      analyticsTopAccountRecordsResult,
+    ] = await Promise.allSettled([
+      getProviderAnalyticsViewTotal(
+        selectedAnalyticsOrgAccountId,
+        startDate,
+        endDate,
+      ),
+      getProviderAnalyticsTopVideos(
+        selectedAnalyticsOrgAccountId,
+        startDate,
+        endDate,
+      ),
+      getProviderAnalyticsTopAccounts(
+        selectedAnalyticsOrgAccountId,
+        startDate,
+        endDate,
+        topLimit,
+      ),
+    ]);
 
-  if (analyticsViewTotalResult.status === "fulfilled") {
-    analyticsViewTotal = analyticsViewTotalResult.value;
-  } else {
-    const error = analyticsViewTotalResult.reason;
-    warnings.push(
-      error instanceof Error
-        ? `Could not load viral.app period view total: ${error.message}`
-        : "Could not load viral.app period view total.",
-    );
-  }
+    if (analyticsViewTotalResult.status === "fulfilled") {
+      analyticsViewTotal = analyticsViewTotalResult.value;
+    } else {
+      const error = analyticsViewTotalResult.reason;
+      warnings.push(
+        error instanceof Error
+          ? `Could not load viral.app period view total: ${error.message}`
+          : "Could not load viral.app period view total.",
+      );
+    }
 
-  if (analyticsTopVideoRecordsResult.status === "fulfilled") {
-    analyticsTopVideoRecords = analyticsTopVideoRecordsResult.value;
-  } else {
-    const error = analyticsTopVideoRecordsResult.reason;
-    errorMessage ??=
-      error instanceof Error
-        ? error.message
-        : "Could not load viral.app period video gains.";
-  }
+    if (analyticsTopVideoRecordsResult.status === "fulfilled") {
+      analyticsTopVideoRecords = analyticsTopVideoRecordsResult.value;
+    } else {
+      const error = analyticsTopVideoRecordsResult.reason;
+      errorMessage ??=
+        error instanceof Error
+          ? error.message
+          : "Could not load viral.app period video gains.";
+    }
 
-  if (analyticsTopAccountRecordsResult.status === "fulfilled") {
-    analyticsTopAccountRecords = analyticsTopAccountRecordsResult.value;
+    if (analyticsTopAccountRecordsResult.status === "fulfilled") {
+      analyticsTopAccountRecords = analyticsTopAccountRecordsResult.value;
+    } else {
+      const error = analyticsTopAccountRecordsResult.reason;
+      warnings.push(
+        error instanceof Error
+          ? `Could not load viral.app period account gains: ${error.message}`
+          : "Could not load viral.app period account gains.",
+      );
+    }
   } else {
-    const error = analyticsTopAccountRecordsResult.reason;
-    warnings.push(
-      error instanceof Error
-        ? `Could not load viral.app period account gains: ${error.message}`
-        : "Could not load viral.app period account gains.",
-    );
+    try {
+      analyticsTopVideoRecords = await getProviderAnalyticsTopVideos(
+        selectedAnalyticsOrgAccountId,
+        startDate,
+        endDate,
+      );
+    } catch (error) {
+      errorMessage ??=
+        error instanceof Error
+          ? error.message
+          : "Could not load viral.app period video gains.";
+    }
   }
 
   const seenAnalyticsSourceVideoIds = new Set<string>();
@@ -1868,6 +1905,7 @@ export async function getOrganizationViewTallyData(args: {
         publishedAt,
         createdAt,
         views: getAnalyticsPeriodViewCount(video),
+        currentViews: getAnalyticsCurrentViewCount(video),
         creatorName:
           normalizeProviderText(video.accountDisplayName) ??
           normalizeProviderText(video.account_display_name) ??
@@ -1916,7 +1954,7 @@ export async function getOrganizationViewTallyData(args: {
   let lookupWindowUnresolvedPostBackedGroupCount = 0;
   let lookupWindowUnresolvedNonPostBackedGroupCount = 0;
 
-  if (videos.length > 0) {
+  if (videos.length > 0 && args.includePaidViews !== false) {
     const paidLookupGroups = new Map<
       string,
       {
@@ -2061,6 +2099,7 @@ export async function getOrganizationViewTallyData(args: {
       publishedAt: video.publishedAt,
       createdAt: video.createdAt,
       views: video.views,
+      currentViews: video.currentViews,
       paidViews,
       organicViewsEstimate,
       paidStatus: paidRow?.paidStatus ?? "unknown",

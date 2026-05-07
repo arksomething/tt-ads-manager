@@ -74,6 +74,7 @@ type CampaignCreatorWorkspaceRow = {
     effectiveEndDate: Date | null;
     fixedFee: number | null;
     fixedFeeRecognitionDate: Date | null;
+    fixedFeePerVideo: number | null;
     cpmAmount: number | null;
     paidTrafficMetric: CreatorDealPaidTrafficMetric;
     deductPaidTraffic: boolean;
@@ -92,6 +93,7 @@ type ResolvedCampaignCreatorDeal = {
   effectiveEndDate: Date | null;
   fixedFee: number | null;
   fixedFeeRecognitionDate: Date | null;
+  fixedFeePerVideo: number | null;
   cpmAmount: number;
   paidTrafficMetric: CreatorDealPaidTrafficMetric;
   deductPaidTraffic: boolean;
@@ -428,6 +430,7 @@ function resolveCampaignCreatorDeal(
     effectiveEndDate: deal?.effectiveEndDate ?? null,
     fixedFee: deal?.fixedFee ?? null,
     fixedFeeRecognitionDate: deal?.fixedFeeRecognitionDate ?? null,
+    fixedFeePerVideo: deal?.fixedFeePerVideo ?? null,
     cpmAmount: deal?.cpmAmount ?? DEFAULT_DEAL_CPM_AMOUNT,
     paidTrafficMetric: CreatorDealPaidTrafficMetric.IMPRESSIONS,
     deductPaidTraffic: deal?.deductPaidTraffic ?? true,
@@ -473,6 +476,7 @@ function getEffectiveDealForVideo(
     ...deal,
     fixedFee: null,
     fixedFeeRecognitionDate: null,
+    fixedFeePerVideo: null,
     cpmAmount: VIEWSBASE_CPM_AMOUNT,
     deductPaidTraffic: false,
     payoutCapPerVideo: VIEWSBASE_PAYOUT_CAP_PER_VIDEO,
@@ -854,6 +858,7 @@ export async function getOrganizationPayoutDashboardData(args: {
           effectiveEndDate: true,
           fixedFee: true,
           fixedFeeRecognitionDate: true,
+          fixedFeePerVideo: true,
           cpmAmount: true,
           paidTrafficMetric: true,
           deductPaidTraffic: true,
@@ -1472,12 +1477,12 @@ export async function getOrganizationPayoutDashboardData(args: {
         0,
       ),
       actualPaidPayouts: normalizeMoney(actualPaidPayouts),
-      creatorRowsWithDeals: creatorRows.filter((row) => row.deal != null).length,
+      creatorRowsWithDeals: creatorRows.filter((row) => row.hasCustomDeal).length,
     },
     dailyRows,
     creators: creatorRows.sort(
       (left, right) =>
-        right.totalCost - left.totalCost ||
+        left.campaignName.localeCompare(right.campaignName) ||
         left.creatorName.localeCompare(right.creatorName),
     ),
     videos: videoRows.sort(

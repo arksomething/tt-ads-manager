@@ -10,6 +10,8 @@
     "db:generate": "cd web && npm run db:generate",
     "db:push": "cd web && npm run db:push",
     "db:migrate": "cd web && npm run db:migrate",
-    "db:studio": "cd web && npm run db:studio"
+    "db:studio": "cd web && npm run db:studio",
+    "tt:ads": "cd web && npm run tt:ads --",
+    "openclaw:install-tiktok-ads": "cd web && npm run openclaw:install-tiktok-ads --"
   }
 }

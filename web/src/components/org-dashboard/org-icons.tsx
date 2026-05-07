@@ -11,6 +11,7 @@ export type DashboardIconName =
   | "creators"
   | "campaigns"
   | "payouts"
+  | "revenue"
   | "viralVideos"
   | "projects"
   | "integrations"
@@ -113,6 +114,17 @@ export function DashboardIcon({
           <rect x="3.5" y="5.1" width="13" height="9.8" rx="2.2" />
           <path d="M7.1 10h5.8" />
           <path d="M10 7.6v4.8" />
+        </svg>
+      );
+    case "revenue":
+      return (
+        <svg {...commonProps}>
+          <path d="M4.1 14.8V8.9" />
+          <path d="M8 14.8V5.6" />
+          <path d="M11.9 14.8v-4.7" />
+          <path d="M15.8 14.8V4.8" />
+          <path d="M3.4 15.4h13.2" />
+          <path d="m4.1 8.9 3.9-3.3 3.9 4.5 3.9-5.3" />
         </svg>
       );
     case "viralVideos":
