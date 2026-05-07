@@ -457,7 +457,7 @@ export default async function UgcPayPage({
               </select>
             </label>
 
-            <div className="flex items-end">
+            <div className="flex flex-col items-stretch justify-end gap-2 sm:flex-row lg:flex-col">
               <button
                 className="inline-flex w-full items-center justify-center gap-2 rounded-[0.95rem] border border-white/[0.1] bg-white/[0.06] px-4 py-2.5 text-sm text-foreground transition hover:border-white/[0.16] hover:bg-white/[0.1]"
                 type="submit"
@@ -465,6 +465,17 @@ export default async function UgcPayPage({
                 <DashboardIcon className="h-4 w-4" name="refresh" />
                 Apply
               </button>
+              {isGainedViewMode ? (
+                <button
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-[0.95rem] border border-[#8BE0C2]/25 bg-[#8BE0C2]/[0.08] px-4 py-2.5 text-sm text-[#CFFFF0] transition hover:border-[#8BE0C2]/40 hover:bg-[#8BE0C2]/[0.12]"
+                  name="videoFetchMode"
+                  type="submit"
+                  value="per-creator"
+                >
+                  <DashboardIcon className="h-4 w-4" name="creators" />
+                  Query creators
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -515,40 +526,6 @@ export default async function UgcPayPage({
               </label>
             ) : null}
           </div>
-
-          {isGainedViewMode ? (
-            <fieldset>
-              <legend className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
-                Video rows
-              </legend>
-              <div className="grid gap-1 rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-1 sm:grid-cols-2">
-                <label className="block">
-                  <input
-                    className="peer sr-only"
-                    defaultChecked={data.videoFetchMode === "global"}
-                    name="videoFetchMode"
-                    type="radio"
-                    value="global"
-                  />
-                  <span className="flex min-h-10 items-center justify-center rounded-[0.75rem] px-3 text-center text-sm text-muted-foreground transition peer-checked:bg-white/[0.1] peer-checked:text-foreground">
-                    Fast global top 100
-                  </span>
-                </label>
-                <label className="block">
-                  <input
-                    className="peer sr-only"
-                    defaultChecked={isAccurateCreatorFetchMode}
-                    name="videoFetchMode"
-                    type="radio"
-                    value="per-creator"
-                  />
-                  <span className="flex min-h-10 items-center justify-center rounded-[0.75rem] px-3 text-center text-sm text-muted-foreground transition peer-checked:bg-white/[0.1] peer-checked:text-foreground">
-                    Accurate creator queries
-                  </span>
-                </label>
-              </div>
-            </fieldset>
-          ) : null}
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
             <fieldset>
