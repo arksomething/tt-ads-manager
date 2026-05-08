@@ -9,9 +9,7 @@
     "lint": "eslint . && npm run lint:no-solid-white-buttons",
     "lint:no-solid-white-buttons": "node scripts/assert-no-solid-white-buttons.mjs",
     "typecheck": "tsc --noEmit",
-    "db:generate-shim": "node scripts/generate-prisma-shim.mjs",
-    "tt:ads": "node scripts/tiktok-business-cli.mjs",
-    "openclaw:install-tiktok-ads": "node scripts/install-openclaw-tiktok-ads.mjs"
+    "db:generate-shim": "node scripts/generate-prisma-shim.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.2",
