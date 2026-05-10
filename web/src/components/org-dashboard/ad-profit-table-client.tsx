@@ -20,6 +20,25 @@ type TikTokAdsManagerResolveResult = {
   warnings: string[];
 };
 
+type ViralPostAttribution = {
+  accountDisplayName: string | null;
+  accountUsername: string | null;
+  caption: string | null;
+  platformVideoId: string;
+  publishedAt: string | null;
+  thumbnailUrl: string | null;
+  videoUrl: string;
+  viewCount: number | null;
+};
+
+type ViralPostEnrichmentPollResult = {
+  attributions: Record<string, ViralPostAttribution>;
+  failedPostIds: string[];
+  pendingPostIds: string[];
+  processedCount: number;
+  rateLimited: boolean;
+};
+
 type RowResolveState = {
   chooserOpen: boolean;
   error: string | null;
@@ -60,9 +79,52 @@ export type AdProfitTableClientRow = {
 type AdProfitTableClientProps = {
   endDate: string;
   organizationSlug: string;
+  pendingViralPostIds: string[];
   rows: AdProfitTableClientRow[];
   startDate: string;
 };
+
+const compactIntegerFormatter = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 1,
+  notation: "compact",
+});
+
+function uniqueNonEmptyStrings(values: ReadonlyArray<string | null | undefined>) {
+  return [
+    ...new Set(
+      values
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ];
+}
+
+function getViralPostContextLabel(attribution: ViralPostAttribution) {
+  return uniqueNonEmptyStrings([
+    attribution.accountUsername
+      ? `@${attribution.accountUsername}`
+      : attribution.accountDisplayName,
+    typeof attribution.viewCount === "number"
+      ? `${compactIntegerFormatter.format(attribution.viewCount)} viral.app views`
+      : null,
+    `TikTok post ID ${attribution.platformVideoId}`,
+  ]).join(" · ");
+}
+
+function applyViralPostAttribution(
+  row: AdProfitTableClientRow,
+  attribution: ViralPostAttribution,
+): AdProfitTableClientRow {
+  return {
+    ...row,
+    creativeContextLabel: getViralPostContextLabel(attribution),
+    creativeImage: row.creativeImage ?? attribution.thumbnailUrl,
+    creativeTitle: attribution.caption ?? row.creativeTitle,
+    creativeUrl: row.creativeUrl ?? attribution.videoUrl,
+    primaryLinkLabel: "Open viral post",
+    viralPostMatched: true,
+  };
+}
 
 function PreviewThumbnail(args: {
   imageUrl: string | null;
@@ -115,6 +177,7 @@ function PreviewThumbnail(args: {
 export function AdProfitTableClient({
   endDate,
   organizationSlug,
+  pendingViralPostIds,
   rows,
   startDate,
 }: AdProfitTableClientProps) {
@@ -123,9 +186,17 @@ export function AdProfitTableClient({
   const tableRef = useRef<HTMLTableElement>(null);
   const syncLockRef = useRef(false);
   const [tableScrollWidth, setTableScrollWidth] = useState(1560);
+  const [displayRows, setDisplayRows] = useState(rows);
+  const [remainingViralPostIds, setRemainingViralPostIds] =
+    useState(pendingViralPostIds);
   const [resolveStates, setResolveStates] = useState<Record<string, RowResolveState>>(
     {},
   );
+
+  useEffect(() => {
+    setDisplayRows(rows);
+    setRemainingViralPostIds([...new Set(pendingViralPostIds)]);
+  }, [pendingViralPostIds, rows]);
 
   useEffect(() => {
     function updateTableScrollWidth() {
@@ -151,7 +222,76 @@ export function AdProfitTableClient({
       resizeObserver.disconnect();
       window.removeEventListener("resize", updateTableScrollWidth);
     };
-  }, [rows]);
+  }, [displayRows]);
+
+  useEffect(() => {
+    if (remainingViralPostIds.length === 0) {
+      return;
+    }
+
+    let isCancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    async function poll() {
+      try {
+        const response = await fetch(
+          `/api/org/${organizationSlug}/tiktok-paid-views/enrichment`,
+          {
+            body: JSON.stringify({
+              postIds: remainingViralPostIds,
+            }),
+            headers: {
+              "Content-Type": "application/json",
+            },
+            method: "POST",
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error("viral.app enrichment failed.");
+        }
+
+        const payload = (await response.json()) as ViralPostEnrichmentPollResult;
+
+        if (isCancelled) {
+          return;
+        }
+
+        setDisplayRows((currentRows) =>
+          currentRows.map((row) => {
+            const attribution = row.tiktokPostId
+              ? payload.attributions[row.tiktokPostId]
+              : undefined;
+
+            return attribution ? applyViralPostAttribution(row, attribution) : row;
+          }),
+        );
+
+        const nextPending = payload.pendingPostIds.filter((postId) =>
+          remainingViralPostIds.includes(postId),
+        );
+        setRemainingViralPostIds(nextPending);
+
+        if (nextPending.length > 0) {
+          timeoutId = setTimeout(poll, payload.rateLimited ? 60_000 : 5_000);
+        }
+      } catch {
+        if (!isCancelled) {
+          timeoutId = setTimeout(poll, 30_000);
+        }
+      }
+    }
+
+    timeoutId = setTimeout(poll, 1_000);
+
+    return () => {
+      isCancelled = true;
+
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [organizationSlug, remainingViralPostIds]);
 
   function syncScrollPositions(args: {
     source: HTMLDivElement | null;
@@ -361,7 +501,7 @@ export function AdProfitTableClient({
             </tr>
           </thead>
           <tbody className="divide-y divide-white/[0.06] text-sm text-foreground">
-            {rows.map((row) => {
+            {displayRows.map((row) => {
               const resolveState = resolveStates[row.id];
               const candidateCount = resolveState?.result?.candidates.length ?? 0;
 

@@ -1,16 +1,22 @@
 import Link from "next/link";
+import { Suspense } from "react";
 
 import {
   AdProfitTableClient,
   type AdProfitTableClientRow,
 } from "@/components/org-dashboard/ad-profit-table-client";
+import { AdProfitAutoRefresh } from "@/components/org-dashboard/ad-profit-auto-refresh";
 import { prisma } from "@/lib/db";
+import { summarizeReportWarnings } from "@/lib/report-warnings";
+import { timeAsync, timeSync } from "@/lib/server-timing";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
 import {
   getTikTokSingularOverlay,
   type TikTokSingularReportRow,
 } from "@/server/singular/reporting";
 import { getViralTikTokPostAttributionsForSingularRows } from "@/server/singular/viral-attribution";
+
+import TikTokPaidViewsLoading from "./loading";
 
 export const dynamic = "force-dynamic";
 
@@ -363,6 +369,14 @@ function aggregateSingularRows(rows: readonly TikTokSingularReportRow[]) {
       existing.revenue += row.revenue;
       existing.installs += row.installs;
       existing.conversions += row.conversions;
+      existing.creativeId ??= row.creativeId;
+      existing.creativeName ??= row.creativeName;
+      existing.tiktokPostId ??= row.tiktokPostId;
+      existing.creativeUrl ??= row.creativeUrl;
+      existing.creativeImage ??= row.creativeImage;
+      existing.creativeIsVideo ??= row.creativeIsVideo;
+      existing.currency = existing.currency === row.currency ? existing.currency : null;
+      existing.revenueAvailable ||= row.revenueAvailable;
       existing.roas = existing.spend > 0 ? existing.revenue / existing.spend : null;
       existing.profit = existing.revenue - existing.spend;
       continue;
@@ -444,28 +458,36 @@ function SummaryPill(args: {
   );
 }
 
-export default async function TikTokPaidViewsPage({
-  params,
-  searchParams,
-}: TikTokPaidViewsPageProps) {
-  const { organizationSlug } = await params;
-  const resolvedSearchParams = await searchParams;
+async function TikTokPaidViewsPageContent({
+  organizationSlug,
+  resolvedSearchParams,
+}: {
+  organizationSlug: string;
+  resolvedSearchParams: DashboardSearchParams;
+}) {
   const startDate =
     getSearchParamValue(resolvedSearchParams, "startDate") ?? getDefaultStartDate();
   const endDate =
     getSearchParamValue(resolvedSearchParams, "endDate") ?? getDefaultEndDate();
   const sortKey = normalizeSortKey(getSearchParamValue(resolvedSearchParams, "sort"));
-  const connectedAccount = await prisma.organizationTikTokAccount.findFirst({
-    where: {
-      organization: {
-        slug: organizationSlug,
-      },
+  const connectedAccount = await timeAsync(
+    "tiktok-paid-views.connected-account",
+    {
+      organizationSlug,
     },
-    orderBy: [{ updatedAt: "desc" }],
-    select: {
-      status: true,
-    },
-  });
+    () =>
+      prisma.organizationTikTokAccount.findFirst({
+        where: {
+          organization: {
+            slug: organizationSlug,
+          },
+        },
+        orderBy: [{ updatedAt: "desc" }],
+        select: {
+          status: true,
+        },
+      }),
+  );
   const connectHref = `/api/org/${organizationSlug}/integrations/tiktok/oauth/start?next=${encodeURIComponent(
     `/org/${organizationSlug}/tiktok-paid-views`,
   )}`;
@@ -473,6 +495,7 @@ export default async function TikTokPaidViewsPage({
   let errorMessage: string | null = null;
   let overlay = {
     configured: false,
+    isPending: false,
     cohortPeriod: process.env.SINGULAR_COHORT_PERIOD || "7d",
     sourceNames: [] as string[],
     rowCount: 0,
@@ -481,10 +504,19 @@ export default async function TikTokPaidViewsPage({
   };
 
   try {
-    overlay = await getTikTokSingularOverlay({
-      startDate,
-      endDate,
-    });
+    overlay = await timeAsync(
+      "tiktok-paid-views.singular-overlay",
+      {
+        organizationSlug,
+        startDate,
+        endDate,
+      },
+      () =>
+        getTikTokSingularOverlay({
+          startDate,
+          endDate,
+        }),
+    );
   } catch (error) {
     errorMessage =
       error instanceof Error
@@ -492,10 +524,37 @@ export default async function TikTokPaidViewsPage({
         : "Could not load Singular creative performance for this date window.";
   }
 
-  const rows = rankRows(aggregateSingularRows(overlay.rows));
-  const sortedRows = sortRows(rows, sortKey);
-  const viralAttribution = await getViralTikTokPostAttributionsForSingularRows(
-    rows,
+  const rows = timeSync(
+    "tiktok-paid-views.rank-rows",
+    {
+      organizationSlug,
+      overlayRowCount: overlay.rows.length,
+    },
+    () => rankRows(aggregateSingularRows(overlay.rows)),
+  );
+  const sortedRows = timeSync(
+    "tiktok-paid-views.sort-rows",
+    {
+      organizationSlug,
+      rowCount: rows.length,
+      sortKey,
+    },
+    () => sortRows(rows, sortKey),
+  );
+  const viralPostIdCount = new Set(
+    rows
+      .map((row) => row.tiktokPostId?.trim())
+      .filter((value): value is string => Boolean(value)),
+  ).size;
+  const viralAttribution = await timeAsync(
+    "tiktok-paid-views.viral-attribution",
+    {
+      organizationSlug,
+      rowCount: rows.length,
+      viralPostIdCount,
+    },
+    () =>
+      getViralTikTokPostAttributionsForSingularRows(organizationSlug, rows),
   );
   const reportCurrency = getSingleCurrency(sortedRows);
   const totalSpend = rows.reduce((total, row) => total + row.spend, 0);
@@ -517,57 +576,67 @@ export default async function TikTokPaidViewsPage({
         ]
       : []),
   ]);
+  const warningSummary = summarizeReportWarnings(warnings);
   const summaryScopeLabel =
     appFilterNames.length > 0
       ? `${appFilterNames.length} app${appFilterNames.length === 1 ? "" : "s"}`
       : "All apps";
   const sourceScopeLabel = `${overlay.sourceNames.length} TikTok source${overlay.sourceNames.length === 1 ? "" : "s"}`;
-  const tableRows: AdProfitTableClientRow[] = sortedRows.map((row) => {
-    const viralPost = row.tiktokPostId
-      ? viralAttribution.attributions.get(row.tiktokPostId)
-      : null;
+  const tableRows: AdProfitTableClientRow[] = timeSync(
+    "tiktok-paid-views.table-rows",
+    {
+      organizationSlug,
+      rowCount: sortedRows.length,
+      viralMatchedPostCount: viralAttribution.matchedPostCount,
+    },
+    () =>
+      sortedRows.map((row) => {
+        const viralPost = row.tiktokPostId
+          ? viralAttribution.attributions.get(row.tiktokPostId)
+          : null;
 
-    return {
-      id: row.rowKey,
-      creativeId: row.creativeId,
-      creativeName: row.creativeName,
-      creativeTitle: viralPost?.caption ?? getCreativeTitle(row),
-      creativeContextLabel: viralPost
-        ? getViralPostContextLabel({
-            accountDisplayName: viralPost.accountDisplayName,
-            accountUsername: viralPost.accountUsername,
-            platformVideoId: viralPost.platformVideoId,
-            singularCreativeId: row.creativeId,
-            singularCreativeName: row.creativeName,
-            viewCount: viralPost.viewCount,
-          })
-        : getCreativeContextLabel(row),
-      creativeIdLabel: row.creativeId
-        ? `Creative ID ${row.creativeId}`
-        : "Creative ID unavailable",
-      creativeImage: row.creativeImage ?? viralPost?.thumbnailUrl ?? null,
-      creativeUrl: row.creativeUrl ?? viralPost?.videoUrl ?? null,
-      primaryLinkLabel: viralPost ? "Open viral post" : "Open creative",
-      tiktokPostId: row.tiktokPostId,
-      campaignLabel: getCampaignLabel(row),
-      campaignName: row.campaignName,
-      spendLabel: formatAmount(row.spend, row.currency),
-      revenueLabel: formatAmount(row.revenue, row.currency),
-      profitLabel: formatAmount(row.profit, row.currency),
-      profitPositive: row.profit > 0,
-      roasLabel: formatRoas(row.roas),
-      revenueRankLabel: integerFormatter.format(row.revenueRank),
-      roasRankLabel: integerFormatter.format(row.roasRank),
-      compositeLabel: decimalFormatter.format(row.compositeScore),
-      overallRankLabel: integerFormatter.format(row.overallRank),
-      volumePrimaryLabel: `${integerFormatter.format(row.installs)} installs`,
-      volumeSecondaryLabel: `${integerFormatter.format(row.conversions)} conversions`,
-      sourceLabel: row.source ?? "Unknown source",
-      appLabel: row.app ?? "Unknown app",
-      subCampaignName: row.subCampaignName,
-      viralPostMatched: Boolean(viralPost),
-    };
-  });
+        return {
+          id: row.rowKey,
+          creativeId: row.creativeId,
+          creativeName: row.creativeName,
+          creativeTitle: viralPost?.caption ?? getCreativeTitle(row),
+          creativeContextLabel: viralPost
+            ? getViralPostContextLabel({
+                accountDisplayName: viralPost.accountDisplayName,
+                accountUsername: viralPost.accountUsername,
+                platformVideoId: viralPost.platformVideoId,
+                singularCreativeId: row.creativeId,
+                singularCreativeName: row.creativeName,
+                viewCount: viralPost.viewCount,
+              })
+            : getCreativeContextLabel(row),
+          creativeIdLabel: row.creativeId
+            ? `Creative ID ${row.creativeId}`
+            : "Creative ID unavailable",
+          creativeImage: row.creativeImage ?? viralPost?.thumbnailUrl ?? null,
+          creativeUrl: row.creativeUrl ?? viralPost?.videoUrl ?? null,
+          primaryLinkLabel: viralPost ? "Open viral post" : "Open creative",
+          tiktokPostId: row.tiktokPostId,
+          campaignLabel: getCampaignLabel(row),
+          campaignName: row.campaignName,
+          spendLabel: formatAmount(row.spend, row.currency),
+          revenueLabel: formatAmount(row.revenue, row.currency),
+          profitLabel: formatAmount(row.profit, row.currency),
+          profitPositive: row.profit > 0,
+          roasLabel: formatRoas(row.roas),
+          revenueRankLabel: integerFormatter.format(row.revenueRank),
+          roasRankLabel: integerFormatter.format(row.roasRank),
+          compositeLabel: decimalFormatter.format(row.compositeScore),
+          overallRankLabel: integerFormatter.format(row.overallRank),
+          volumePrimaryLabel: `${integerFormatter.format(row.installs)} installs`,
+          volumeSecondaryLabel: `${integerFormatter.format(row.conversions)} conversions`,
+          sourceLabel: row.source ?? "Unknown source",
+          appLabel: row.app ?? "Unknown app",
+          subCampaignName: row.subCampaignName,
+          viralPostMatched: Boolean(viralPost),
+        };
+      }),
+  );
 
   return (
     <div className="space-y-4">
@@ -686,16 +755,40 @@ export default async function TikTokPaidViewsPage({
         </section>
       ) : null}
 
+      <AdProfitAutoRefresh enabled={overlay.isPending} />
+
       {warnings.length > 0 ? (
-        <section className="rounded-[1.35rem] border border-[#FFD24D]/20 bg-[#FFD24D]/[0.08] p-4 text-sm text-[#FFEAB1]">
-          <p className="text-xs uppercase tracking-[0.2em] text-[#FFEAB1]/80">
-            Report warnings
-          </p>
-          <ul className="mt-2 space-y-1.5">
-            {warnings.map((warning) => (
+        <section className="rounded-[1.35rem] border border-[#FFD24D]/20 bg-[#FFD24D]/[0.08] p-4 text-sm leading-6 text-[#FFEAB1]">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-[#FFEAB1]/80">
+                Report warnings
+              </p>
+              <p className="mt-1 text-xs text-[#FFEAB1]/70">
+                {integerFormatter.format(warnings.length)} warning{warnings.length === 1 ? "" : "s"} grouped for readability
+              </p>
+            </div>
+            <span className="rounded-full border border-[#FFD24D]/20 bg-black/[0.18] px-2.5 py-1 text-xs text-[#FFEAB1]/80">
+              Data still loaded
+            </span>
+          </div>
+          <ul className="mt-3 space-y-1.5">
+            {warningSummary.summaryWarnings.map((warning) => (
               <li key={warning}>{warning}</li>
             ))}
           </ul>
+          {warningSummary.detailWarnings.length > 0 ? (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-xs font-medium text-[#FFEAB1]/80 transition hover:text-[#FFEAB1]">
+                Show raw warnings
+              </summary>
+              <ul className="mt-2 max-h-44 space-y-1.5 overflow-auto rounded-[0.9rem] border border-[#FFD24D]/15 bg-black/[0.18] p-3 text-xs leading-5 text-[#FFEAB1]/75">
+                {warningSummary.detailWarnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
         </section>
       ) : null}
 
@@ -758,17 +851,37 @@ export default async function TikTokPaidViewsPage({
               <AdProfitTableClient
                 endDate={endDate}
                 organizationSlug={organizationSlug}
+                pendingViralPostIds={viralAttribution.pendingPostIds}
                 rows={tableRows}
                 startDate={startDate}
               />
             ) : (
               <p className="mt-5 text-sm leading-6 text-muted-foreground">
-                Singular returned no creative rows for the selected date range.
+                {overlay.isPending
+                  ? "Singular is preparing the creative export for the selected date range."
+                  : "Singular returned no creative rows for the selected date range."}
               </p>
             )}
           </section>
         </>
       )}
     </div>
+  );
+}
+
+export default async function TikTokPaidViewsPage({
+  params,
+  searchParams,
+}: TikTokPaidViewsPageProps) {
+  const { organizationSlug } = await params;
+  const resolvedSearchParams = await searchParams;
+
+  return (
+    <Suspense fallback={<TikTokPaidViewsLoading />}>
+      <TikTokPaidViewsPageContent
+        organizationSlug={organizationSlug}
+        resolvedSearchParams={resolvedSearchParams}
+      />
+    </Suspense>
   );
 }

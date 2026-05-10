@@ -7,6 +7,7 @@ import {
 import { unstable_cache } from "next/cache";
 
 import { prisma } from "@/lib/db";
+import { timeAsync, timeSync } from "@/lib/server-timing";
 import { canManageOrganization } from "@/server/auth/roles";
 import {
   ViralAppApiError,
@@ -28,6 +29,7 @@ import {
 import { getVideoDataSourceLabel } from "@/server/viewsbase/shared";
 
 export const IMPORTED_VIDEOS_PAGE_SIZE = 50;
+const PROVIDER_PAGINATION_CONCURRENCY = 3;
 export const reviewWindowOptions = [
   { id: "24h", label: "Last 24 hours" },
   { id: "3d", label: "Last 3 days" },
@@ -880,11 +882,7 @@ async function getPagedProviderRecords(args: {
   perPage?: number;
   extraQuery?: Record<string, string | number | boolean | undefined>;
 }) {
-  const records: Array<Record<string, unknown>> = [];
-  let page = 1;
-  let pageCount: number | null = null;
-
-  while (pageCount == null || page <= pageCount) {
+  async function getPage(page: number) {
     const response = await viralAppClient.request<PagedProviderRecordsResponse>({
       path: args.path,
       query: {
@@ -903,15 +901,30 @@ async function getPagedProviderRecords(args: {
       },
     });
 
-    records.push(...(response.data ?? []));
-    pageCount = Math.max(1, normalizeProviderNumber(response.pageCount) ?? 1);
-
-    if ((response.data ?? []).length === 0) {
-      break;
-    }
-
-    page += 1;
+    return {
+      records: response.data ?? [],
+      pageCount: Math.max(1, normalizeProviderNumber(response.pageCount) ?? 1),
+    };
   }
+
+  const firstPage = await getPage(1);
+  const records: Array<Record<string, unknown>> = [...firstPage.records];
+
+  if (firstPage.records.length === 0 || firstPage.pageCount <= 1) {
+    return records;
+  }
+
+  const remainingPages = Array.from(
+    { length: firstPage.pageCount - 1 },
+    (_, index) => index + 2,
+  );
+  const remainingRecords = await mapWithConcurrency(
+    remainingPages,
+    PROVIDER_PAGINATION_CONCURRENCY,
+    async (page) => (await getPage(page)).records,
+  );
+
+  records.push(...remainingRecords.flat());
 
   return records;
 }
@@ -1415,15 +1428,24 @@ async function buildViewTallyAdSpendData(args: {
   viewRows?: readonly ViewTallyListItem[];
 }): Promise<OrganizationViewTallyData["adSpend"]> {
   try {
-    const spendReport = await withTimeout(
-      getAdSpendForOrganization({
+    const spendReport = await timeAsync(
+      "view-tally.ad-spend.tiktok-report",
+      {
         organizationSlug: args.organizationSlug,
         startDate: args.startDate,
         endDate: args.endDate,
-        metadataRowLimit: VIEW_TALLY_SPEND_CONTENT_LOOKUP_LIMIT,
-      }),
-      VIEW_TALLY_AD_SPEND_TIMEOUT_MS,
-      "TikTok ad spend lookup timed out. Keep this panel open; it will reuse cached results when TikTok finishes.",
+      },
+      () =>
+        withTimeout(
+          getAdSpendForOrganization({
+            organizationSlug: args.organizationSlug,
+            startDate: args.startDate,
+            endDate: args.endDate,
+            metadataRowLimit: VIEW_TALLY_SPEND_CONTENT_LOOKUP_LIMIT,
+          }),
+          VIEW_TALLY_AD_SPEND_TIMEOUT_MS,
+          "TikTok ad spend lookup timed out. Keep this panel open; it will reuse cached results when TikTok finishes.",
+        ),
     );
     const adSpendWarnings = [...spendReport.warnings];
     const spendRows = [...spendReport.rows].sort(
@@ -1448,15 +1470,25 @@ async function buildViewTallyAdSpendData(args: {
     > = [];
 
     try {
-      spendContentVideoEntries = await withTimeout(
-        Promise.all(
-          spendCandidateItemIds.map(async (sourceVideoId) => [
-            sourceVideoId,
-            await getViewTallySpendContentVideo(sourceVideoId).catch(() => null),
-          ] as const),
-        ),
-        VIEW_TALLY_SPEND_CONTENT_LOOKUP_TIMEOUT_MS,
-        "Viral.app content matching lookup timed out before all ad rows could be resolved.",
+      spendContentVideoEntries = await timeAsync(
+        "view-tally.ad-spend.viral-content-match",
+        {
+          organizationSlug: args.organizationSlug,
+          candidateCount: spendCandidateItemIds.length,
+        },
+        () =>
+          withTimeout(
+            Promise.all(
+              spendCandidateItemIds.map(async (sourceVideoId) => [
+                sourceVideoId,
+                await getViewTallySpendContentVideo(sourceVideoId).catch(
+                  () => null,
+                ),
+              ] as const),
+            ),
+            VIEW_TALLY_SPEND_CONTENT_LOOKUP_TIMEOUT_MS,
+            "Viral.app content matching lookup timed out before all ad rows could be resolved.",
+          ),
       );
     } catch (error) {
       adSpendWarnings.push(
@@ -1598,14 +1630,26 @@ export async function getOrganizationViewTallyData(args: {
   includePaidViews?: boolean;
   includeSummaryAnalytics?: boolean;
 }): Promise<OrganizationViewTallyData> {
-  const shellData = await getOrganizationDashboardShellData(args.organizationSlug);
+  const shellData = await timeAsync(
+    "view-tally.shell",
+    {
+      organizationSlug: args.organizationSlug,
+    },
+    () => getOrganizationDashboardShellData(args.organizationSlug),
+  );
   const organizationId = shellData.membership.organizationId;
   let warnings: string[] = [];
   let errorMessage: string | null = null;
   let trackedAccounts: TrackedTikTokAccountRecord[] = [];
 
   try {
-    trackedAccounts = await getTrackedTikTokAccounts();
+    trackedAccounts = await timeAsync(
+      "view-tally.tracked-accounts",
+      {
+        organizationSlug: args.organizationSlug,
+      },
+      () => getTrackedTikTokAccounts(),
+    );
   } catch (error) {
     errorMessage =
       error instanceof Error
@@ -1638,7 +1682,13 @@ export async function getOrganizationViewTallyData(args: {
     let trackedVideos: TrackedTikTokVideoRecord[] = [];
 
     try {
-      trackedVideos = await getTrackedTikTokVideos();
+      trackedVideos = await timeAsync(
+        "view-tally.tracked-videos-fallback",
+        {
+          organizationSlug: args.organizationSlug,
+        },
+        () => getTrackedTikTokVideos(),
+      );
     } catch (error) {
       errorMessage ??=
         error instanceof Error
@@ -1780,24 +1830,36 @@ export async function getOrganizationViewTallyData(args: {
       analyticsViewTotalResult,
       analyticsTopVideoRecordsResult,
       analyticsTopAccountRecordsResult,
-    ] = await Promise.allSettled([
-      getProviderAnalyticsViewTotal(
-        selectedAnalyticsOrgAccountId,
-        startDate,
-        endDate,
-      ),
-      getProviderAnalyticsTopVideos(
-        selectedAnalyticsOrgAccountId,
-        startDate,
-        endDate,
-      ),
-      getProviderAnalyticsTopAccounts(
-        selectedAnalyticsOrgAccountId,
+    ] = await timeAsync(
+      "view-tally.viral-analytics",
+      {
+        organizationSlug: args.organizationSlug,
+        selectedCreatorId: selectedAnalyticsOrgAccountId,
         startDate,
         endDate,
         topLimit,
-      ),
-    ]);
+        includeSummaryAnalytics,
+      },
+      () =>
+        Promise.allSettled([
+          getProviderAnalyticsViewTotal(
+            selectedAnalyticsOrgAccountId,
+            startDate,
+            endDate,
+          ),
+          getProviderAnalyticsTopVideos(
+            selectedAnalyticsOrgAccountId,
+            startDate,
+            endDate,
+          ),
+          getProviderAnalyticsTopAccounts(
+            selectedAnalyticsOrgAccountId,
+            startDate,
+            endDate,
+            topLimit,
+          ),
+        ]),
+    );
 
     if (analyticsViewTotalResult.status === "fulfilled") {
       analyticsViewTotal = analyticsViewTotalResult.value;
@@ -1832,10 +1894,20 @@ export async function getOrganizationViewTallyData(args: {
     }
   } else {
     try {
-      analyticsTopVideoRecords = await getProviderAnalyticsTopVideos(
-        selectedAnalyticsOrgAccountId,
-        startDate,
-        endDate,
+      analyticsTopVideoRecords = await timeAsync(
+        "view-tally.viral-analytics-top-videos",
+        {
+          organizationSlug: args.organizationSlug,
+          selectedCreatorId: selectedAnalyticsOrgAccountId,
+          startDate,
+          endDate,
+        },
+        () =>
+          getProviderAnalyticsTopVideos(
+            selectedAnalyticsOrgAccountId,
+            startDate,
+            endDate,
+          ),
       );
     } catch (error) {
       errorMessage ??=
@@ -1845,9 +1917,18 @@ export async function getOrganizationViewTallyData(args: {
     }
   }
 
-  const seenAnalyticsSourceVideoIds = new Set<string>();
-  const videos = analyticsTopVideoRecords
-    .map((video) => {
+  const videos = timeSync(
+    "view-tally.map-viral-videos",
+    {
+      organizationSlug: args.organizationSlug,
+      analyticsVideoCount: analyticsTopVideoRecords.length,
+      trackedAccountCount: trackedAccounts.length,
+    },
+    () => {
+      const seenAnalyticsSourceVideoIds = new Set<string>();
+
+      return analyticsTopVideoRecords
+        .map((video) => {
       const sourceVideoId =
         normalizeProviderText(video.platformVideoId) ??
         normalizeProviderText(video.platform_video_id) ??
@@ -1927,7 +2008,9 @@ export async function getOrganizationViewTallyData(args: {
       };
     })
     .filter((video): video is NonNullable<typeof video> => video !== null)
-    .sort((left, right) => (right.views ?? 0) - (left.views ?? 0));
+        .sort((left, right) => (right.views ?? 0) - (left.views ?? 0));
+    },
+  );
 
   const paidRowsBySourceVideoId = new Map<
     string,

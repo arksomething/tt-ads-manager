@@ -1,4 +1,5 @@
 import {
+  CampaignRole,
   ExternalSource,
   SourceEntityType,
   type Prisma,
@@ -6,7 +7,7 @@ import {
 
 import { prisma } from "@/lib/db";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
-import { canManageOrganization } from "@/server/auth/roles";
+import { canManageCampaign, canManageOrganization } from "@/server/auth/roles";
 import { getAccessibleCampaignOptionsForMembership } from "@/server/campaigns/queries";
 import {
   formatPlatformLabel,
@@ -344,10 +345,42 @@ export async function getCreatorsWorkspace(args: {
           },
           campaignLinks: {
             select: {
+              id: true,
+              createdAt: true,
               campaign: {
                 select: {
                   id: true,
                   name: true,
+                  ownerUserId: true,
+                  memberships: {
+                    where: {
+                      userId: membership.userId,
+                    },
+                    select: {
+                      role: true,
+                    },
+                    take: 1,
+                  },
+                },
+              },
+              deal: {
+                select: {
+                  id: true,
+                  currency: true,
+                  effectiveStartDate: true,
+                  effectiveEndDate: true,
+                  fixedFee: true,
+                  fixedFeeRecognitionDate: true,
+                  fixedFeePerVideo: true,
+                  cpmAmount: true,
+                  paidTrafficMetric: true,
+                  deductPaidTraffic: true,
+                  viewCapPerVideo: true,
+                  viewWindowDays: true,
+                  payoutCapPerVideo: true,
+                  perVideoCapScope: true,
+                  payoutCapTotal: true,
+                  notes: true,
                 },
               },
             },
@@ -433,6 +466,23 @@ export async function getCreatorsWorkspace(args: {
 
       return {
         ...creator,
+        campaignLinks: creator.campaignLinks.map(
+          (link: {
+            campaign: {
+              ownerUserId: string | null;
+              memberships: Array<{ role: CampaignRole }>;
+            };
+            [key: string]: unknown;
+          }) => ({
+          ...link,
+          canEditDeal:
+            canManageOrganizationData ||
+            link.campaign.ownerUserId === membership.userId ||
+            link.campaign.memberships.some((campaignMembership) =>
+              canManageCampaign(campaignMembership.role),
+            ),
+          }),
+        ),
         providerCreatorId: providerMapping?.externalId ?? null,
         providerLastSyncedAt: providerMapping?.lastSyncedAt ?? null,
       };

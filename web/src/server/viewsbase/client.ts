@@ -1,9 +1,11 @@
 import { getViewsBaseEnv } from "@/lib/server-env";
+import { type ViewsBaseCredentialValue } from "../settings/managed-secrets.ts";
 
 type ViewsBaseRequestOptions = {
   path: string;
   query?: Record<string, string | number | boolean | null | undefined>;
   headers?: Record<string, string>;
+  credentials?: ViewsBaseCredentialValue;
   signal?: AbortSignal;
 };
 
@@ -25,11 +27,29 @@ export class ViewsBaseApiError extends Error {
 }
 
 class ViewsBaseClient {
-  private buildUrl(path: string, query?: ViewsBaseRequestOptions["query"]) {
+  private getCredentials(credentials?: ViewsBaseCredentialValue) {
+    if (credentials) {
+      return credentials;
+    }
+
     const env = getViewsBaseEnv();
-    const baseUrl = env.VIEWSBASE_BASE_URL.endsWith("/")
-      ? env.VIEWSBASE_BASE_URL
-      : `${env.VIEWSBASE_BASE_URL}/`;
+    return {
+      baseUrl: env.VIEWSBASE_BASE_URL,
+      cookieName: env.VIEWSBASE_SESSION_COOKIE_NAME,
+      cookieValue: env.VIEWSBASE_SESSION_COOKIE_VALUE,
+      defaultOrgSlug: env.VIEWSBASE_DEFAULT_ORG_SLUG ?? null,
+    };
+  }
+
+  private buildUrl(
+    path: string,
+    query?: ViewsBaseRequestOptions["query"],
+    credentials?: ViewsBaseCredentialValue,
+  ) {
+    const resolvedCredentials = this.getCredentials(credentials);
+    const baseUrl = resolvedCredentials.baseUrl.endsWith("/")
+      ? resolvedCredentials.baseUrl
+      : `${resolvedCredentials.baseUrl}/`;
     const url = new URL(path.startsWith("/") ? path.slice(1) : path, baseUrl);
 
     for (const [key, value] of Object.entries(query ?? {})) {
@@ -43,20 +63,29 @@ class ViewsBaseClient {
     return url;
   }
 
-  private getHeaders(extraHeaders?: Record<string, string>) {
-    const env = getViewsBaseEnv();
+  private getHeaders(
+    extraHeaders?: Record<string, string>,
+    credentials?: ViewsBaseCredentialValue,
+  ) {
+    const resolvedCredentials = this.getCredentials(credentials);
 
     return {
       Accept: "application/json, text/html;q=0.9, */*;q=0.8",
-      Cookie: `${env.VIEWSBASE_SESSION_COOKIE_NAME}=${env.VIEWSBASE_SESSION_COOKIE_VALUE}`,
+      Cookie: `${resolvedCredentials.cookieName}=${resolvedCredentials.cookieValue}`,
       ...extraHeaders,
     };
   }
 
-  async requestJson<T>({ path, query, headers, signal }: ViewsBaseRequestOptions): Promise<T> {
-    const response = await fetch(this.buildUrl(path, query), {
+  async requestJson<T>({
+    path,
+    query,
+    headers,
+    credentials,
+    signal,
+  }: ViewsBaseRequestOptions): Promise<T> {
+    const response = await fetch(this.buildUrl(path, query, credentials), {
       method: "GET",
-      headers: this.getHeaders(headers),
+      headers: this.getHeaders(headers, credentials),
       cache: "no-store",
       signal,
     });
@@ -76,10 +105,16 @@ class ViewsBaseClient {
     return (await response.json()) as T;
   }
 
-  async requestText({ path, query, headers, signal }: ViewsBaseRequestOptions) {
-    const response = await fetch(this.buildUrl(path, query), {
+  async requestText({
+    path,
+    query,
+    headers,
+    credentials,
+    signal,
+  }: ViewsBaseRequestOptions) {
+    const response = await fetch(this.buildUrl(path, query, credentials), {
       method: "GET",
-      headers: this.getHeaders(headers),
+      headers: this.getHeaders(headers, credentials),
       cache: "no-store",
       signal,
     });

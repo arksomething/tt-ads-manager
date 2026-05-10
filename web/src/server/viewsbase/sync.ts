@@ -208,11 +208,12 @@ async function resolveViewsBaseCampaignMetadata(args: {
     },
   });
 
+  const normalizedHtml = html.replace(/\\"/g, '"').replace(/\\u0026/g, "&");
   const match =
-    html.match(
+    normalizedHtml.match(
       /"campaign":\{"id":"([^"]+)","name":"([^"]+)","slug":"([^"]+)"/,
     ) ??
-    html.match(/campaign:\{id:"([^"]+)",name:"([^"]+)",slug:"([^"]+)"/);
+    normalizedHtml.match(/campaign:\{id:"([^"]+)",name:"([^"]+)",slug:"([^"]+)"/);
 
   if (!match?.[1] || !match[2] || !match[3]) {
     throw new Error(

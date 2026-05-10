@@ -93,9 +93,28 @@ const adaptyEnvSchema = z.object({
   ADAPTY_API_BASE_URL: z.url().default("https://api-admin.adapty.io"),
   ADAPTY_API_KEY: z.string().min(1),
   ADAPTY_TIKTOK_SOURCE_PATTERNS: z.string().min(1).default("tiktok,tik tok"),
+  ADAPTY_APPLE_SOURCE_PATTERNS: z
+    .string()
+    .min(1)
+    .default(
+      "apple_search_ads,apple search ads,apple ads,apple search,apple searchads,search ads,searchads,asa",
+    ),
+  ADAPTY_CREATOR_SOURCE_PATTERNS: z
+    .string()
+    .min(1)
+    .default("social custom"),
   ADAPTY_TIKTOK_SEGMENTATION: z
     .enum(adaptyRevenueSegmentationValues)
     .default("attribution_source"),
+});
+
+const adaptyDashboardEnvSchema = z.object({
+  ADAPTY_DASHBOARD_BASE_URL: z
+    .url()
+    .default("https://api-asa-admin.adapty.io/api/v1"),
+  ADAPTY_DASHBOARD_TOKEN: z.string().min(1),
+  ADAPTY_DASHBOARD_COMPANY_ID: z.string().min(1),
+  ADAPTY_DASHBOARD_APP_ID: z.string().min(1),
 });
 
 const viewsBaseEnvSchema = z.object({
@@ -118,6 +137,7 @@ type TikTokBusinessEnv = z.infer<typeof tikTokBusinessEnvSchema>;
 type TikTokBusinessOauthEnv = z.infer<typeof tikTokBusinessOauthEnvSchema>;
 type SingularEnv = z.infer<typeof singularEnvSchema>;
 type AdaptyEnv = z.infer<typeof adaptyEnvSchema>;
+type AdaptyDashboardEnv = z.infer<typeof adaptyDashboardEnvSchema>;
 type ViewsBaseEnv = z.infer<typeof viewsBaseEnvSchema>;
 
 let cachedAuthEnv: AuthEnv | undefined;
@@ -130,6 +150,7 @@ let cachedTikTokBusinessEnv: TikTokBusinessEnv | undefined;
 let cachedTikTokBusinessOauthEnv: TikTokBusinessOauthEnv | undefined;
 let cachedSingularEnv: SingularEnv | undefined;
 let cachedAdaptyEnv: AdaptyEnv | undefined;
+let cachedAdaptyDashboardEnv: AdaptyDashboardEnv | undefined;
 let cachedViewsBaseEnv: ViewsBaseEnv | undefined;
 
 function getSupabaseUrlEnv() {
@@ -325,12 +346,40 @@ export function getAdaptyEnv() {
       ADAPTY_API_KEY: process.env.ADAPTY_API_KEY,
       ADAPTY_TIKTOK_SOURCE_PATTERNS:
         process.env.ADAPTY_TIKTOK_SOURCE_PATTERNS || "tiktok,tik tok",
+      ADAPTY_APPLE_SOURCE_PATTERNS:
+        process.env.ADAPTY_APPLE_SOURCE_PATTERNS ||
+        "apple_search_ads,apple search ads,apple ads,apple search,apple searchads,search ads,searchads,asa",
+      ADAPTY_CREATOR_SOURCE_PATTERNS:
+        process.env.ADAPTY_CREATOR_SOURCE_PATTERNS || "social custom",
       ADAPTY_TIKTOK_SEGMENTATION:
         process.env.ADAPTY_TIKTOK_SEGMENTATION || "attribution_source",
     });
   }
 
   return cachedAdaptyEnv;
+}
+
+export function hasAdaptyDashboardEnv() {
+  return Boolean(
+    process.env.ADAPTY_DASHBOARD_TOKEN &&
+      process.env.ADAPTY_DASHBOARD_COMPANY_ID &&
+      process.env.ADAPTY_DASHBOARD_APP_ID,
+  );
+}
+
+export function getAdaptyDashboardEnv() {
+  if (!cachedAdaptyDashboardEnv) {
+    cachedAdaptyDashboardEnv = adaptyDashboardEnvSchema.parse({
+      ADAPTY_DASHBOARD_BASE_URL:
+        process.env.ADAPTY_DASHBOARD_BASE_URL ||
+        "https://api-asa-admin.adapty.io/api/v1",
+      ADAPTY_DASHBOARD_TOKEN: process.env.ADAPTY_DASHBOARD_TOKEN,
+      ADAPTY_DASHBOARD_COMPANY_ID: process.env.ADAPTY_DASHBOARD_COMPANY_ID,
+      ADAPTY_DASHBOARD_APP_ID: process.env.ADAPTY_DASHBOARD_APP_ID,
+    });
+  }
+
+  return cachedAdaptyDashboardEnv;
 }
 
 export function hasViewsBaseEnv() {

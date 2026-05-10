@@ -1,4 +1,5 @@
 import { getAdaptyEnv } from "@/lib/server-env";
+import { type AdaptyCredentialValue } from "../settings/managed-secrets.ts";
 
 const MAX_ADAPTY_API_ATTEMPTS = 3;
 const BASE_RETRY_DELAY_MS = 900;
@@ -33,6 +34,7 @@ type AdaptyAnalyticsFilters = {
 
 type AdaptyRetrieveAnalyticsArgs = {
   chartId: "revenue";
+  credentials?: AdaptyCredentialValue;
   dateType?: "purchase_date" | "profile_install_date";
   filters: AdaptyAnalyticsFilters;
   periodUnit?: "day" | "week" | "month" | "quarter" | "year";
@@ -42,6 +44,7 @@ type AdaptyRetrieveAnalyticsArgs = {
 type AdaptyRequestOptions = {
   path: string;
   body: Record<string, unknown>;
+  credentials?: AdaptyCredentialValue;
   signal?: AbortSignal;
 };
 
@@ -61,9 +64,25 @@ export class AdaptyApiError extends Error {
   }
 }
 
-function buildAdaptyUrl(path: string) {
+function getAdaptyRequestCredentials(credentials?: AdaptyCredentialValue) {
+  if (credentials) {
+    return credentials;
+  }
+
   const env = getAdaptyEnv();
-  return new URL(path, env.ADAPTY_API_BASE_URL).toString();
+  return {
+    apiBaseUrl: env.ADAPTY_API_BASE_URL,
+    apiKey: env.ADAPTY_API_KEY,
+    appleSourcePatterns: env.ADAPTY_APPLE_SOURCE_PATTERNS,
+    creatorSourcePatterns: env.ADAPTY_CREATOR_SOURCE_PATTERNS,
+    tiktokSegmentation: env.ADAPTY_TIKTOK_SEGMENTATION,
+    tiktokSourcePatterns: env.ADAPTY_TIKTOK_SOURCE_PATTERNS,
+  };
+}
+
+function buildAdaptyUrl(path: string, credentials?: AdaptyCredentialValue) {
+  const resolvedCredentials = getAdaptyRequestCredentials(credentials);
+  return new URL(path, resolvedCredentials.apiBaseUrl).toString();
 }
 
 function shouldRetryStatus(status: number) {
@@ -166,9 +185,14 @@ function getPayloadErrorMessage(payload: unknown, status: number) {
 }
 
 export class AdaptyClient {
-  async request<T>({ path, body, signal }: AdaptyRequestOptions): Promise<T> {
-    const env = getAdaptyEnv();
-    const url = buildAdaptyUrl(path);
+  async request<T>({
+    path,
+    body,
+    credentials,
+    signal,
+  }: AdaptyRequestOptions): Promise<T> {
+    const resolvedCredentials = getAdaptyRequestCredentials(credentials);
+    const url = buildAdaptyUrl(path, resolvedCredentials);
 
     for (let attempt = 1; attempt <= MAX_ADAPTY_API_ATTEMPTS; attempt += 1) {
       const response = await fetch(url, {
@@ -176,7 +200,7 @@ export class AdaptyClient {
         cache: "no-store",
         headers: {
           Accept: "application/json",
-          Authorization: `Api-Key ${env.ADAPTY_API_KEY}`,
+          Authorization: `Api-Key ${resolvedCredentials.apiKey}`,
           "Content-Type": "application/json",
         },
         method: "POST",
@@ -211,6 +235,7 @@ export class AdaptyClient {
   retrieveAnalyticsData(args: AdaptyRetrieveAnalyticsArgs) {
     return this.request<unknown>({
       path: "/api/v1/client-api/metrics/analytics/",
+      credentials: args.credentials,
       body: {
         chart_id: args.chartId,
         date_type: args.dateType ?? "purchase_date",

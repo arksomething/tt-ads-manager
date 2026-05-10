@@ -116,6 +116,14 @@ export enum SyncJobStatus {
   FAILED = "FAILED",
 }
 
+export enum ViralPostEnrichmentStatus {
+  PENDING = "PENDING",
+  PROCESSING = "PROCESSING",
+  SUCCEEDED = "SUCCEEDED",
+  FAILED = "FAILED",
+  RATE_LIMITED = "RATE_LIMITED",
+}
+
 export enum ExternalSource {
   DATA_PROVIDER = "DATA_PROVIDER",
 }
@@ -168,6 +176,21 @@ export enum SparkAuthorizationStatus {
   FAILED = "FAILED",
   EXPIRED = "EXPIRED",
   REVOKED = "REVOKED",
+}
+
+export enum ReportingDayBuildStatus {
+  RUNNING = "RUNNING",
+  SUCCEEDED = "SUCCEEDED",
+  INCOMPLETE = "INCOMPLETE",
+  FAILED = "FAILED",
+  SUPERSEDED = "SUPERSEDED",
+}
+
+export enum ReportingFreshness {
+  FRESH = "FRESH",
+  STALE = "STALE",
+  INCOMPLETE = "INCOMPLETE",
+  SUPERSEDED = "SUPERSEDED",
 }
 
 export interface User {
@@ -355,6 +378,23 @@ export interface CampaignCreatorDeal {
   updatedAt: Date;
 }
 
+export interface CampaignCreatorVideoDeal {
+  id: string;
+  organizationId: string;
+  campaignCreatorId: string;
+  sourceVideoId: string;
+  fixedFeePerVideo: number | null;
+  cpmAmount: number | null;
+  paidTrafficMetric: CreatorDealPaidTrafficMetric;
+  deductPaidTraffic: boolean;
+  viewCapPerVideo: number | null;
+  payoutCapPerVideo: number | null;
+  perVideoCapScope: CreatorDealPerVideoCapScope;
+  notes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface Video {
   id: string;
   creatorId: string;
@@ -423,6 +463,54 @@ export interface OrganizationTikTokAccount {
   lastValidatedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface OrganizationIntegrationCredential {
+  id: string;
+  organizationId: string;
+  key: string;
+  encryptedValue: string;
+  valuePreview: string | null;
+  lastValidatedAt: Date | null;
+  lastValidationStatus: string | null;
+  lastValidationError: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ReportingDayVersion {
+  id: string;
+  organizationId: string;
+  reportDate: Date;
+  version: number;
+  status: ReportingDayBuildStatus;
+  freshness: ReportingFreshness;
+  isCurrent: boolean;
+  pricingConfigVersion: string | null;
+  sourceConfigVersion: string | null;
+  sourceState: Prisma.JsonValue | null | null;
+  warnings: Prisma.JsonValue | null | null;
+  error: Prisma.JsonValue | null | null;
+  createdAt: Date;
+  updatedAt: Date;
+  completedAt: Date | null;
+}
+
+export interface ReportingDailyFact {
+  id: string;
+  dayVersionId: string;
+  organizationId: string;
+  reportDate: Date;
+  metricKey: string;
+  value: number;
+  unit: string | null;
+  currency: string | null;
+  source: string;
+  bucket: string;
+  dimensionsKey: string;
+  dimensions: Prisma.JsonValue | null | null;
+  provenance: Prisma.JsonValue | null | null;
+  createdAt: Date;
 }
 
 export interface CreatorContactPoint {
@@ -631,6 +719,29 @@ export interface SourceMapping {
   updatedAt: Date;
 }
 
+export interface ViralPostEnrichment {
+  id: string;
+  organizationId: string;
+  platform: string;
+  platformVideoId: string;
+  status: ViralPostEnrichmentStatus;
+  attemptCount: number;
+  nextAttemptAt: Date;
+  processingStartedAt: Date | null;
+  lastFetchedAt: Date | null;
+  lastError: string | null;
+  accountDisplayName: string | null;
+  accountUsername: string | null;
+  caption: string | null;
+  thumbnailUrl: string | null;
+  videoUrl: string | null;
+  publishedAt: Date | null;
+  viewCount: number | null;
+  rawPayload: Prisma.JsonValue | null | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export namespace Prisma {
   export type JsonObject = { [key: string]: JsonValue };
   export type JsonArray = JsonValue[];
@@ -722,6 +833,11 @@ export namespace Prisma {
   export type CampaignCreatorDealSelect = GenericSelect;
   export type CampaignCreatorDealCreateInput = GenericInput;
   export type CampaignCreatorDealUpdateInput = GenericInput;
+  export type CampaignCreatorVideoDealWhereInput = GenericWhereInput;
+  export type CampaignCreatorVideoDealOrderByWithRelationInput = GenericOrderByInput;
+  export type CampaignCreatorVideoDealSelect = GenericSelect;
+  export type CampaignCreatorVideoDealCreateInput = GenericInput;
+  export type CampaignCreatorVideoDealUpdateInput = GenericInput;
   export type VideoWhereInput = GenericWhereInput;
   export type VideoOrderByWithRelationInput = GenericOrderByInput;
   export type VideoSelect = GenericSelect;
@@ -747,6 +863,21 @@ export namespace Prisma {
   export type OrganizationTikTokAccountSelect = GenericSelect;
   export type OrganizationTikTokAccountCreateInput = GenericInput;
   export type OrganizationTikTokAccountUpdateInput = GenericInput;
+  export type OrganizationIntegrationCredentialWhereInput = GenericWhereInput;
+  export type OrganizationIntegrationCredentialOrderByWithRelationInput = GenericOrderByInput;
+  export type OrganizationIntegrationCredentialSelect = GenericSelect;
+  export type OrganizationIntegrationCredentialCreateInput = GenericInput;
+  export type OrganizationIntegrationCredentialUpdateInput = GenericInput;
+  export type ReportingDayVersionWhereInput = GenericWhereInput;
+  export type ReportingDayVersionOrderByWithRelationInput = GenericOrderByInput;
+  export type ReportingDayVersionSelect = GenericSelect;
+  export type ReportingDayVersionCreateInput = GenericInput;
+  export type ReportingDayVersionUpdateInput = GenericInput;
+  export type ReportingDailyFactWhereInput = GenericWhereInput;
+  export type ReportingDailyFactOrderByWithRelationInput = GenericOrderByInput;
+  export type ReportingDailyFactSelect = GenericSelect;
+  export type ReportingDailyFactCreateInput = GenericInput;
+  export type ReportingDailyFactUpdateInput = GenericInput;
   export type CreatorContactPointWhereInput = GenericWhereInput;
   export type CreatorContactPointOrderByWithRelationInput = GenericOrderByInput;
   export type CreatorContactPointSelect = GenericSelect;
@@ -817,6 +948,11 @@ export namespace Prisma {
   export type SourceMappingSelect = GenericSelect;
   export type SourceMappingCreateInput = GenericInput;
   export type SourceMappingUpdateInput = GenericInput;
+  export type ViralPostEnrichmentWhereInput = GenericWhereInput;
+  export type ViralPostEnrichmentOrderByWithRelationInput = GenericOrderByInput;
+  export type ViralPostEnrichmentSelect = GenericSelect;
+  export type ViralPostEnrichmentCreateInput = GenericInput;
+  export type ViralPostEnrichmentUpdateInput = GenericInput;
   export const ModelName = {
     User: "User",
     Account: "Account",
@@ -833,11 +969,15 @@ export namespace Prisma {
     CreatorMetricsSnapshot: "CreatorMetricsSnapshot",
     CampaignCreator: "CampaignCreator",
     CampaignCreatorDeal: "CampaignCreatorDeal",
+    CampaignCreatorVideoDeal: "CampaignCreatorVideoDeal",
     Video: "Video",
     VideoReview: "VideoReview",
     VideoMetricsSnapshot: "VideoMetricsSnapshot",
     OrganizationTwilioConfig: "OrganizationTwilioConfig",
     OrganizationTikTokAccount: "OrganizationTikTokAccount",
+    OrganizationIntegrationCredential: "OrganizationIntegrationCredential",
+    ReportingDayVersion: "ReportingDayVersion",
+    ReportingDailyFact: "ReportingDailyFact",
     CreatorContactPoint: "CreatorContactPoint",
     SparkCodeRequest: "SparkCodeRequest",
     CreatorMessageThread: "CreatorMessageThread",
@@ -852,5 +992,6 @@ export namespace Prisma {
     Activity: "Activity",
     ExternalSyncJob: "ExternalSyncJob",
     SourceMapping: "SourceMapping",
+    ViralPostEnrichment: "ViralPostEnrichment",
   } as const;
 }

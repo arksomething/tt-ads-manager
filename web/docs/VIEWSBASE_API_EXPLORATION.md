@@ -1,6 +1,6 @@
 # ViewsBase API Exploration
 
-Last verified: April 22, 2026
+Last verified: May 9, 2026
 
 This note documents the private ViewsBase dashboard API observed from a logged-in browser session.
 
@@ -60,7 +60,7 @@ This is the endpoint to use for a daily "views per video" report.
 - `GET /api/stats?campaign_id=<CAMPAIGN_ID>`
   - Top-line totals like `totalVideos`, `totalPending`, `totalPaid`
 - `GET /api/analytics/campaign?campaign_id=<CAMPAIGN_ID>&start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`
-  - Overview analytics, time series, top creators, top videos
+  - Overview analytics, daily time series, per-creator daily series, top creators, top videos
 - `GET /api/payment-summary?campaign_id=<CAMPAIGN_ID>`
   - Per-creator payout summary
 - `GET /api/admin/influencers?campaign_id=<CAMPAIGN_ID>`
@@ -116,3 +116,18 @@ The local app now includes a ViewsBase sync path in the Videos workspace.
   - `0.5` CPM
   - `$100` per-video cap
   - no fixed fee
+
+The app also includes a live faceless report:
+
+- Page: `/org/<organizationSlug>/faceless`
+- JSON: `/api/org/<organizationSlug>/viewsbase/faceless?orgSlug=gotall&campaignSlug=all&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD`
+- Defaults:
+  - `orgSlug`: `VIEWSBASE_DEFAULT_ORG_SLUG` or `gotall`
+  - `campaignSlug`: `all`
+- The page parses the authenticated ViewsBase campaign list and supports a campaign dropdown with `All campaigns` plus each individual campaign.
+- The page uses:
+  - `/api/stats` for headline payment totals
+  - `/api/analytics/campaign` for daily views and creator daily series
+  - `/api/dashboard/videos` for all raw video rows and effective CPM values
+  - `/api/payment-summary` for payout rollups
+- Daily spend is projected from ViewsBase creator daily views plus the effective CPM values exposed on raw video rows. Use raw video rows and stored snapshots for audited final deltas.

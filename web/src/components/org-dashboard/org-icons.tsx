@@ -27,6 +27,7 @@ export type DashboardIconName =
   | "layout"
   | "dotsHorizontal"
   | "check"
+  | "info"
   | "arrowUpRight"
   | "arrowDownRight";
 
@@ -248,6 +249,14 @@ export function DashboardIcon({
       return (
         <svg {...commonProps}>
           <path d="m4.8 10.2 3.2 3.2 7.2-7.2" />
+        </svg>
+      );
+    case "info":
+      return (
+        <svg {...commonProps}>
+          <circle cx="10" cy="10" r="6.6" />
+          <path d="M10 9.2v4.4" />
+          <path d="M10 6.4h.01" />
         </svg>
       );
     case "arrowUpRight":

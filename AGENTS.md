@@ -14,14 +14,19 @@ root directory.
 For production web changes:
 
 1. Edit the app in this repo.
-2. Run verification from `web/`:
+2. Add or update automated tests for the behavior changed, especially for
+   calculation logic, server mutations, and user-visible feature workflows. Keep
+   tests close to the code path they protect and make assertions that would fail
+   if the intended feature edit did not affect the expected output.
+3. Run verification from `web/`:
 
 ```bash
+npm test
 npm run typecheck
 npm run build
 ```
 
-3. Deploy production from `web/` using the linked Vercel project:
+4. Deploy production from `web/` using the linked Vercel project:
 
 ```bash
 npx vercel deploy --prod

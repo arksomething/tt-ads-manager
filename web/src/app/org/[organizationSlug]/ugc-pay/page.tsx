@@ -1,5 +1,18 @@
+import { redirect } from "next/navigation";
+import { Suspense, type ReactNode } from "react";
+
 import { DashboardIcon } from "@/components/org-dashboard/org-icons";
+import {
+  CreatorDealPaidTrafficMetric,
+  CreatorDealPerVideoCapScope,
+} from "@/lib/prisma-shim";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
+import {
+  deleteCampaignCreatorDealForOrganization,
+  deleteCampaignCreatorVideoDealForOrganization,
+  upsertCampaignCreatorDealForOrganization,
+  upsertCampaignCreatorVideoDealForOrganization,
+} from "@/server/payouts/mutations";
 import {
   getOrganizationUgcPayData,
   type UgcPayMode,
@@ -8,6 +21,9 @@ import {
   type UgcPayCreatorRow,
   type UgcPayVideoRow,
 } from "@/server/ugc-pay/queries";
+
+import { UgcPayClient } from "./ugc-pay-client";
+import UgcPayLoading from "./loading";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +46,97 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: "UTC",
 });
 const currencyFormatters = new Map<string, Intl.NumberFormat>();
+const dealInputClassName =
+  "w-full rounded-[0.75rem] border border-white/[0.08] bg-black/[0.18] px-2.5 py-2 text-xs text-foreground outline-none transition focus:border-white/[0.16]";
+
+type DealAction = (formData: FormData) => Promise<void>;
+
+function getSearchParamValue(searchParams: DashboardSearchParams, key: string) {
+  const value = searchParams[key];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function getTrimmedFormValue(formData: FormData, key: string) {
+  const value = formData.get(key);
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function buildUgcPayHref(args: {
+  organizationSlug: string;
+  searchParams: DashboardSearchParams;
+  notice?: string | null;
+  error?: string | null;
+}) {
+  const nextSearchParams = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(args.searchParams)) {
+    if (!value || key === "notice" || key === "error") {
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        nextSearchParams.append(key, entry);
+      }
+
+      continue;
+    }
+
+    nextSearchParams.set(key, value);
+  }
+
+  if (args.notice) {
+    nextSearchParams.set("notice", args.notice);
+  }
+
+  if (args.error) {
+    nextSearchParams.set("error", args.error);
+  }
+
+  const query = nextSearchParams.toString();
+  return query
+    ? `/org/${args.organizationSlug}/ugc-pay?${query}`
+    : `/org/${args.organizationSlug}/ugc-pay`;
+}
+
+function getNoticeLabel(value: string | undefined) {
+  switch (value) {
+    case "creator-deal-saved":
+      return "Creator deal structure saved.";
+    case "creator-deal-cleared":
+      return "Creator deal override removed.";
+    case "video-deal-saved":
+      return "Video deal override saved.";
+    case "video-deal-cleared":
+      return "Video deal override removed.";
+    default:
+      return undefined;
+  }
+}
+
+function getErrorLabel(value: string | undefined) {
+  if (!value || value.startsWith("NEXT_REDIRECT")) {
+    return undefined;
+  }
+
+  return value;
+}
+
+function getActionErrorMessage(error: unknown) {
+  const digest =
+    typeof error === "object" &&
+    error !== null &&
+    "digest" in error &&
+    typeof (error as { digest?: unknown }).digest === "string"
+      ? (error as { digest: string }).digest
+      : null;
+
+  if (digest?.startsWith("NEXT_REDIRECT")) {
+    throw error;
+  }
+
+  return error instanceof Error ? error.message : "Something went wrong.";
+}
 
 function getCurrencyFormatter(currency: string) {
   const normalizedCurrency = currency.toUpperCase();
@@ -80,6 +187,64 @@ function formatDateLabel(value: Date | string | null | undefined) {
   return Number.isNaN(parsedValue.getTime())
     ? "Unknown"
     : dateFormatter.format(parsedValue);
+}
+
+function formatDateInputValue(value: Date | string | null | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  const parsedValue = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(parsedValue.getTime())
+    ? ""
+    : parsedValue.toISOString().slice(0, 10);
+}
+
+function FieldLabel({
+  children,
+  label,
+}: {
+  children: ReactNode;
+  label: string;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-[0.56rem] uppercase text-muted-foreground">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function TooltipLabel({ label, tip }: { label: string; tip: string }) {
+  return (
+    <span className="mb-1.5 flex items-center gap-1.5 text-[0.62rem] uppercase text-muted-foreground">
+      <span>{label}</span>
+      <span
+        aria-label={`${label}: ${tip}`}
+        className="group relative inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground outline-none transition hover:text-foreground focus-visible:text-foreground"
+        role="img"
+        tabIndex={0}
+      >
+        <DashboardIcon className="h-3.5 w-3.5" name="info" />
+        <span className="pointer-events-none absolute left-1/2 top-full z-30 mt-2 hidden w-64 -translate-x-1/2 rounded-[0.75rem] border border-white/[0.1] bg-[#111114] px-3 py-2 text-left text-xs normal-case leading-5 text-foreground shadow-[0_18px_50px_rgba(0,0,0,0.45)] group-hover:block group-focus-visible:block">
+          {tip}
+        </span>
+      </span>
+    </span>
+  );
+}
+
+function OptionTip({ children, tip }: { children: ReactNode; tip: string }) {
+  return (
+    <span className="group relative flex min-h-10 items-center justify-center rounded-[0.75rem] px-3 text-center text-sm text-muted-foreground transition peer-checked:bg-white/[0.1] peer-checked:text-foreground">
+      <span>{children}</span>
+      <span className="pointer-events-none absolute left-1/2 top-full z-30 mt-2 hidden w-64 -translate-x-1/2 rounded-[0.75rem] border border-white/[0.1] bg-[#111114] px-3 py-2 text-left text-xs leading-5 text-foreground shadow-[0_18px_50px_rgba(0,0,0,0.45)] group-hover:block group-focus-within:block">
+        {tip}
+      </span>
+    </span>
+  );
 }
 
 function getVideoTitle(video: Pick<UgcPayVideoRow, "titleOrCaption" | "creatorName">) {
@@ -174,7 +339,377 @@ function EmptyState({ label }: { label: string }) {
   );
 }
 
-function CreatorPayRow({ creator }: { creator: UgcPayCreatorRow }) {
+function CreatorDealEditor({
+  clearCreatorDealAction,
+  creator,
+  saveCreatorDealAction,
+}: {
+  clearCreatorDealAction: DealAction;
+  creator: UgcPayCreatorRow;
+  saveCreatorDealAction: DealAction;
+}) {
+  return (
+    <div className="rounded-[1rem] border border-white/[0.08] bg-black/[0.16] p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-[0.62rem] uppercase text-muted-foreground">
+            Creator Deal Structure
+          </p>
+          <p className="mt-1 text-sm text-foreground">
+            {creator.hasCustomDeal ? "Custom override" : "Default terms"}
+          </p>
+        </div>
+        <form action={clearCreatorDealAction}>
+          <input
+            name="campaignCreatorId"
+            type="hidden"
+            value={creator.campaignCreatorId}
+          />
+          <input name="dealId" type="hidden" value={creator.deal.id ?? ""} />
+          <button
+            className="text-xs text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={!creator.hasCustomDeal}
+            type="submit"
+          >
+            Remove override
+          </button>
+        </form>
+      </div>
+
+      <form action={saveCreatorDealAction} className="mt-3 space-y-3">
+        <input
+          name="campaignCreatorId"
+          type="hidden"
+          value={creator.campaignCreatorId}
+        />
+        <input name="dealId" type="hidden" value={creator.deal.id ?? ""} />
+        <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+          <FieldLabel label="Currency">
+            <input
+              className={dealInputClassName}
+              defaultValue={creator.currency}
+              maxLength={3}
+              name="currency"
+            />
+          </FieldLabel>
+          <FieldLabel label="Deal Start">
+            <input
+              className={dealInputClassName}
+              defaultValue={formatDateInputValue(creator.deal.effectiveStartDate)}
+              name="effectiveStartDate"
+              type="date"
+            />
+          </FieldLabel>
+          <FieldLabel label="Deal End">
+            <input
+              className={dealInputClassName}
+              defaultValue={formatDateInputValue(creator.deal.effectiveEndDate)}
+              name="effectiveEndDate"
+              type="date"
+            />
+          </FieldLabel>
+          <FieldLabel label="Base Fixed Fee">
+            <input
+              className={dealInputClassName}
+              defaultValue={creator.deal.fixedFee ?? ""}
+              name="fixedFee"
+              placeholder="0.00"
+              step="0.01"
+              type="number"
+            />
+          </FieldLabel>
+          <FieldLabel label="Fixed Fee Date">
+            <input
+              className={dealInputClassName}
+              defaultValue={formatDateInputValue(
+                creator.deal.fixedFeeRecognitionDate,
+              )}
+              name="fixedFeeRecognitionDate"
+              type="date"
+            />
+          </FieldLabel>
+          <FieldLabel label="Fixed / Video">
+            <input
+              className={dealInputClassName}
+              defaultValue={creator.deal.fixedFeePerVideo ?? ""}
+              name="fixedFeePerVideo"
+              placeholder="0.00"
+              step="0.01"
+              type="number"
+            />
+          </FieldLabel>
+          <FieldLabel label="CPM">
+            <input
+              className={dealInputClassName}
+              defaultValue={creator.deal.cpmAmount}
+              name="cpmAmount"
+              placeholder="0.00"
+              step="0.01"
+              type="number"
+            />
+          </FieldLabel>
+          <FieldLabel label="View Window">
+            <input
+              className={dealInputClassName}
+              defaultValue={creator.deal.viewWindowDays}
+              min="1"
+              name="viewWindowDays"
+              step="1"
+              type="number"
+            />
+          </FieldLabel>
+          <FieldLabel label="Paid Metric">
+            <select
+              className={dealInputClassName}
+              defaultValue={creator.deal.paidTrafficMetric}
+              name="paidTrafficMetric"
+            >
+              <option value={CreatorDealPaidTrafficMetric.IMPRESSIONS}>
+                Impressions
+              </option>
+              <option value={CreatorDealPaidTrafficMetric.VIDEO_PLAY_ACTIONS}>
+                Video plays
+              </option>
+            </select>
+          </FieldLabel>
+          <FieldLabel label="View Cap / Video">
+            <input
+              className={dealInputClassName}
+              defaultValue={creator.deal.viewCapPerVideo ?? ""}
+              name="viewCapPerVideo"
+              placeholder="100000"
+              step="1"
+              type="number"
+            />
+          </FieldLabel>
+          <FieldLabel label="Payout Cap / Video">
+            <input
+              className={dealInputClassName}
+              defaultValue={creator.deal.payoutCapPerVideo}
+              name="payoutCapPerVideo"
+              placeholder="100.00"
+              step="0.01"
+              type="number"
+            />
+          </FieldLabel>
+          <FieldLabel label="Cap Scope">
+            <select
+              className={dealInputClassName}
+              defaultValue={creator.deal.perVideoCapScope}
+              name="perVideoCapScope"
+            >
+              <option value={CreatorDealPerVideoCapScope.CPM}>Cap CPM only</option>
+              <option value={CreatorDealPerVideoCapScope.TOTAL}>
+                Cap total video pay
+              </option>
+              <option value={CreatorDealPerVideoCapScope.NONE}>
+                No per-video cap
+              </option>
+            </select>
+          </FieldLabel>
+          <FieldLabel label="Total Payout Cap">
+            <input
+              className={dealInputClassName}
+              defaultValue={creator.deal.payoutCapTotal ?? ""}
+              name="payoutCapTotal"
+              placeholder="0.00"
+              step="0.01"
+              type="number"
+            />
+          </FieldLabel>
+          <FieldLabel label="Notes">
+            <input
+              className={dealInputClassName}
+              defaultValue={creator.deal.notes ?? ""}
+              name="notes"
+              placeholder="Contract notes or exceptions"
+            />
+          </FieldLabel>
+        </div>
+        <label className="flex min-h-9 items-center gap-2 rounded-[0.75rem] border border-white/[0.08] bg-black/[0.14] px-2.5 py-2 text-xs text-foreground">
+          <input
+            defaultChecked={creator.deal.deductPaidTraffic}
+            name="deductPaidTraffic"
+            type="checkbox"
+          />
+          Deduct paid traffic
+        </label>
+        <label className="flex min-h-9 items-center gap-2 rounded-[0.75rem] border border-white/[0.08] bg-black/[0.14] px-2.5 py-2 text-xs text-foreground">
+          <input name="createNewDealPeriod" type="checkbox" />
+          Save as new dated deal
+        </label>
+        <button
+          className="inline-flex min-h-9 items-center justify-center rounded-[0.8rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-3 text-xs font-medium text-black transition hover:bg-[#A4FF68]"
+          type="submit"
+        >
+          Save creator deal
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function VideoDealEditor({
+  clearVideoDealAction,
+  saveVideoDealAction,
+  video,
+}: {
+  clearVideoDealAction: DealAction;
+  saveVideoDealAction: DealAction;
+  video: UgcPayVideoRow;
+}) {
+  return (
+    <details>
+      <summary className="inline-flex min-h-8 cursor-pointer list-none items-center justify-center rounded-[0.75rem] border border-white/[0.1] bg-white/[0.05] px-2.5 text-xs text-foreground transition hover:border-white/[0.16] hover:bg-white/[0.08]">
+        <DashboardIcon className="h-4 w-4" name="settings" />
+      </summary>
+      <div className="mt-2 w-[26rem] max-w-[70vw] rounded-[0.95rem] border border-white/[0.08] bg-[#090909] p-3 shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[0.62rem] uppercase text-muted-foreground">
+            Video Deal Override
+          </p>
+          {video.hasVideoDealOverride ? (
+            <span className="rounded-full border border-[#90FF4D]/20 bg-[#90FF4D]/10 px-2 py-0.5 text-[0.56rem] uppercase text-[#D4FFB2]">
+              edited
+            </span>
+          ) : null}
+        </div>
+        <form action={saveVideoDealAction} className="mt-3 space-y-3">
+          <input
+            name="campaignCreatorId"
+            type="hidden"
+            value={video.campaignCreatorId}
+          />
+          <input name="sourceVideoId" type="hidden" value={video.sourceVideoId} />
+          <div className="grid gap-2 sm:grid-cols-2">
+            <FieldLabel label="Fixed / Video">
+              <input
+                className={dealInputClassName}
+                defaultValue={video.fixedFeePerVideo || ""}
+                name="fixedFeePerVideo"
+                placeholder="0.00"
+                step="0.01"
+                type="number"
+              />
+            </FieldLabel>
+            <FieldLabel label="CPM">
+              <input
+                className={dealInputClassName}
+                defaultValue={video.cpmAmount}
+                name="cpmAmount"
+                placeholder="0.00"
+                step="0.01"
+                type="number"
+              />
+            </FieldLabel>
+            <FieldLabel label="Paid Metric">
+              <select
+                className={dealInputClassName}
+                defaultValue={video.paidTrafficMetric}
+                name="paidTrafficMetric"
+              >
+                <option value={CreatorDealPaidTrafficMetric.IMPRESSIONS}>
+                  Impressions
+                </option>
+                <option value={CreatorDealPaidTrafficMetric.VIDEO_PLAY_ACTIONS}>
+                  Video plays
+                </option>
+              </select>
+            </FieldLabel>
+            <FieldLabel label="View Cap">
+              <input
+                className={dealInputClassName}
+                defaultValue={video.viewCapPerVideo ?? ""}
+                name="viewCapPerVideo"
+                placeholder="100000"
+                step="1"
+                type="number"
+              />
+            </FieldLabel>
+            <FieldLabel label="Payout Cap">
+              <input
+                className={dealInputClassName}
+                defaultValue={video.payoutCapPerVideo}
+                name="payoutCapPerVideo"
+                placeholder="100.00"
+                step="0.01"
+                type="number"
+              />
+            </FieldLabel>
+            <FieldLabel label="Cap Scope">
+              <select
+                className={dealInputClassName}
+                defaultValue={video.perVideoCapScope}
+                name="perVideoCapScope"
+              >
+                <option value={CreatorDealPerVideoCapScope.CPM}>Cap CPM only</option>
+                <option value={CreatorDealPerVideoCapScope.TOTAL}>
+                  Cap total video pay
+                </option>
+                <option value={CreatorDealPerVideoCapScope.NONE}>
+                  No per-video cap
+                </option>
+              </select>
+            </FieldLabel>
+            <FieldLabel label="Notes">
+              <input
+                className={dealInputClassName}
+                defaultValue={video.videoDealNotes ?? ""}
+                name="notes"
+                placeholder="Special video terms"
+              />
+            </FieldLabel>
+          </div>
+          <label className="flex min-h-9 items-center gap-2 rounded-[0.75rem] border border-white/[0.08] bg-black/[0.14] px-2.5 py-2 text-xs text-foreground">
+            <input
+              defaultChecked={video.deductPaidTraffic}
+              name="deductPaidTraffic"
+              type="checkbox"
+            />
+            Deduct paid traffic
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              className="inline-flex min-h-8 items-center rounded-[0.8rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-3 text-xs font-medium text-black transition hover:bg-[#A4FF68]"
+              type="submit"
+            >
+              Save video deal
+            </button>
+          </div>
+        </form>
+        <form action={clearVideoDealAction} className="mt-2">
+          <input
+            name="campaignCreatorId"
+            type="hidden"
+            value={video.campaignCreatorId}
+          />
+          <input name="sourceVideoId" type="hidden" value={video.sourceVideoId} />
+          <button
+            className="text-xs text-muted-foreground transition hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={!video.hasVideoDealOverride}
+            type="submit"
+          >
+            Remove video override
+          </button>
+        </form>
+      </div>
+    </details>
+  );
+}
+
+function CreatorPayRow({
+  clearCreatorDealAction,
+  clearVideoDealAction,
+  creator,
+  saveCreatorDealAction,
+  saveVideoDealAction,
+}: {
+  clearCreatorDealAction: DealAction;
+  clearVideoDealAction: DealAction;
+  creator: UgcPayCreatorRow;
+  saveCreatorDealAction: DealAction;
+  saveVideoDealAction: DealAction;
+}) {
   return (
     <details className="group border-b border-white/[0.06] last:border-b-0">
       <summary className="grid cursor-pointer list-none gap-3 px-4 py-4 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.85fr)_minmax(0,0.85fr)_minmax(0,0.75fr)_auto] md:items-center">
@@ -239,7 +774,11 @@ function CreatorPayRow({ creator }: { creator: UgcPayCreatorRow }) {
           </p>
         </div>
 
-        <div className="flex items-center md:justify-end">
+        <div className="flex items-center gap-2 md:justify-end">
+          <span className="inline-flex min-h-9 items-center gap-1.5 rounded-[0.85rem] border border-[#7BB2FF]/20 bg-[#7BB2FF]/10 px-3 text-xs text-[#D6E7FF]">
+            <DashboardIcon className="h-3.5 w-3.5" name="settings" />
+            Deal
+          </span>
           <span className="inline-flex h-9 w-9 items-center justify-center rounded-[0.85rem] border border-white/[0.1] bg-white/[0.05] transition group-open:border-white/[0.16] group-open:bg-white/[0.08]">
             <DashboardIcon
               className="h-4 w-4 text-foreground transition group-open:rotate-90"
@@ -250,7 +789,13 @@ function CreatorPayRow({ creator }: { creator: UgcPayCreatorRow }) {
       </summary>
 
       <div className="border-t border-white/[0.06] px-4 py-4">
-        <div className="flex flex-wrap gap-2 text-[0.62rem] uppercase">
+        <CreatorDealEditor
+          clearCreatorDealAction={clearCreatorDealAction}
+          creator={creator}
+          saveCreatorDealAction={saveCreatorDealAction}
+        />
+
+        <div className="mt-3 flex flex-wrap gap-2 text-[0.62rem] uppercase">
           <span className="rounded-full border border-white/[0.08] bg-white/[0.05] px-2.5 py-1 text-muted-foreground">
             {formatDealLabel(creator)}
           </span>
@@ -263,6 +808,12 @@ function CreatorPayRow({ creator }: { creator: UgcPayCreatorRow }) {
           {creator.unknownPaidVideoCount > 0 ? (
             <span className="rounded-full border border-[#FFD24D]/20 bg-[#FFD24D]/10 px-2.5 py-1 text-[#FFE7A6]">
               {creator.unknownPaidVideoCount} unknown paid
+            </span>
+          ) : null}
+          {creator.videoDealOverrideCount > 0 ? (
+            <span className="rounded-full border border-[#90FF4D]/20 bg-[#90FF4D]/10 px-2.5 py-1 text-[#D4FFB2]">
+              {creator.videoDealOverrideCount} edited video
+              {creator.videoDealOverrideCount === 1 ? "" : "s"}
             </span>
           ) : null}
         </div>
@@ -279,12 +830,18 @@ function CreatorPayRow({ creator }: { creator: UgcPayCreatorRow }) {
                   <th className="px-3 py-3 font-medium">Fixed</th>
                   <th className="px-3 py-3 font-medium">CPM</th>
                   <th className="px-3 py-3 font-medium">Pay</th>
+                  <th className="px-3 py-3 font-medium">Deal</th>
                   <th className="px-3 py-3 font-medium">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {creator.videos.map((video) => (
-                  <VideoTableRow key={`${video.sourceVideoId}-${video.campaignCreatorId}`} video={video} />
+                  <VideoTableRow
+                    clearVideoDealAction={clearVideoDealAction}
+                    key={`${video.sourceVideoId}-${video.campaignCreatorId}`}
+                    saveVideoDealAction={saveVideoDealAction}
+                    video={video}
+                  />
                 ))}
               </tbody>
             </table>
@@ -295,19 +852,37 @@ function CreatorPayRow({ creator }: { creator: UgcPayCreatorRow }) {
   );
 }
 
-function VideoTableRow({ video }: { video: UgcPayVideoRow }) {
+function VideoTableRow({
+  clearVideoDealAction,
+  saveVideoDealAction,
+  video,
+}: {
+  clearVideoDealAction: DealAction;
+  saveVideoDealAction: DealAction;
+  video: UgcPayVideoRow;
+}) {
   return (
     <tr className="border-b border-white/[0.05] align-top last:border-b-0">
       <td className="max-w-[24rem] px-3 py-3">
-        <a
-          className="block truncate font-medium text-foreground transition hover:text-[#B9FF95]"
-          href={video.videoUrl}
-          rel="noreferrer"
-          target="_blank"
-          title={getVideoTitle(video)}
-        >
-          {getVideoTitle(video)}
-        </a>
+        <div className="flex min-w-0 items-center gap-2">
+          {video.hasVideoDealOverride ? (
+            <span
+              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#90FF4D]/20 bg-[#90FF4D]/10 text-[#D4FFB2]"
+              title="Video deal override"
+            >
+              <DashboardIcon className="h-3 w-3" name="settings" />
+            </span>
+          ) : null}
+          <a
+            className="block truncate font-medium text-foreground transition hover:text-[#B9FF95]"
+            href={video.videoUrl}
+            rel="noreferrer"
+            target="_blank"
+            title={getVideoTitle(video)}
+          >
+            {getVideoTitle(video)}
+          </a>
+        </div>
         <p className="mt-1 text-xs text-muted-foreground">
           {formatDateLabel(video.publishedAt ?? video.createdAt)}
         </p>
@@ -331,6 +906,13 @@ function VideoTableRow({ video }: { video: UgcPayVideoRow }) {
         {formatMoney(video.videoPay, video.currency)}
       </td>
       <td className="px-3 py-3">
+        <VideoDealEditor
+          clearVideoDealAction={clearVideoDealAction}
+          saveVideoDealAction={saveVideoDealAction}
+          video={video}
+        />
+      </td>
+      <td className="px-3 py-3">
         <span
           className={`rounded-full border px-2 py-1 text-[0.62rem] uppercase ${
             video.paidStatus === "yes" || video.paidStatus === "no"
@@ -345,16 +927,19 @@ function VideoTableRow({ video }: { video: UgcPayVideoRow }) {
   );
 }
 
-export default async function UgcPayPage({
-  params,
-  searchParams,
-}: UgcPayPageProps) {
-  const { organizationSlug } = await params;
-  const resolvedSearchParams = await searchParams;
+async function UgcPayPageReport({
+  organizationSlug,
+  resolvedSearchParams,
+}: {
+  organizationSlug: string;
+  resolvedSearchParams: DashboardSearchParams;
+}) {
   const data = await getOrganizationUgcPayData({
     organizationSlug,
     searchParams: resolvedSearchParams,
   });
+  const notice = getNoticeLabel(getSearchParamValue(resolvedSearchParams, "notice"));
+  const error = getErrorLabel(getSearchParamValue(resolvedSearchParams, "error"));
   const isGainedViewMode = data.payMode === "gained";
   const isGlobalViewWindowMode = data.viewWindowMode === "first-days";
   const isAccurateCreatorFetchMode = data.videoFetchMode === "per-creator";
@@ -372,6 +957,167 @@ export default async function UgcPayPage({
   const emptyCreatorLabel = isGainedViewMode
     ? "No View Tally videos gained views in the selected range for matched creators in this campaign."
     : "No View Tally videos matched creators in this campaign for the selected range.";
+
+  async function saveCreatorDealAction(formData: FormData) {
+    "use server";
+
+    try {
+      const createNewDealPeriod = formData.get("createNewDealPeriod") === "on";
+
+      await upsertCampaignCreatorDealForOrganization({
+        organizationSlug,
+        input: {
+          campaignCreatorId: getTrimmedFormValue(formData, "campaignCreatorId"),
+          dealId: createNewDealPeriod
+            ? undefined
+            : getTrimmedFormValue(formData, "dealId") || undefined,
+          currency: getTrimmedFormValue(formData, "currency") || "USD",
+          effectiveStartDate: getTrimmedFormValue(formData, "effectiveStartDate"),
+          effectiveEndDate:
+            getTrimmedFormValue(formData, "effectiveEndDate") || undefined,
+          fixedFee: getTrimmedFormValue(formData, "fixedFee") || undefined,
+          fixedFeeRecognitionDate:
+            getTrimmedFormValue(formData, "fixedFeeRecognitionDate") || undefined,
+          fixedFeePerVideo:
+            getTrimmedFormValue(formData, "fixedFeePerVideo") || undefined,
+          cpmAmount: getTrimmedFormValue(formData, "cpmAmount") || undefined,
+          paidTrafficMetric:
+            getTrimmedFormValue(formData, "paidTrafficMetric") || undefined,
+          deductPaidTraffic: formData.get("deductPaidTraffic") === "on",
+          viewCapPerVideo:
+            getTrimmedFormValue(formData, "viewCapPerVideo") || undefined,
+          viewWindowDays:
+            getTrimmedFormValue(formData, "viewWindowDays") || undefined,
+          payoutCapPerVideo:
+            getTrimmedFormValue(formData, "payoutCapPerVideo") || undefined,
+          perVideoCapScope:
+            getTrimmedFormValue(formData, "perVideoCapScope") || undefined,
+          payoutCapTotal:
+            getTrimmedFormValue(formData, "payoutCapTotal") || undefined,
+          notes: getTrimmedFormValue(formData, "notes") || undefined,
+        },
+      });
+
+      redirect(
+        buildUgcPayHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          notice: "creator-deal-saved",
+        }),
+      );
+    } catch (saveError) {
+      redirect(
+        buildUgcPayHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          error: getActionErrorMessage(saveError),
+        }),
+      );
+    }
+  }
+
+  async function clearCreatorDealAction(formData: FormData) {
+    "use server";
+
+    try {
+      await deleteCampaignCreatorDealForOrganization({
+        organizationSlug,
+        input: {
+          campaignCreatorId: getTrimmedFormValue(formData, "campaignCreatorId"),
+          dealId: getTrimmedFormValue(formData, "dealId") || undefined,
+        },
+      });
+
+      redirect(
+        buildUgcPayHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          notice: "creator-deal-cleared",
+        }),
+      );
+    } catch (deleteError) {
+      redirect(
+        buildUgcPayHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          error: getActionErrorMessage(deleteError),
+        }),
+      );
+    }
+  }
+
+  async function saveVideoDealAction(formData: FormData) {
+    "use server";
+
+    try {
+      await upsertCampaignCreatorVideoDealForOrganization({
+        organizationSlug,
+        input: {
+          campaignCreatorId: getTrimmedFormValue(formData, "campaignCreatorId"),
+          sourceVideoId: getTrimmedFormValue(formData, "sourceVideoId"),
+          fixedFeePerVideo:
+            getTrimmedFormValue(formData, "fixedFeePerVideo") || undefined,
+          cpmAmount: getTrimmedFormValue(formData, "cpmAmount") || undefined,
+          paidTrafficMetric:
+            getTrimmedFormValue(formData, "paidTrafficMetric") || undefined,
+          deductPaidTraffic: formData.get("deductPaidTraffic") === "on",
+          viewCapPerVideo:
+            getTrimmedFormValue(formData, "viewCapPerVideo") || undefined,
+          payoutCapPerVideo:
+            getTrimmedFormValue(formData, "payoutCapPerVideo") || undefined,
+          perVideoCapScope:
+            getTrimmedFormValue(formData, "perVideoCapScope") || undefined,
+          notes: getTrimmedFormValue(formData, "notes") || undefined,
+        },
+      });
+
+      redirect(
+        buildUgcPayHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          notice: "video-deal-saved",
+        }),
+      );
+    } catch (saveError) {
+      redirect(
+        buildUgcPayHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          error: getActionErrorMessage(saveError),
+        }),
+      );
+    }
+  }
+
+  async function clearVideoDealAction(formData: FormData) {
+    "use server";
+
+    try {
+      await deleteCampaignCreatorVideoDealForOrganization({
+        organizationSlug,
+        input: {
+          campaignCreatorId: getTrimmedFormValue(formData, "campaignCreatorId"),
+          sourceVideoId: getTrimmedFormValue(formData, "sourceVideoId"),
+        },
+      });
+
+      redirect(
+        buildUgcPayHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          notice: "video-deal-cleared",
+        }),
+      );
+    } catch (deleteError) {
+      redirect(
+        buildUgcPayHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          error: getActionErrorMessage(deleteError),
+        }),
+      );
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -402,7 +1148,7 @@ export default async function UgcPayPage({
               <p className="mt-1 text-xs">{videoFetchDetail}</p>
             ) : null}
             <p className="mt-1 text-xs">
-              {getPayModeLabel(data.payMode)} - {getViewWindowModeLabel(data.viewWindowMode, data.globalViewWindowDays)} - {getVideoFetchModeLabel(data.videoFetchMode)} - {formatMetricValue(data.summary.customDeals)} custom deals
+              {getPayModeLabel(data.payMode)} - {getViewWindowModeLabel(data.viewWindowMode, data.globalViewWindowDays)} - {getVideoFetchModeLabel(data.videoFetchMode)} - {formatMetricValue(data.summary.customDeals)} custom deals - {formatMetricValue(data.summary.videoDealOverrides)} video overrides
             </p>
           </div>
         </div>
@@ -413,9 +1159,10 @@ export default async function UgcPayPage({
         >
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.25fr)_auto]">
             <label className="block">
-              <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
-                Start date
-              </span>
+              <TooltipLabel
+                label="Start date"
+                tip="First UTC report date included. In posted mode, videos must be posted on or after this date. In gained views mode, this starts the view-growth period."
+              />
               <input
                 className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
                 defaultValue={data.startDate}
@@ -425,9 +1172,10 @@ export default async function UgcPayPage({
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
-                End date
-              </span>
+              <TooltipLabel
+                label="End date"
+                tip="Last UTC report date included for View Tally views and TikTok paid-delivery deductions."
+              />
               <input
                 className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
                 defaultValue={data.endDate}
@@ -437,9 +1185,10 @@ export default async function UgcPayPage({
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
-                Campaign
-              </span>
+              <TooltipLabel
+                label="Campaign"
+                tip="Filters creator matching and deal terms to one campaign. All Tracked Creators uses every campaign creator available to the report."
+              />
               <select
                 className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
                 defaultValue={data.selectedCampaignId ?? ""}
@@ -481,8 +1230,11 @@ export default async function UgcPayPage({
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
             <fieldset>
-              <legend className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
-                Calculation
+              <legend>
+                <TooltipLabel
+                  label="Calculation"
+                  tip="Chooses which videos and views become eligible before creator deal terms, paid-view deductions, and caps are applied."
+                />
               </legend>
               <div className="grid grid-cols-2 gap-1 rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-1">
                 <label className="block">
@@ -493,9 +1245,9 @@ export default async function UgcPayPage({
                     type="radio"
                     value="posted"
                   />
-                  <span className="flex min-h-10 items-center justify-center rounded-[0.75rem] px-3 text-center text-sm text-muted-foreground transition peer-checked:bg-white/[0.1] peer-checked:text-foreground">
+                  <OptionTip tip="Pays videos posted between the start and end dates. Views come from the selected view window.">
                     Posted in range
-                  </span>
+                  </OptionTip>
                 </label>
                 <label className="block">
                   <input
@@ -505,18 +1257,19 @@ export default async function UgcPayPage({
                     type="radio"
                     value="gained"
                   />
-                  <span className="flex min-h-10 items-center justify-center rounded-[0.75rem] px-3 text-center text-sm text-muted-foreground transition peer-checked:bg-white/[0.1] peer-checked:text-foreground">
+                  <OptionTip tip="Pays only views gained during the selected date range for matched videos from the video-window start onward.">
                     Gained views
-                  </span>
+                  </OptionTip>
                 </label>
               </div>
             </fieldset>
 
             {isGainedViewMode ? (
               <label className="block">
-                <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
-                  Video window start
-                </span>
+                <TooltipLabel
+                  label="Video window start"
+                  tip="Earliest video post date included in gained-view mode. Use this to include older videos while only paying the views gained in the report range."
+                />
                 <input
                   className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
                   defaultValue={data.videoWindowStartDate}
@@ -529,8 +1282,11 @@ export default async function UgcPayPage({
 
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
             <fieldset>
-              <legend className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
-                View window
+              <legend>
+                <TooltipLabel
+                  label="View window"
+                  tip="Controls which View Tally views count for each included video before paid traffic deductions and creator deal caps."
+                />
               </legend>
               <div className="grid grid-cols-2 gap-1 rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] p-1">
                 <label className="block">
@@ -541,9 +1297,9 @@ export default async function UgcPayPage({
                     type="radio"
                     value="all"
                   />
-                  <span className="flex min-h-10 items-center justify-center rounded-[0.75rem] px-3 text-center text-sm text-muted-foreground transition peer-checked:bg-white/[0.1] peer-checked:text-foreground">
+                  <OptionTip tip="Uses all views View Tally reports for the selected report period.">
                     All report views
-                  </span>
+                  </OptionTip>
                 </label>
                 <label className="block">
                   <input
@@ -553,17 +1309,18 @@ export default async function UgcPayPage({
                     type="radio"
                     value="first-days"
                   />
-                  <span className="flex min-h-10 items-center justify-center rounded-[0.75rem] px-3 text-center text-sm text-muted-foreground transition peer-checked:bg-white/[0.1] peer-checked:text-foreground">
+                  <OptionTip tip="Limits payable views to the first N days after each video's post date. Set N with Window days.">
                     First days
-                  </span>
+                  </OptionTip>
                 </label>
               </div>
             </fieldset>
 
             <label className="block">
-              <span className="mb-1.5 block text-[0.62rem] uppercase text-muted-foreground">
-                Window days
-              </span>
+              <TooltipLabel
+                label="Window days"
+                tip="Number of days after each video's post date to count when First days is selected. This value is ignored by All report views."
+              />
               <input
                 className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
                 defaultValue={data.globalViewWindowDays}
@@ -576,6 +1333,18 @@ export default async function UgcPayPage({
           </div>
         </form>
       </section>
+
+      {notice ? (
+        <section className="rounded-[1.1rem] border border-[#90FF4D]/20 bg-[#90FF4D]/[0.08] px-4 py-3 text-sm text-[#D7FFBC]">
+          {notice}
+        </section>
+      ) : null}
+
+      {error ? (
+        <section className="rounded-[1.1rem] border border-[#FF7E54]/20 bg-[#FF7E54]/[0.08] px-4 py-3 text-sm text-[#FFD3C5]">
+          {error}
+        </section>
+      ) : null}
 
       {data.errorMessage ? (
         <section className="rounded-[1.1rem] border border-[#FF7E54]/20 bg-[#FF7E54]/[0.08] px-4 py-3 text-sm text-[#FFD3C5]">
@@ -591,147 +1360,32 @@ export default async function UgcPayPage({
         </section>
       ) : null}
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard
-          detail={`${formatMoney(data.summary.fixedPay)} fixed + ${formatMoney(data.summary.videoPay)} video`}
-          iconName="payouts"
-          label="UGC Pay"
-          value={formatMoney(data.summary.totalPay)}
-        />
-        <SummaryCard
-          detail={`${formatMetricValue(data.summary.grossViews, true)} gross less ${formatMetricValue(data.summary.paidViewsDeducted, true)} paid impressions`}
-          iconName="overview"
-          label="Payable Views"
-          value={formatPayableViewsWithGross(data.summary)}
-        />
-        <SummaryCard
-          detail={`${formatMetricValue(data.summary.creators)} creators matched`}
-          iconName="videos"
-          label="Videos"
-          value={formatMetricValue(data.summary.videos)}
-        />
-        <SummaryCard
-          detail={`${formatMetricValue(data.summary.unknownPaidVideos)} unknown, ${formatMetricValue(data.summary.unmatchedVideos)} unmatched`}
-          iconName="creators"
-          label="Paid Checks"
-          value={formatMetricValue(data.summary.exactPaidVideos)}
-        />
-      </section>
-
-      <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-xs uppercase text-muted-foreground">
-              Creators
-            </p>
-            <h2 className="mt-2 text-lg font-semibold tracking-normal text-foreground">
-              Pay by creator
-            </h2>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {formatMetricValue(data.summary.videos)} video rows
-          </p>
-        </div>
-
-        <div className="mt-5 overflow-hidden rounded-[1.2rem] border border-white/[0.08] bg-black/[0.18]">
-          {data.creators.length > 0 ? (
-            data.creators.map((creator) => (
-              <CreatorPayRow creator={creator} key={creator.campaignCreatorId} />
-            ))
-          ) : (
-            <div className="px-4 py-10 text-sm text-muted-foreground">
-              {emptyCreatorLabel}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-xs uppercase text-muted-foreground">
-              Videos
-            </p>
-            <h2 className="mt-2 text-lg font-semibold tracking-normal text-foreground">
-              Video pay breakdown
-            </h2>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {formatMoney(data.summary.videoPay)} total video pay
-          </p>
-        </div>
-
-        {data.videos.length > 0 ? (
-          <div className="mt-5 overflow-x-auto rounded-[1.2rem] border border-white/[0.08] bg-black/[0.18]">
-            <table className="w-full min-w-[980px] border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-white/[0.08] text-[0.62rem] uppercase text-muted-foreground">
-                  <th className="px-3 py-3 font-medium">Video</th>
-                  <th className="px-3 py-3 font-medium">Creator</th>
-                  <th className="px-3 py-3 font-medium">Gross</th>
-                  <th className="px-3 py-3 font-medium">Paid Impressions</th>
-                  <th className="px-3 py-3 font-medium">Payable</th>
-                  <th className="px-3 py-3 font-medium">Fixed</th>
-                  <th className="px-3 py-3 font-medium">CPM Pay</th>
-                  <th className="px-3 py-3 font-medium">Pay</th>
-                  <th className="px-3 py-3 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.videos.map((video) => (
-                  <tr
-                    className="border-b border-white/[0.05] align-top last:border-b-0"
-                    key={`${video.sourceVideoId}-${video.campaignCreatorId}`}
-                  >
-                    <td className="max-w-[24rem] px-3 py-3">
-                      <a
-                        className="block truncate font-medium text-foreground transition hover:text-[#B9FF95]"
-                        href={video.videoUrl}
-                        rel="noreferrer"
-                        target="_blank"
-                        title={getVideoTitle(video)}
-                      >
-                        {getVideoTitle(video)}
-                      </a>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {formatDateLabel(video.publishedAt ?? video.createdAt)}
-                      </p>
-                    </td>
-                    <td className="px-3 py-3 text-muted-foreground">
-                      {video.creatorName}
-                    </td>
-                    <td className="px-3 py-3 text-foreground">
-                      {formatMetricValue(video.grossViews, true)}
-                    </td>
-                    <td className="px-3 py-3 text-muted-foreground">
-                      {formatMetricValue(video.paidViewsDeducted, true)}
-                    </td>
-                    <td className="px-3 py-3 text-muted-foreground">
-                      {formatPayableViewsWithGross(video)}
-                    </td>
-                    <td className="px-3 py-3 text-muted-foreground">
-                      {formatMoney(video.fixedFeePerVideo, video.currency)}
-                    </td>
-                    <td className="px-3 py-3 text-muted-foreground">
-                      {formatMoney(video.cpmPay, video.currency)}
-                    </td>
-                    <td className="px-3 py-3 font-semibold text-foreground">
-                      {formatMoney(video.videoPay, video.currency)}
-                    </td>
-                    <td className="px-3 py-3 text-muted-foreground">
-                      {getPaidStatusLabel(video)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="mt-5">
-            <EmptyState label="No video pay rows for the selected campaign and date range." />
-          </div>
-        )}
-      </section>
+      <UgcPayClient
+        creators={data.creators}
+        emptyCreatorLabel={emptyCreatorLabel}
+        endDate={data.endDate}
+        organizationSlug={organizationSlug}
+        payMode={data.payMode}
+        startDate={data.startDate}
+        summary={data.summary}
+      />
     </div>
+  );
+}
+
+export default async function UgcPayPage({
+  params,
+  searchParams,
+}: UgcPayPageProps) {
+  const { organizationSlug } = await params;
+  const resolvedSearchParams = await searchParams;
+
+  return (
+    <Suspense fallback={<UgcPayLoading />}>
+      <UgcPayPageReport
+        organizationSlug={organizationSlug}
+        resolvedSearchParams={resolvedSearchParams}
+      />
+    </Suspense>
   );
 }

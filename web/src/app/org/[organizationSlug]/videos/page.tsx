@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { getViewsBaseEnv, hasViewsBaseEnv } from "@/lib/server-env";
 import { CampaignBadge } from "@/components/org-dashboard/campaign-badge";
 import {
   formatPlatformLabel,
@@ -9,6 +8,7 @@ import {
 } from "@/server/dashboard/filters";
 import { trackVideoForOrganization } from "@/server/videos/mutations";
 import { getOrganizationImportedVideosPage } from "@/server/videos/queries";
+import { getViewsBaseCredentials } from "@/server/settings/managed-secrets";
 import { syncViewsBaseCampaignForOrganization } from "@/server/viewsbase/sync";
 
 export const dynamic = "force-dynamic";
@@ -279,9 +279,10 @@ export default async function VideosPage({
     organizationSlug,
     page: requestedPage,
   });
-  const hasViewsBaseIntegration = hasViewsBaseEnv();
-  const defaultViewsBaseOrgSlug = hasViewsBaseIntegration
-    ? getViewsBaseEnv().VIEWSBASE_DEFAULT_ORG_SLUG ?? ""
+  const viewsBaseCredentials = await getViewsBaseCredentials(organizationSlug);
+  const hasViewsBaseIntegration = viewsBaseCredentials.configured;
+  const defaultViewsBaseOrgSlug = viewsBaseCredentials.configured
+    ? viewsBaseCredentials.value.defaultOrgSlug ?? ""
     : "";
   const defaultCampaignId =
     videosPage.campaignOptions.length === 1

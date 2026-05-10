@@ -2,6 +2,7 @@ import {
   CampaignRole,
   CreatorStatus,
   CreatorDealPaidTrafficMetric,
+  CreatorDealPerVideoCapScope,
   PayoutStatus,
   Platform,
 } from "@/lib/prisma-shim";
@@ -67,23 +68,26 @@ type CampaignCreatorWorkspaceRow = {
       platform: Platform;
     }>;
   };
-  deal: {
-    id: string;
-    currency: string;
-    effectiveStartDate: Date;
-    effectiveEndDate: Date | null;
-    fixedFee: number | null;
-    fixedFeeRecognitionDate: Date | null;
-    fixedFeePerVideo: number | null;
-    cpmAmount: number | null;
-    paidTrafficMetric: CreatorDealPaidTrafficMetric;
-    deductPaidTraffic: boolean;
-    viewCapPerVideo: number | null;
-    viewWindowDays: number | null;
-    payoutCapPerVideo: number | null;
-    payoutCapTotal: number | null;
-    notes: string | null;
-  } | null;
+  deals: CampaignCreatorWorkspaceDealRow[];
+};
+
+type CampaignCreatorWorkspaceDealRow = {
+  id: string;
+  currency: string;
+  effectiveStartDate: Date;
+  effectiveEndDate: Date | null;
+  fixedFee: number | null;
+  fixedFeeRecognitionDate: Date | null;
+  fixedFeePerVideo: number | null;
+  cpmAmount: number | null;
+  paidTrafficMetric: CreatorDealPaidTrafficMetric;
+  deductPaidTraffic: boolean;
+  viewCapPerVideo: number | null;
+  viewWindowDays: number | null;
+  payoutCapPerVideo: number | null;
+  perVideoCapScope: CreatorDealPerVideoCapScope;
+  payoutCapTotal: number | null;
+  notes: string | null;
 };
 
 type ResolvedCampaignCreatorDeal = {
@@ -100,6 +104,7 @@ type ResolvedCampaignCreatorDeal = {
   viewCapPerVideo: number | null;
   viewWindowDays: number;
   payoutCapPerVideo: number;
+  perVideoCapScope: CreatorDealPerVideoCapScope;
   payoutCapTotal: number | null;
   notes: string | null;
   isDefault: boolean;
@@ -420,7 +425,7 @@ function normalizeMoney(value: number) {
 }
 
 function resolveCampaignCreatorDeal(
-  deal: CampaignCreatorWorkspaceRow["deal"],
+  deal: CampaignCreatorWorkspaceDealRow | null,
   fallbackStartDate: Date,
 ): ResolvedCampaignCreatorDeal {
   return {
@@ -438,18 +443,45 @@ function resolveCampaignCreatorDeal(
     viewWindowDays: Math.max(deal?.viewWindowDays ?? DEFAULT_DEAL_VIEW_WINDOW_DAYS, 1),
     payoutCapPerVideo:
       deal?.payoutCapPerVideo ?? DEFAULT_DEAL_PAYOUT_CAP_PER_VIDEO,
+    perVideoCapScope: deal?.perVideoCapScope ?? CreatorDealPerVideoCapScope.CPM,
     payoutCapTotal: deal?.payoutCapTotal ?? null,
     notes: deal?.notes ?? null,
     isDefault: deal == null,
   };
 }
 
+function getCampaignCreatorDealActiveInRange(
+  deals: CampaignCreatorWorkspaceDealRow[],
+  start: Date,
+  end: Date,
+) {
+  return (
+    deals.find((deal) => {
+      const dealStart = startOfUtcDay(deal.effectiveStartDate);
+      const dealEnd = deal.effectiveEndDate
+        ? startOfUtcDay(deal.effectiveEndDate)
+        : null;
+
+      return dealStart <= end && (!dealEnd || dealEnd >= start);
+    }) ?? null
+  );
+}
+
 function getPerVideoPayableViewCap(deal: ResolvedCampaignCreatorDeal) {
+  if (deal.perVideoCapScope === CreatorDealPerVideoCapScope.NONE) {
+    return null;
+  }
+
   if (deal.cpmAmount <= 0) {
     return null;
   }
 
-  return (deal.payoutCapPerVideo / deal.cpmAmount) * 1_000;
+  const cpmCap =
+    deal.perVideoCapScope === CreatorDealPerVideoCapScope.TOTAL
+      ? Math.max(deal.payoutCapPerVideo - (deal.fixedFeePerVideo ?? 0), 0)
+      : deal.payoutCapPerVideo;
+
+  return (cpmCap / deal.cpmAmount) * 1_000;
 }
 
 function getPaidMetricForDeal(): "impressions" {
@@ -480,6 +512,7 @@ function getEffectiveDealForVideo(
     cpmAmount: VIEWSBASE_CPM_AMOUNT,
     deductPaidTraffic: false,
     payoutCapPerVideo: VIEWSBASE_PAYOUT_CAP_PER_VIDEO,
+    perVideoCapScope: CreatorDealPerVideoCapScope.CPM,
   };
 }
 
@@ -763,6 +796,8 @@ async function getVideoSnapshotsForRange(args: {
 export async function getOrganizationPayoutDashboardData(args: {
   organizationSlug: string;
   searchParams?: DashboardSearchParams;
+  includeAdSpend?: boolean;
+  includeSingularOverlay?: boolean;
 }): Promise<OrganizationPayoutDashboardData> {
   const membership = await requireOrganizationMembership(args.organizationSlug);
   const campaignOptions = (await getAccessibleCampaignOptionsForMembership(membership)).map(
@@ -850,7 +885,10 @@ export async function getOrganizationPayoutDashboardData(args: {
           },
         },
       },
-      deal: {
+      deals: {
+        where: {
+          organizationId: membership.organizationId,
+        },
         select: {
           id: true,
           currency: true,
@@ -865,9 +903,18 @@ export async function getOrganizationPayoutDashboardData(args: {
           viewCapPerVideo: true,
           viewWindowDays: true,
           payoutCapPerVideo: true,
+          perVideoCapScope: true,
           payoutCapTotal: true,
           notes: true,
         },
+        orderBy: [
+          {
+            effectiveStartDate: "asc",
+          },
+          {
+            createdAt: "asc",
+          },
+        ],
       },
     },
     orderBy: [
@@ -955,15 +1002,25 @@ export async function getOrganizationPayoutDashboardData(args: {
   });
 
   const [dailyAdMetrics, singularOverlay] = await Promise.all([
-    getDailyAdMetricsForOrganization({
-      organizationId: membership.organizationId,
-      startDate,
-      endDate,
-    }),
-    getTikTokSingularOverlay({
-      startDate,
-      endDate,
-    }),
+    args.includeAdSpend === false
+      ? {
+          rows: [] as DailyAdMetricRow[],
+          warnings: [] as string[],
+        }
+      : getDailyAdMetricsForOrganization({
+          organizationId: membership.organizationId,
+          startDate,
+          endDate,
+        }),
+    args.includeSingularOverlay === false
+      ? {
+          rows: [],
+          warnings: [],
+        }
+      : getTikTokSingularOverlay({
+          startDate,
+          endDate,
+        }),
   ]);
 
   const warnings = [
@@ -1097,10 +1154,15 @@ export async function getOrganizationPayoutDashboardData(args: {
         canManageOrganization(membership.role) ||
         campaignCreator.campaign.ownerUserId === membership.userId ||
         canManageCampaign(campaignCreator.campaign.memberships[0]?.role ?? CampaignRole.MEMBER);
-      const resolvedDeal = resolveCampaignCreatorDeal(campaignCreator.deal, start);
+      const activeDeal = getCampaignCreatorDealActiveInRange(
+        campaignCreator.deals,
+        start,
+        end,
+      );
+      const resolvedDeal = resolveCampaignCreatorDeal(activeDeal, start);
       const currency = resolvedDeal.currency;
       const creatorWarnings = new Set<string>();
-      const termStart = campaignCreator.deal
+      const termStart = activeDeal
         ? startOfUtcDay(resolvedDeal.effectiveStartDate)
         : addUtcDays(start, -(resolvedDeal.viewWindowDays - 1));
       const dealEffectiveEnd = resolvedDeal.effectiveEndDate
@@ -1392,7 +1454,7 @@ export async function getOrganizationPayoutDashboardData(args: {
         creatorName: campaignCreator.creator.displayName,
         tiktokHandle: getTikTokHandle(campaignCreator),
         canEditDeal,
-        hasCustomDeal: campaignCreator.deal != null,
+        hasCustomDeal: activeDeal != null,
         currency,
         deal: resolvedDeal,
         grossViews: creatorGrossViews,

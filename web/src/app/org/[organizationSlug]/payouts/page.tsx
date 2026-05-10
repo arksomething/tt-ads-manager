@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { type ReactNode } from "react";
 
+import { CreatorDealPerVideoCapScope } from "@/lib/prisma-shim";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
 import {
   deleteCampaignCreatorDealForOrganization,
@@ -81,6 +82,21 @@ function formatMoney(value: number, currency = "USD") {
 
 function formatOptionalMoney(value: number | null | undefined, currency = "USD") {
   return value == null ? "None" : formatMoney(value, currency);
+}
+
+function formatPerVideoCapLabel(args: {
+  payoutCapPerVideo: number;
+  perVideoCapScope: CreatorDealPerVideoCapScope;
+  currency: string;
+}) {
+  switch (args.perVideoCapScope) {
+    case CreatorDealPerVideoCapScope.NONE:
+      return "No per-video cap";
+    case CreatorDealPerVideoCapScope.TOTAL:
+      return `${formatMoney(args.payoutCapPerVideo, args.currency)} total/video`;
+    default:
+      return `${formatMoney(args.payoutCapPerVideo, args.currency)} CPM/video`;
+  }
 }
 
 function formatMetricValue(value: number, compact = false) {
@@ -254,6 +270,8 @@ export default async function PayoutsPage({
           viewWindowDays: getTrimmedFormValue(formData, "viewWindowDays") || undefined,
           payoutCapPerVideo:
             getTrimmedFormValue(formData, "payoutCapPerVideo") || undefined,
+          perVideoCapScope:
+            getTrimmedFormValue(formData, "perVideoCapScope") || undefined,
           payoutCapTotal: getTrimmedFormValue(formData, "payoutCapTotal") || undefined,
           notes: getTrimmedFormValue(formData, "notes") || undefined,
         },
@@ -611,7 +629,11 @@ export default async function PayoutsPage({
                         : "No total cap"
                     }
                     label="Caps"
-                    value={`${formatOptionalMoney(row.deal.payoutCapPerVideo, row.currency)}/video`}
+                    value={formatPerVideoCapLabel({
+                      currency: row.currency,
+                      payoutCapPerVideo: row.deal.payoutCapPerVideo,
+                      perVideoCapScope: row.deal.perVideoCapScope,
+                    })}
                   />
 
                   <div className="flex items-center lg:justify-end">
@@ -781,6 +803,24 @@ export default async function PayoutsPage({
                             step="0.01"
                             type="number"
                           />
+                        </FieldLabel>
+                        <FieldLabel label="Cap Scope">
+                          <select
+                            className={dealInputClassName}
+                            defaultValue={row.deal.perVideoCapScope}
+                            disabled={!row.canEditDeal}
+                            name="perVideoCapScope"
+                          >
+                            <option value={CreatorDealPerVideoCapScope.CPM}>
+                              Cap CPM only
+                            </option>
+                            <option value={CreatorDealPerVideoCapScope.TOTAL}>
+                              Cap total video pay
+                            </option>
+                            <option value={CreatorDealPerVideoCapScope.NONE}>
+                              No per-video cap
+                            </option>
+                          </select>
                         </FieldLabel>
                         <FieldLabel label="Total Payout Cap">
                           <input

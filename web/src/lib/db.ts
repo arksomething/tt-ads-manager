@@ -7,6 +7,10 @@ import { getSupabaseDatabaseEnv } from "@/lib/server-env";
 
 type RecordValue = Record<string, unknown>;
 
+type DynamicValue = ReturnType<typeof JSON.parse>;
+type DelegateResult = DynamicValue;
+type SupabaseQuery = DynamicValue;
+
 type QueryArgs = {
   by?: string[];
   data?: RecordValue;
@@ -50,18 +54,18 @@ type ModelMeta = {
 };
 
 type DbDelegate = {
-  aggregate: (args: QueryArgs) => Promise<any>;
+  aggregate: (args: QueryArgs) => Promise<DelegateResult>;
   count: (args?: QueryArgs) => Promise<number>;
-  create: (args: QueryArgs) => Promise<any>;
-  delete: (args: QueryArgs) => Promise<any>;
+  create: (args: QueryArgs) => Promise<DelegateResult>;
+  delete: (args: QueryArgs) => Promise<DelegateResult>;
   deleteMany: (args: QueryArgs) => Promise<{ count: number }>;
-  findFirst: (args?: QueryArgs) => Promise<any | null>;
-  findMany: (args?: QueryArgs) => Promise<any[]>;
-  findUnique: (args?: QueryArgs) => Promise<any | null>;
-  groupBy: (args: QueryArgs) => Promise<any[]>;
-  update: (args: QueryArgs) => Promise<any | null>;
+  findFirst: (args?: QueryArgs) => Promise<DelegateResult | null>;
+  findMany: (args?: QueryArgs) => Promise<DelegateResult[]>;
+  findUnique: (args?: QueryArgs) => Promise<DelegateResult | null>;
+  groupBy: (args: QueryArgs) => Promise<DelegateResult[]>;
+  update: (args: QueryArgs) => Promise<DelegateResult | null>;
   updateMany: (args: QueryArgs) => Promise<{ count: number }>;
-  upsert: (args: QueryArgs & { create?: RecordValue }) => Promise<any>;
+  upsert: (args: QueryArgs & { create?: RecordValue }) => Promise<DelegateResult>;
 };
 
 type ModelDelegates = {
@@ -432,7 +436,7 @@ function escapeLikePattern(value: string) {
 }
 
 function applyPushdownEquals(
-  query: any,
+  query: SupabaseQuery,
   fieldName: string,
   field: FieldMeta | undefined,
   value: unknown,
@@ -452,7 +456,7 @@ function applyPushdownEquals(
 }
 
 function applyPushdownScalarCondition(
-  query: any,
+  query: SupabaseQuery,
   modelName: ModelName,
   fieldName: string,
   condition: unknown,
@@ -524,7 +528,7 @@ function applyPushdownScalarCondition(
 }
 
 function applyPushdownWhere(
-  query: any,
+  query: SupabaseQuery,
   modelName: ModelName,
   where: unknown,
 ) {
@@ -603,7 +607,7 @@ async function tryExecuteFindManyViaSupabase(
     return null;
   }
 
-  let query: any = client.from(getModelMeta(modelName).table).select(selectColumns);
+  let query = client.from(getModelMeta(modelName).table).select(selectColumns) as SupabaseQuery;
   query = applyPushdownWhere(query, modelName, args?.where);
 
   if (!query) {
@@ -650,9 +654,9 @@ async function tryExecuteCountViaSupabase(
     return null;
   }
 
-  let query: any = client
+  let query = client
     .from(getModelMeta(modelName).table)
-    .select("*", { count: "exact", head: true });
+    .select("*", { count: "exact", head: true }) as SupabaseQuery;
   query = applyPushdownWhere(query, modelName, args?.where);
 
   if (!query) {

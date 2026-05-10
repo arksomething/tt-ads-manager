@@ -31,6 +31,10 @@ type TeamPageProps = {
   searchParams: Promise<DashboardSearchParams>;
 };
 
+type PendingOrganizationInvitation = Awaited<
+  ReturnType<typeof getOrganizationPendingInvitations>
+>[number];
+
 function getSearchParamValue(
   searchParams: DashboardSearchParams,
   key: string,
@@ -536,25 +540,29 @@ export default async function OrganizationTeamPage({
                               </div>
                             ) : invitation.campaignAccess.length > 0 ? (
                               <div className="flex max-w-2xl flex-wrap gap-2">
-                                {invitation.campaignAccess.map((campaignAccess: any) => (
-                                  <div
-                                    key={`${invitation.id}-${campaignAccess.id}`}
-                                    className="flex max-w-full items-center gap-2"
-                                  >
-                                    <CampaignBadge
-                                      campaignId={campaignAccess.id}
-                                      compact
-                                      label={campaignAccess.name}
-                                    />
-                                    <span
-                                      className={`inline-flex rounded-full border px-2 py-0.5 text-[0.56rem] font-medium uppercase tracking-[0.16em] ${getCampaignRoleBadgeClass(
-                                        campaignAccess.role,
-                                      )}`}
+                                {invitation.campaignAccess.map(
+                                  (
+                                    campaignAccess: PendingOrganizationInvitation["campaignAccess"][number],
+                                  ) => (
+                                    <div
+                                      key={`${invitation.id}-${campaignAccess.id}`}
+                                      className="flex max-w-full items-center gap-2"
                                     >
-                                      {formatRoleLabel(campaignAccess.role)}
-                                    </span>
-                                  </div>
-                                ))}
+                                      <CampaignBadge
+                                        campaignId={campaignAccess.id}
+                                        compact
+                                        label={campaignAccess.name}
+                                      />
+                                      <span
+                                        className={`inline-flex rounded-full border px-2 py-0.5 text-[0.56rem] font-medium uppercase tracking-[0.16em] ${getCampaignRoleBadgeClass(
+                                          campaignAccess.role,
+                                        )}`}
+                                      >
+                                        {formatRoleLabel(campaignAccess.role)}
+                                      </span>
+                                    </div>
+                                  ),
+                                )}
                               </div>
                             ) : (
                               <span className="text-sm text-muted-foreground">

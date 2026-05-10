@@ -1,8 +1,8 @@
 import {
+  CreatorDealPaidTrafficMetric,
   CreatorStatus,
   CreatorDealPerVideoCapScope,
   Platform,
-  type CreatorDealPaidTrafficMetric,
 } from "@/lib/prisma-shim";
 
 import { prisma } from "@/lib/db";
@@ -18,12 +18,20 @@ import {
   type ViewTallyListItem,
 } from "@/server/videos/queries";
 
+import {
+  applyUgcPayVideoDealOverride,
+  calculateUgcPayVideoAmounts,
+  getUgcPayPerVideoGrossViewCap,
+  normalizeMoney,
+  type UgcPayGainedViewCapContext,
+} from "./calculations";
+
 const DEFAULT_DEAL_CURRENCY = "USD";
 const DEFAULT_DEAL_CPM_AMOUNT = 1;
 const DEFAULT_DEAL_VIEW_WINDOW_DAYS = 30;
 const DEFAULT_DEAL_PAYOUT_CAP_PER_VIDEO = 100;
 const DEFAULT_GLOBAL_VIEW_WINDOW_DAYS = 7;
-const DEFAULT_REPORT_TIME_ZONE = "America/New_York";
+const DEFAULT_REPORT_TIME_ZONE = "UTC";
 const VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD = 100;
 const GAINED_VIEW_CAP_CONTEXT_BATCH_SIZE = 150;
 const UGC_PAY_CREATOR_QUERY_CONCURRENCY = 2;
@@ -50,24 +58,40 @@ type CampaignCreatorUgcPayRow = {
       platform: Platform;
     }>;
   };
-  deal: {
-    id: string;
-    currency: string;
-    effectiveStartDate: Date;
-    effectiveEndDate: Date | null;
-    fixedFee: number | null;
-    fixedFeeRecognitionDate: Date | null;
-    fixedFeePerVideo: number | null;
-    cpmAmount: number | null;
-    paidTrafficMetric: CreatorDealPaidTrafficMetric;
-    deductPaidTraffic: boolean;
-    viewCapPerVideo: number | null;
-    viewWindowDays: number | null;
-    payoutCapPerVideo: number | null;
-    perVideoCapScope: CreatorDealPerVideoCapScope;
-    payoutCapTotal: number | null;
-    notes: string | null;
-  } | null;
+  deals: CampaignCreatorDealUgcPayRow[];
+};
+
+type CampaignCreatorDealUgcPayRow = {
+  id: string;
+  currency: string;
+  effectiveStartDate: Date;
+  effectiveEndDate: Date | null;
+  fixedFee: number | null;
+  fixedFeeRecognitionDate: Date | null;
+  fixedFeePerVideo: number | null;
+  cpmAmount: number | null;
+  paidTrafficMetric: CreatorDealPaidTrafficMetric;
+  deductPaidTraffic: boolean;
+  viewCapPerVideo: number | null;
+  viewWindowDays: number | null;
+  payoutCapPerVideo: number | null;
+  perVideoCapScope: CreatorDealPerVideoCapScope;
+  payoutCapTotal: number | null;
+  notes: string | null;
+};
+
+type CampaignCreatorVideoDealUgcPayRow = {
+  id: string;
+  campaignCreatorId: string;
+  sourceVideoId: string;
+  fixedFeePerVideo: number | null;
+  cpmAmount: number | null;
+  paidTrafficMetric: CreatorDealPaidTrafficMetric;
+  deductPaidTraffic: boolean;
+  viewCapPerVideo: number | null;
+  payoutCapPerVideo: number | null;
+  perVideoCapScope: CreatorDealPerVideoCapScope;
+  notes: string | null;
 };
 
 type ResolvedUgcPayDeal = {
@@ -79,6 +103,7 @@ type ResolvedUgcPayDeal = {
   fixedFeeRecognitionDate: Date | null;
   fixedFeePerVideo: number | null;
   cpmAmount: number;
+  paidTrafficMetric: CreatorDealPaidTrafficMetric;
   deductPaidTraffic: boolean;
   viewCapPerVideo: number | null;
   viewWindowDays: number;
@@ -92,6 +117,8 @@ type ResolvedUgcPayDeal = {
 type CreatorAccumulator = {
   campaignCreator: CampaignCreatorUgcPayRow;
   deal: ResolvedUgcPayDeal;
+  defaultDeal: ResolvedUgcPayDeal;
+  dealPeriods: ResolvedUgcPayDeal[];
   hasCustomDeal: boolean;
   fixedPay: number;
   grossViews: number;
@@ -102,6 +129,16 @@ type CreatorAccumulator = {
   exactPaidVideoCount: number;
   videoCapReached: boolean;
   creatorTotalCapApplied: boolean;
+  videoDealOverrideCount: number;
+  dealTotals: Map<
+    string,
+    {
+      deal: ResolvedUgcPayDeal;
+      fixedPay: number;
+      videoPayBeforeCreatorCap: number;
+      videos: UgcPayVideoRow[];
+    }
+  >;
   videos: UgcPayVideoRow[];
 };
 
@@ -118,10 +155,7 @@ type LocalVideoMetricsSnapshotRow = {
   views: number | null;
 };
 
-type GainedViewCapContext = {
-  grossViewsBeforePeriod: number;
-  grossViewsAtPeriodEnd: number;
-};
+type GainedViewCapContext = UgcPayGainedViewCapContext;
 
 export type UgcPayVideoRow = {
   campaignCreatorId: string;
@@ -141,6 +175,14 @@ export type UgcPayVideoRow = {
   payableViews: number;
   fixedFeePerVideo: number;
   cpmAmount: number;
+  paidTrafficMetric: CreatorDealPaidTrafficMetric;
+  deductPaidTraffic: boolean;
+  viewCapPerVideo: number | null;
+  payoutCapPerVideo: number;
+  perVideoCapScope: CreatorDealPerVideoCapScope;
+  hasVideoDealOverride: boolean;
+  videoDealId: string | null;
+  videoDealNotes: string | null;
   cpmPay: number;
   videoPay: number;
   viewCapReached: boolean;
@@ -159,6 +201,8 @@ export type UgcPayCreatorRow = {
   hasCustomDeal: boolean;
   currency: string;
   deal: ResolvedUgcPayDeal;
+  defaultDeal: ResolvedUgcPayDeal;
+  dealPeriods: ResolvedUgcPayDeal[];
   grossViews: number;
   paidViewsDeducted: number;
   payableViews: number;
@@ -168,6 +212,7 @@ export type UgcPayCreatorRow = {
   videoCount: number;
   exactPaidVideoCount: number;
   unknownPaidVideoCount: number;
+  videoDealOverrideCount: number;
   videoCapReached: boolean;
   creatorTotalCapApplied: boolean;
   videos: UgcPayVideoRow[];
@@ -203,6 +248,7 @@ export type OrganizationUgcPayData = {
     exactPaidVideos: number;
     unknownPaidVideos: number;
     unmatchedVideos: number;
+    videoDealOverrides: number;
   };
   creators: UgcPayCreatorRow[];
   videos: UgcPayVideoRow[];
@@ -278,9 +324,11 @@ function addDateOnlyMonths(value: string, months: number) {
   return toDateOnlyString(new Date(Date.UTC(targetYear, targetMonth, targetDay)));
 }
 
-function getReportTimeZone() {
+function getReportTimeZone(overrideTimeZone?: string | null) {
   const configuredTimeZone =
-    process.env.UGC_PAY_REPORT_TIME_ZONE?.trim() || DEFAULT_REPORT_TIME_ZONE;
+    overrideTimeZone?.trim() ||
+    process.env.UGC_PAY_REPORT_TIME_ZONE?.trim() ||
+    DEFAULT_REPORT_TIME_ZONE;
 
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: configuredTimeZone }).format(
@@ -512,10 +560,6 @@ function getSelectedGlobalViewWindowDays(
   }
 
   return DEFAULT_GLOBAL_VIEW_WINDOW_DAYS;
-}
-
-function normalizeMoney(value: number) {
-  return Number(value.toFixed(2));
 }
 
 function normalizeHandle(value: string | null | undefined) {
@@ -825,7 +869,7 @@ async function getPerCreatorViewTallyRows(args: {
 }
 
 function isDealActiveInRange(
-  deal: NonNullable<CampaignCreatorUgcPayRow["deal"]>,
+  deal: CampaignCreatorDealUgcPayRow,
   start: Date,
   end: Date,
 ) {
@@ -835,8 +879,24 @@ function isDealActiveInRange(
   return dealStart <= end && (!dealEnd || dealEnd >= start);
 }
 
+function isDealActiveOnDate(deal: CampaignCreatorDealUgcPayRow, date: Date) {
+  const targetDate = startOfUtcDay(date);
+  const dealStart = startOfUtcDay(deal.effectiveStartDate);
+  const dealEnd = deal.effectiveEndDate ? startOfUtcDay(deal.effectiveEndDate) : null;
+
+  return dealStart <= targetDate && (!dealEnd || dealEnd >= targetDate);
+}
+
+function getActiveDealsInRange(
+  deals: CampaignCreatorDealUgcPayRow[],
+  start: Date,
+  end: Date,
+) {
+  return deals.filter((deal) => isDealActiveInRange(deal, start, end));
+}
+
 function resolveUgcPayDeal(
-  deal: CampaignCreatorUgcPayRow["deal"],
+  deal: CampaignCreatorDealUgcPayRow | null,
   fallbackStartDate: Date,
 ): ResolvedUgcPayDeal {
   return {
@@ -848,6 +908,7 @@ function resolveUgcPayDeal(
     fixedFeeRecognitionDate: deal?.fixedFeeRecognitionDate ?? null,
     fixedFeePerVideo: deal?.fixedFeePerVideo ?? null,
     cpmAmount: deal?.cpmAmount ?? DEFAULT_DEAL_CPM_AMOUNT,
+    paidTrafficMetric: deal?.paidTrafficMetric ?? CreatorDealPaidTrafficMetric.IMPRESSIONS,
     deductPaidTraffic: deal?.deductPaidTraffic ?? true,
     viewCapPerVideo: deal?.viewCapPerVideo ?? null,
     viewWindowDays: Math.max(deal?.viewWindowDays ?? DEFAULT_DEAL_VIEW_WINDOW_DAYS, 1),
@@ -858,6 +919,10 @@ function resolveUgcPayDeal(
     notes: deal?.notes ?? null,
     isDefault: deal == null,
   };
+}
+
+function getVideoDealKey(campaignCreatorId: string, sourceVideoId: string) {
+  return `${campaignCreatorId}::${sourceVideoId}`;
 }
 
 function getFixedPayForRange(deal: ResolvedUgcPayDeal, start: Date, end: Date) {
@@ -872,45 +937,31 @@ function getFixedPayForRange(deal: ResolvedUgcPayDeal, start: Date, end: Date) {
   return recognitionDate >= start && recognitionDate <= end ? deal.fixedFee : 0;
 }
 
-function getPerVideoGrossViewCap(args: {
-  deal: ResolvedUgcPayDeal;
-  fixedFeePerVideo: number;
-}) {
-  const viewCaps: number[] = [];
-
-  if (typeof args.deal.viewCapPerVideo === "number") {
-    viewCaps.push(args.deal.viewCapPerVideo);
-  }
-
-  if (args.deal.cpmAmount > 0) {
-    if (args.deal.perVideoCapScope === CreatorDealPerVideoCapScope.CPM) {
-      viewCaps.push((args.deal.payoutCapPerVideo / args.deal.cpmAmount) * 1_000);
-    } else if (args.deal.perVideoCapScope === CreatorDealPerVideoCapScope.TOTAL) {
-      const cpmCap = Math.max(
-        args.deal.payoutCapPerVideo - args.fixedFeePerVideo,
-        0,
-      );
-      viewCaps.push((cpmCap / args.deal.cpmAmount) * 1_000);
-    }
-  }
-
-  return viewCaps.length > 0 ? Math.min(...viewCaps) : null;
+function getDealDateForVideo(
+  row: ViewTallyListItem,
+  reportTimeZone: string,
+  fallbackStartDate: Date,
+) {
+  const postedDateOnly = getVideoPostedDateOnly(row, reportTimeZone);
+  return postedDateOnly ? (parseDateOnly(postedDateOnly) ?? fallbackStartDate) : fallbackStartDate;
 }
 
-function getGrossViewsInsideCap(args: {
-  grossViewsInPeriod: number;
-  viewCap: number | null;
-  context: GainedViewCapContext | null;
+function resolveDealForVideo(args: {
+  campaignCreator: CampaignCreatorUgcPayRow;
+  row: ViewTallyListItem;
+  reportTimeZone: string;
+  fallbackStartDate: Date;
 }) {
-  if (!args.context || typeof args.viewCap !== "number") {
-    return args.grossViewsInPeriod;
-  }
-
-  return Math.max(
-    Math.min(args.context.grossViewsAtPeriodEnd, args.viewCap) -
-      Math.min(args.context.grossViewsBeforePeriod, args.viewCap),
-    0,
+  const dealDate = getDealDateForVideo(
+    args.row,
+    args.reportTimeZone,
+    args.fallbackStartDate,
   );
+  const activeDeal =
+    args.campaignCreator.deals.find((deal) => isDealActiveOnDate(deal, dealDate)) ??
+    null;
+
+  return resolveUgcPayDeal(activeDeal, args.fallbackStartDate);
 }
 
 function getVideoPostedDateOnly(row: ViewTallyListItem, timeZone: string) {
@@ -1317,6 +1368,7 @@ function calculateVideoPay(args: {
   row: ViewTallyListItem;
   campaignCreator: CampaignCreatorUgcPayRow;
   deal: ResolvedUgcPayDeal;
+  videoDealOverride: CampaignCreatorVideoDealUgcPayRow | null;
   includeFixedFeePerVideo: boolean;
   gainedViewCapContext: GainedViewCapContext | null;
   payMode: UgcPayMode;
@@ -1325,48 +1377,15 @@ function calculateVideoPay(args: {
   const fixedFeePerVideo = args.includeFixedFeePerVideo
     ? (args.deal.fixedFeePerVideo ?? 0)
     : 0;
-  const perVideoGrossViewCap = getPerVideoGrossViewCap({
+  const amountResult = calculateUgcPayVideoAmounts({
+    grossViews,
+    paidStatus: args.row.paidStatus,
+    paidViews: args.row.paidViews ?? 0,
     deal: args.deal,
     fixedFeePerVideo,
+    gainedViewCapContext: args.gainedViewCapContext,
+    payMode: args.payMode,
   });
-  const grossViewsInsideCap =
-    args.payMode === "gained"
-      ? getGrossViewsInsideCap({
-          grossViewsInPeriod: grossViews,
-          viewCap: perVideoGrossViewCap,
-          context: args.gainedViewCapContext,
-        })
-      : grossViews;
-  const paidViewsDeducted = Math.min(
-    args.deal.deductPaidTraffic && args.row.paidStatus === "yes"
-      ? (args.row.paidViews ?? 0)
-      : 0,
-    grossViewsInsideCap,
-  );
-  const uncappedPayableViews = Math.max(grossViewsInsideCap - paidViewsDeducted, 0);
-  let payableViews = uncappedPayableViews;
-
-  if (typeof args.deal.viewCapPerVideo === "number") {
-    payableViews = Math.min(payableViews, args.deal.viewCapPerVideo);
-  }
-
-  const cpmPay =
-    args.deal.cpmAmount > 0 ? (payableViews / 1_000) * args.deal.cpmAmount : 0;
-  let cappedCpmPay = cpmPay;
-  let videoPay = fixedFeePerVideo + cpmPay;
-
-  if (args.deal.perVideoCapScope === CreatorDealPerVideoCapScope.CPM) {
-    cappedCpmPay = Math.min(cpmPay, args.deal.payoutCapPerVideo);
-    videoPay = fixedFeePerVideo + cappedCpmPay;
-  } else if (args.deal.perVideoCapScope === CreatorDealPerVideoCapScope.TOTAL) {
-    videoPay = Math.min(videoPay, args.deal.payoutCapPerVideo);
-    cappedCpmPay = Math.max(videoPay - fixedFeePerVideo, 0);
-  }
-
-  const viewCapReached =
-    grossViewsInsideCap < grossViews ||
-    payableViews < uncappedPayableViews ||
-    videoPay < fixedFeePerVideo + cpmPay;
 
   return {
     campaignCreatorId: args.campaignCreator.id,
@@ -1382,13 +1401,21 @@ function calculateVideoPay(args: {
     publishedAt: args.row.publishedAt,
     createdAt: args.row.createdAt,
     grossViews,
-    paidViewsDeducted,
-    payableViews,
+    paidViewsDeducted: amountResult.paidViewsDeducted,
+    payableViews: amountResult.payableViews,
     fixedFeePerVideo,
-    cpmAmount: args.deal.cpmAmount,
-    cpmPay: normalizeMoney(cappedCpmPay),
-    videoPay: normalizeMoney(videoPay),
-    viewCapReached,
+    cpmAmount: amountResult.cpmAmount,
+    paidTrafficMetric: args.deal.paidTrafficMetric,
+    deductPaidTraffic: args.deal.deductPaidTraffic,
+    viewCapPerVideo: args.deal.viewCapPerVideo,
+    payoutCapPerVideo: args.deal.payoutCapPerVideo,
+    perVideoCapScope: args.deal.perVideoCapScope,
+    hasVideoDealOverride: args.videoDealOverride != null,
+    videoDealId: args.videoDealOverride?.id ?? null,
+    videoDealNotes: args.videoDealOverride?.notes ?? null,
+    cpmPay: amountResult.cpmPay,
+    videoPay: amountResult.videoPay,
+    viewCapReached: amountResult.viewCapReached,
     creatorTotalCapApplied: false,
     paidStatus: args.row.paidStatus,
     matchedAdIds: args.row.matchedAdIds,
@@ -1429,17 +1456,29 @@ function getOrCreateAccumulator(args: {
     return existing;
   }
 
-  const activeCustomDeal =
-    args.campaignCreator.deal &&
-    isDealActiveInRange(args.campaignCreator.deal, args.start, args.end)
-      ? args.campaignCreator.deal
-      : null;
-  const deal = resolveUgcPayDeal(activeCustomDeal, args.start);
+  const activeCustomDeals = getActiveDealsInRange(
+    args.campaignCreator.deals,
+    args.start,
+    args.end,
+  );
+  const defaultDeal = resolveUgcPayDeal(null, args.start);
+  const dealPeriods = activeCustomDeals.map((activeDeal) =>
+    resolveUgcPayDeal(activeDeal, args.start),
+  );
+  const deal = dealPeriods[0] ?? defaultDeal;
+  const fixedDealPay = dealPeriods.map((dealPeriod) => ({
+    deal: dealPeriod,
+    fixedPay: normalizeMoney(getFixedPayForRange(dealPeriod, args.start, args.end)),
+  }));
   const accumulator: CreatorAccumulator = {
     campaignCreator: args.campaignCreator,
     deal,
-    hasCustomDeal: activeCustomDeal != null,
-    fixedPay: normalizeMoney(getFixedPayForRange(deal, args.start, args.end)),
+    defaultDeal,
+    dealPeriods,
+    hasCustomDeal: dealPeriods.length > 0,
+    fixedPay: normalizeMoney(
+      fixedDealPay.reduce((total, dealPay) => total + dealPay.fixedPay, 0),
+    ),
     grossViews: 0,
     paidViewsDeducted: 0,
     payableViews: 0,
@@ -1448,36 +1487,82 @@ function getOrCreateAccumulator(args: {
     exactPaidVideoCount: 0,
     videoCapReached: false,
     creatorTotalCapApplied: false,
+    videoDealOverrideCount: 0,
+    dealTotals: new Map(),
     videos: [],
   };
+
+  for (const dealPay of fixedDealPay) {
+    if (dealPay.fixedPay > 0) {
+      accumulator.dealTotals.set(getResolvedDealKey(dealPay.deal), {
+        deal: dealPay.deal,
+        fixedPay: dealPay.fixedPay,
+        videoPayBeforeCreatorCap: 0,
+        videos: [],
+      });
+    }
+  }
 
   args.accumulators.set(args.campaignCreator.id, accumulator);
   return accumulator;
 }
 
+function getResolvedDealKey(deal: ResolvedUgcPayDeal) {
+  return deal.id ?? "__default__";
+}
+
+function getOrCreateDealTotal(
+  accumulator: CreatorAccumulator,
+  deal: ResolvedUgcPayDeal,
+) {
+  const key = getResolvedDealKey(deal);
+  const existing = accumulator.dealTotals.get(key);
+
+  if (existing) {
+    return existing;
+  }
+
+  const total = {
+    deal,
+    fixedPay: 0,
+    videoPayBeforeCreatorCap: 0,
+    videos: [] as UgcPayVideoRow[],
+  };
+  accumulator.dealTotals.set(key, total);
+  return total;
+}
+
 function applyCreatorTotalCap(accumulator: CreatorAccumulator) {
-  const cap = accumulator.deal.payoutCapTotal;
-  const rawFixedPay = accumulator.fixedPay;
-  const rawVideoPay = accumulator.videoPayBeforeCreatorCap;
+  let fixedPay = 0;
 
-  if (typeof cap !== "number" || rawFixedPay + rawVideoPay <= cap) {
-    accumulator.fixedPay = normalizeMoney(rawFixedPay);
-    for (const video of accumulator.videos) {
-      video.videoPay = normalizeMoney(video.videoPay);
+  for (const dealTotal of accumulator.dealTotals.values()) {
+    const cap = dealTotal.deal.payoutCapTotal;
+    const rawFixedPay = dealTotal.fixedPay;
+    const rawVideoPay = dealTotal.videoPayBeforeCreatorCap;
+
+    if (typeof cap !== "number" || rawFixedPay + rawVideoPay <= cap) {
+      fixedPay += normalizeMoney(rawFixedPay);
+      for (const video of dealTotal.videos) {
+        video.videoPay = normalizeMoney(video.videoPay);
+        video.creatorTotalCapApplied = false;
+      }
+      continue;
     }
-    return;
+
+    accumulator.creatorTotalCapApplied = true;
+    const cappedFixedPay = normalizeMoney(Math.min(rawFixedPay, cap));
+    fixedPay += cappedFixedPay;
+    const availableVideoPay = Math.max(cap - cappedFixedPay, 0);
+    const scale =
+      rawVideoPay > 0 ? Math.min(availableVideoPay / rawVideoPay, 1) : 0;
+
+    for (const video of dealTotal.videos) {
+      video.videoPay = normalizeMoney(video.videoPay * scale);
+      video.creatorTotalCapApplied = true;
+    }
   }
 
-  accumulator.creatorTotalCapApplied = true;
-  accumulator.fixedPay = normalizeMoney(Math.min(rawFixedPay, cap));
-  const availableVideoPay = Math.max(cap - accumulator.fixedPay, 0);
-  const scale =
-    rawVideoPay > 0 ? Math.min(availableVideoPay / rawVideoPay, 1) : 0;
-
-  for (const video of accumulator.videos) {
-    video.videoPay = normalizeMoney(video.videoPay * scale);
-    video.creatorTotalCapApplied = true;
-  }
+  accumulator.fixedPay = normalizeMoney(fixedPay);
 }
 
 function buildCreatorRow(accumulator: CreatorAccumulator): UgcPayCreatorRow {
@@ -1498,6 +1583,8 @@ function buildCreatorRow(accumulator: CreatorAccumulator): UgcPayCreatorRow {
     hasCustomDeal: accumulator.hasCustomDeal,
     currency: accumulator.deal.currency,
     deal: accumulator.deal,
+    defaultDeal: accumulator.defaultDeal,
+    dealPeriods: accumulator.dealPeriods,
     grossViews: accumulator.grossViews,
     paidViewsDeducted: accumulator.paidViewsDeducted,
     payableViews: accumulator.payableViews,
@@ -1507,6 +1594,7 @@ function buildCreatorRow(accumulator: CreatorAccumulator): UgcPayCreatorRow {
     videoCount: accumulator.videos.length,
     exactPaidVideoCount: accumulator.exactPaidVideoCount,
     unknownPaidVideoCount: accumulator.unknownPaidVideoCount,
+    videoDealOverrideCount: accumulator.videoDealOverrideCount,
     videoCapReached: accumulator.videoCapReached,
     creatorTotalCapApplied: accumulator.creatorTotalCapApplied,
     videos: accumulator.videos.sort(
@@ -1560,6 +1648,7 @@ function getEmptyData(args: {
       exactPaidVideos: 0,
       unknownPaidVideos: 0,
       unmatchedVideos: 0,
+      videoDealOverrides: 0,
     },
     creators: [],
     videos: [],
@@ -1582,7 +1671,9 @@ export async function getOrganizationUgcPayData(args: {
     campaignOptions.find((campaign) => campaign.id === requestedCampaignId) ??
     campaignOptions[0] ??
     null;
-  const reportTimeZone = getReportTimeZone();
+  const reportTimeZone = getReportTimeZone(
+    getSearchParamValue(args.searchParams, "reportTimeZone"),
+  );
   const { startDate, endDate } = getSelectedDateRange(
     args.searchParams,
     reportTimeZone,
@@ -1678,7 +1769,10 @@ export async function getOrganizationUgcPayData(args: {
           },
         },
       },
-      deal: {
+      deals: {
+        where: {
+          organizationId: membership.organizationId,
+        },
         select: {
           id: true,
           currency: true,
@@ -1697,6 +1791,14 @@ export async function getOrganizationUgcPayData(args: {
           payoutCapTotal: true,
           notes: true,
         },
+        orderBy: [
+          {
+            effectiveStartDate: "asc",
+          },
+          {
+            createdAt: "asc",
+          },
+        ],
       },
     },
     orderBy: {
@@ -1705,6 +1807,36 @@ export async function getOrganizationUgcPayData(args: {
       },
     },
   })) as CampaignCreatorUgcPayRow[];
+  const campaignCreatorIds = campaignCreators.map((campaignCreator) => campaignCreator.id);
+  const videoDealOverrides = campaignCreatorIds.length
+    ? ((await prisma.campaignCreatorVideoDeal.findMany({
+        where: {
+          organizationId: membership.organizationId,
+          campaignCreatorId: {
+            in: campaignCreatorIds,
+          },
+        },
+        select: {
+          id: true,
+          campaignCreatorId: true,
+          sourceVideoId: true,
+          fixedFeePerVideo: true,
+          cpmAmount: true,
+          paidTrafficMetric: true,
+          deductPaidTraffic: true,
+          viewCapPerVideo: true,
+          payoutCapPerVideo: true,
+          perVideoCapScope: true,
+          notes: true,
+        },
+      })) as CampaignCreatorVideoDealUgcPayRow[])
+    : [];
+  const videoDealOverrideByKey = new Map(
+    videoDealOverrides.map((videoDeal) => [
+      getVideoDealKey(videoDeal.campaignCreatorId, videoDeal.sourceVideoId),
+      videoDeal,
+    ]),
+  );
 
   const byHandle = new Map<string, CampaignCreatorUgcPayRow | null>();
   const byName = new Map<string, CampaignCreatorUgcPayRow | null>();
@@ -1816,14 +1948,14 @@ export async function getOrganizationUgcPayData(args: {
   let missingGainedViewCapContextCount = 0;
 
   for (const campaignCreator of campaignCreators) {
-    const activeCustomDeal =
-      campaignCreator.deal && isDealActiveInRange(campaignCreator.deal, start, end)
-        ? campaignCreator.deal
-        : null;
-    const deal = resolveUgcPayDeal(activeCustomDeal, start);
-    const fixedPay = normalizeMoney(getFixedPayForRange(deal, start, end));
+    const fixedPay = getActiveDealsInRange(campaignCreator.deals, start, end)
+      .map((deal) => resolveUgcPayDeal(deal, start))
+      .reduce(
+        (total, deal) => total + getFixedPayForRange(deal, start, end),
+        0,
+      );
 
-    if (fixedPay > 0) {
+    if (normalizeMoney(fixedPay) > 0) {
       getOrCreateAccumulator({
         accumulators,
         campaignCreator,
@@ -1851,6 +1983,20 @@ export async function getOrganizationUgcPayData(args: {
       start,
       end,
     });
+    const videoDealOverride =
+      videoDealOverrideByKey.get(
+        getVideoDealKey(campaignCreator.id, row.sourceVideoId),
+      ) ?? null;
+    const baseVideoDeal = resolveDealForVideo({
+      campaignCreator,
+      row,
+      reportTimeZone,
+      fallbackStartDate: start,
+    });
+    const effectiveDeal = applyUgcPayVideoDealOverride(
+      baseVideoDeal,
+      videoDealOverride,
+    );
     const includeFixedFeePerVideo =
       payMode === "posted" ||
       isVideoPostedInReportDateRange({
@@ -1859,10 +2005,10 @@ export async function getOrganizationUgcPayData(args: {
         endExclusive: reportDateBounds.endExclusive,
       });
     const fixedFeePerVideo = includeFixedFeePerVideo
-      ? (accumulator.deal.fixedFeePerVideo ?? 0)
+      ? (effectiveDeal.fixedFeePerVideo ?? 0)
       : 0;
-    const perVideoGrossViewCap = getPerVideoGrossViewCap({
-      deal: accumulator.deal,
+    const perVideoGrossViewCap = getUgcPayPerVideoGrossViewCap({
+      deal: effectiveDeal,
       fixedFeePerVideo,
     });
     const gainedViewCapContext =
@@ -1883,7 +2029,8 @@ export async function getOrganizationUgcPayData(args: {
     const videoPay = calculateVideoPay({
       row,
       campaignCreator,
-      deal: accumulator.deal,
+      deal: effectiveDeal,
+      videoDealOverride,
       includeFixedFeePerVideo,
       gainedViewCapContext,
       payMode,
@@ -1894,12 +2041,19 @@ export async function getOrganizationUgcPayData(args: {
     accumulator.payableViews += videoPay.payableViews;
     accumulator.videoPayBeforeCreatorCap += videoPay.videoPay;
     accumulator.videoCapReached ||= videoPay.viewCapReached;
+    if (videoPay.hasVideoDealOverride) {
+      accumulator.videoDealOverrideCount += 1;
+    }
 
     if (row.paidStatus === "yes" || row.paidStatus === "no") {
       accumulator.exactPaidVideoCount += 1;
     } else {
       accumulator.unknownPaidVideoCount += 1;
     }
+
+    const dealTotal = getOrCreateDealTotal(accumulator, effectiveDeal);
+    dealTotal.videoPayBeforeCreatorCap += videoPay.videoPay;
+    dealTotal.videos.push(videoPay);
 
     accumulator.videos.push(videoPay);
   }
@@ -1972,6 +2126,10 @@ export async function getOrganizationUgcPayData(args: {
         0,
       ),
       unmatchedVideos,
+      videoDealOverrides: creators.reduce(
+        (total, creator) => total + creator.videoDealOverrideCount,
+        0,
+      ),
     },
     creators,
     videos,

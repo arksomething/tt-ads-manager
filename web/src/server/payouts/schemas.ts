@@ -1,5 +1,15 @@
-import { CreatorDealPaidTrafficMetric } from "@/lib/prisma-shim";
 import { z } from "zod";
+
+const CreatorDealPaidTrafficMetric = {
+  IMPRESSIONS: "IMPRESSIONS",
+  VIDEO_PLAY_ACTIONS: "VIDEO_PLAY_ACTIONS",
+} as const;
+
+const CreatorDealPerVideoCapScope = {
+  CPM: "CPM",
+  NONE: "NONE",
+  TOTAL: "TOTAL",
+} as const;
 
 function emptyToUndefined(value: unknown) {
   if (typeof value !== "string") {
@@ -37,6 +47,7 @@ const optionalStringField = z.preprocess(
 
 export const upsertCampaignCreatorDealSchema = z
   .object({
+    dealId: z.string().min(1).max(191).optional(),
     campaignCreatorId: z.string().min(1).max(191),
     currency: z
       .string()
@@ -57,6 +68,9 @@ export const upsertCampaignCreatorDealSchema = z
     viewCapPerVideo: optionalIntegerField,
     viewWindowDays: positiveIntegerField.default(30),
     payoutCapPerVideo: optionalCurrencyField.default(100),
+    perVideoCapScope: z
+      .nativeEnum(CreatorDealPerVideoCapScope)
+      .default(CreatorDealPerVideoCapScope.CPM),
     payoutCapTotal: optionalCurrencyField,
     notes: optionalStringField,
   })
@@ -83,7 +97,11 @@ export const upsertCampaignCreatorDealSchema = z
       });
     }
 
-    if (value.payoutCapPerVideo !== undefined && value.cpmAmount === 0) {
+    if (
+      value.perVideoCapScope !== CreatorDealPerVideoCapScope.NONE &&
+      value.payoutCapPerVideo !== undefined &&
+      value.cpmAmount === 0
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["cpmAmount"],
@@ -93,7 +111,44 @@ export const upsertCampaignCreatorDealSchema = z
   });
 
 export const deleteCampaignCreatorDealSchema = z.object({
+  dealId: z.string().min(1).max(191).optional(),
   campaignCreatorId: z.string().min(1).max(191),
+});
+
+export const upsertCampaignCreatorVideoDealSchema = z
+  .object({
+    campaignCreatorId: z.string().min(1).max(191),
+    sourceVideoId: z.string().trim().min(1).max(255),
+    fixedFeePerVideo: optionalCurrencyField,
+    cpmAmount: optionalCurrencyField.default(1),
+    paidTrafficMetric: z
+      .nativeEnum(CreatorDealPaidTrafficMetric)
+      .default(CreatorDealPaidTrafficMetric.IMPRESSIONS),
+    deductPaidTraffic: z.boolean().default(true),
+    viewCapPerVideo: optionalIntegerField,
+    payoutCapPerVideo: optionalCurrencyField.default(100),
+    perVideoCapScope: z
+      .nativeEnum(CreatorDealPerVideoCapScope)
+      .default(CreatorDealPerVideoCapScope.CPM),
+    notes: optionalStringField,
+  })
+  .superRefine((value, context) => {
+    if (
+      value.perVideoCapScope !== CreatorDealPerVideoCapScope.NONE &&
+      value.payoutCapPerVideo !== undefined &&
+      value.cpmAmount === 0
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cpmAmount"],
+        message: "CPM must be above zero when a per-video payout cap is set.",
+      });
+    }
+  });
+
+export const deleteCampaignCreatorVideoDealSchema = z.object({
+  campaignCreatorId: z.string().min(1).max(191),
+  sourceVideoId: z.string().trim().min(1).max(255),
 });
 
 export type UpsertCampaignCreatorDealInput = z.infer<
@@ -101,4 +156,10 @@ export type UpsertCampaignCreatorDealInput = z.infer<
 >;
 export type DeleteCampaignCreatorDealInput = z.infer<
   typeof deleteCampaignCreatorDealSchema
+>;
+export type UpsertCampaignCreatorVideoDealInput = z.infer<
+  typeof upsertCampaignCreatorVideoDealSchema
+>;
+export type DeleteCampaignCreatorVideoDealInput = z.infer<
+  typeof deleteCampaignCreatorVideoDealSchema
 >;

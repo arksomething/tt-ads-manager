@@ -35,6 +35,14 @@ type CampaignDetailPanelSkeletonProps = {
 
 type CampaignDateValue = Date | string | null | undefined;
 
+type ActiveCampaignDetails = NonNullable<
+  Awaited<ReturnType<typeof getCampaignWorkspaceDetail>>
+>;
+type ActiveCampaignMember = ActiveCampaignDetails["memberships"][number];
+type ActiveCampaignInvitation = ActiveCampaignDetails["invitations"][number];
+type ActiveCampaignCreator = ActiveCampaignDetails["creators"][number];
+type ActiveCampaignVideo = ActiveCampaignDetails["videos"][number];
+
 const campaignDateFormatter = new Intl.DateTimeFormat("en-US", {
   month: "short",
   day: "numeric",
@@ -255,7 +263,7 @@ export async function CampaignDetailPanel({
           </p>
           <div className="mt-3 space-y-2.5">
             {activeCampaignDetails.memberships.length > 0 ? (
-              activeCampaignDetails.memberships.map((member: any) => (
+              activeCampaignDetails.memberships.map((member: ActiveCampaignMember) => (
                 <div
                   key={member.id}
                   className="rounded-[1.05rem] border border-white/[0.08] bg-black/[0.18] px-4 py-3"
@@ -421,7 +429,7 @@ export async function CampaignDetailPanel({
 
           <div className="mt-4 space-y-2.5">
             {activeCampaignDetails.invitations.length > 0 ? (
-              activeCampaignDetails.invitations.map((invitation: any) => (
+              activeCampaignDetails.invitations.map((invitation: ActiveCampaignInvitation) => (
                 <div
                   key={invitation.id}
                   className="rounded-[1.05rem] border border-white/[0.08] bg-black/[0.18] px-4 py-3"
@@ -494,7 +502,7 @@ export async function CampaignDetailPanel({
           ) : null}
           <div className="mt-3 space-y-2.5">
             {activeCampaignDetails.creators.length > 0 ? (
-              activeCampaignDetails.creators.map((campaignCreator: any) => (
+              activeCampaignDetails.creators.map((campaignCreator: ActiveCampaignCreator) => (
                 <div
                   key={campaignCreator.id}
                   className="rounded-[1.05rem] border border-white/[0.08] bg-black/[0.18] px-4 py-3"
@@ -527,7 +535,7 @@ export async function CampaignDetailPanel({
           ) : null}
           <div className="mt-3 space-y-2.5">
             {activeCampaignDetails.videos.length > 0 ? (
-              activeCampaignDetails.videos.map((video: any) => (
+              activeCampaignDetails.videos.map((video: ActiveCampaignVideo) => (
                 <a
                   key={video.id}
                   className="block rounded-[1.05rem] border border-white/[0.08] bg-black/[0.18] px-4 py-3 transition hover:border-white/[0.14] hover:bg-black/[0.22]"

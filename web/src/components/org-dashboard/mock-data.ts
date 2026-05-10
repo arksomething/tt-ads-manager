@@ -13,7 +13,9 @@ export type DashboardSectionKey =
   | "ai-analytics"
   | "leaderboard"
   | "view-tally"
+  | "faceless"
   | "ugc-pay"
+  | "ugc-status"
   | "tiktok-paid-views"
   | "revenue"
   | "campaigns"
@@ -198,10 +200,22 @@ export const dashboardNavGroups: DashboardNavGroup[] = [
         icon: "videos",
       },
       {
+        key: "faceless",
+        label: "Faceless",
+        segment: "faceless",
+        icon: "revenue",
+      },
+      {
         key: "ugc-pay",
         label: "UGC Pay",
         segment: "ugc-pay",
         icon: "payouts",
+      },
+      {
+        key: "ugc-status",
+        label: "UGC Status",
+        segment: "ugc-status",
+        icon: "compare",
       },
       {
         key: "tiktok-paid-views",
@@ -295,12 +309,26 @@ export const dashboardRouteMeta: Record<DashboardSectionKey, DashboardRouteMeta>
     description:
       "This route filters videos by post date, then pairs current total views with exact Spark-linked paid video views when TikTok exposes item-level attribution.",
   },
+  faceless: {
+    groupLabel: "Analytics",
+    navLabel: "Faceless",
+    title: "Pull daily ViewsBase views and creator spend for faceless campaigns.",
+    description:
+      "This route reads authenticated ViewsBase campaign endpoints and exposes a compact report plus JSON feed for daily views, projected spend, and creator drivers.",
+  },
   "ugc-pay": {
     groupLabel: "Analytics",
     navLabel: "UGC Pay",
     title: "Calculate creator UGC pay from View Tally video views.",
     description:
       "This route prices creator video output with campaign deal terms, deducting paid TikTok delivery from View Tally rows before applying CPM and cap rules.",
+  },
+  "ugc-status": {
+    groupLabel: "Analytics",
+    navLabel: "UGC Status",
+    title: "Compare UGC and faceless proceeds against spend, views, and profit.",
+    description:
+      "This route reconciles Revenue's organic / UGC proceeds with exact UGC Pay and ViewsBase faceless costs so the combined creator bucket can be monitored by day.",
   },
   "tiktok-paid-views": {
     groupLabel: "Analytics",
@@ -811,6 +839,23 @@ export const placeholderSectionData: Record<
       { label: "Post-date filter", value: "Inclusive date range", status: "Ready" },
     ],
   },
+  faceless: {
+    eyebrow: "ViewsBase",
+    spotlightTitle: "Faceless campaign views and spend are pulled from ViewsBase.",
+    spotlightDescription:
+      "The live route reads the authenticated ViewsBase dashboard APIs for daily view series, creator drivers, payment rollups, and all raw video rows.",
+    highlights: ["Daily views", "Projected spend", "JSON feed"],
+    statCards: [
+      { label: "Default source", value: "GoTall Larsie" },
+      { label: "Window", value: "7 days" },
+      { label: "Auth", value: "Cookie" },
+    ],
+    rows: [
+      { label: "ViewsBase API", value: "Authenticated fetch", status: "Ready" },
+      { label: "Daily spend", value: "Projected from CPM", status: "Ready" },
+      { label: "Automation feed", value: "JSON endpoint", status: "Ready" },
+    ],
+  },
   "ugc-pay": {
     eyebrow: "Analytics",
     spotlightTitle: "UGC Pay prices creator videos with campaign deal terms.",
@@ -826,6 +871,23 @@ export const placeholderSectionData: Record<
       { label: "Video pricing", value: "Live page", status: "Ready" },
       { label: "Paid deductions", value: "View Tally", status: "Ready" },
       { label: "Custom deals", value: "Campaign scoped", status: "Ready" },
+    ],
+  },
+  "ugc-status": {
+    eyebrow: "Revenue status",
+    spotlightTitle: "UGC and faceless economics reconcile against Revenue.",
+    spotlightDescription:
+      "The live route compares the Revenue tab's organic / UGC proceeds with exact UGC Pay and ViewsBase faceless spend, views, profit, and ratios.",
+    highlights: ["UGC/F revenue", "Spend", "Profit ratios"],
+    statCards: [
+      { label: "Revenue source", value: "Adapty remainder" },
+      { label: "UGC spend", value: "UGC Pay" },
+      { label: "Faceless spend", value: "ViewsBase" },
+    ],
+    rows: [
+      { label: "Revenue split", value: "After paid + renewals", status: "Ready" },
+      { label: "Daily UGC spend", value: "Exact UGC Pay", status: "Ready" },
+      { label: "Faceless views", value: "ViewsBase", status: "Ready" },
     ],
   },
   "tiktok-paid-views": {

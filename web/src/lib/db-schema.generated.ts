@@ -504,6 +504,12 @@ export const modelSchema = {
         "isList": true,
         "isOptional": false
       },
+      "viralPostEnrichments": {
+        "kind": "relation",
+        "type": "ViralPostEnrichment",
+        "isList": true,
+        "isOptional": false
+      },
       "twilioConfig": {
         "kind": "relation",
         "type": "OrganizationTwilioConfig",
@@ -513,6 +519,12 @@ export const modelSchema = {
       "tiktokAccounts": {
         "kind": "relation",
         "type": "OrganizationTikTokAccount",
+        "isList": true,
+        "isOptional": false
+      },
+      "integrationCredentials": {
+        "kind": "relation",
+        "type": "OrganizationIntegrationCredential",
         "isList": true,
         "isOptional": false
       },
@@ -546,6 +558,12 @@ export const modelSchema = {
         "isList": true,
         "isOptional": false
       },
+      "creatorVideoDeals": {
+        "kind": "relation",
+        "type": "CampaignCreatorVideoDeal",
+        "isList": true,
+        "isOptional": false
+      },
       "tiktokPaidMetricSnapshots": {
         "kind": "relation",
         "type": "TikTokPaidMetricSnapshot",
@@ -555,6 +573,18 @@ export const modelSchema = {
       "tiktokAdPreviewUrls": {
         "kind": "relation",
         "type": "TikTokAdPreviewUrl",
+        "isList": true,
+        "isOptional": false
+      },
+      "reportingDayVersions": {
+        "kind": "relation",
+        "type": "ReportingDayVersion",
+        "isList": true,
+        "isOptional": false
+      },
+      "reportingDailyFacts": {
+        "kind": "relation",
+        "type": "ReportingDailyFact",
         "isList": true,
         "isOptional": false
       }
@@ -610,6 +640,16 @@ export const modelSchema = {
           "organizationId"
         ]
       },
+      "creatorVideoDeals": {
+        "model": "CampaignCreatorVideoDeal",
+        "isList": true,
+        "localFields": [
+          "id"
+        ],
+        "remoteFields": [
+          "organizationId"
+        ]
+      },
       "twilioConfig": {
         "model": "OrganizationTwilioConfig",
         "isList": false,
@@ -622,6 +662,36 @@ export const modelSchema = {
       },
       "tiktokAccounts": {
         "model": "OrganizationTikTokAccount",
+        "isList": true,
+        "localFields": [
+          "id"
+        ],
+        "remoteFields": [
+          "organizationId"
+        ]
+      },
+      "integrationCredentials": {
+        "model": "OrganizationIntegrationCredential",
+        "isList": true,
+        "localFields": [
+          "id"
+        ],
+        "remoteFields": [
+          "organizationId"
+        ]
+      },
+      "reportingDayVersions": {
+        "model": "ReportingDayVersion",
+        "isList": true,
+        "localFields": [
+          "id"
+        ],
+        "remoteFields": [
+          "organizationId"
+        ]
+      },
+      "reportingDailyFacts": {
+        "model": "ReportingDailyFact",
         "isList": true,
         "localFields": [
           "id"
@@ -742,6 +812,16 @@ export const modelSchema = {
       },
       "sourceMaps": {
         "model": "SourceMapping",
+        "isList": true,
+        "localFields": [
+          "id"
+        ],
+        "remoteFields": [
+          "organizationId"
+        ]
+      },
+      "viralPostEnrichments": {
+        "model": "ViralPostEnrichment",
         "isList": true,
         "localFields": [
           "id"
@@ -1867,11 +1947,17 @@ export const modelSchema = {
         "isList": false,
         "isOptional": false
       },
-      "deal": {
+      "deals": {
         "kind": "relation",
         "type": "CampaignCreatorDeal",
-        "isList": false,
-        "isOptional": true
+        "isList": true,
+        "isOptional": false
+      },
+      "videoDeals": {
+        "kind": "relation",
+        "type": "CampaignCreatorVideoDeal",
+        "isList": true,
+        "isOptional": false
       },
       "payouts": {
         "kind": "relation",
@@ -1901,9 +1987,19 @@ export const modelSchema = {
           "id"
         ]
       },
-      "deal": {
+      "deals": {
         "model": "CampaignCreatorDeal",
-        "isList": false,
+        "isList": true,
+        "localFields": [
+          "id"
+        ],
+        "remoteFields": [
+          "campaignCreatorId"
+        ]
+      },
+      "videoDeals": {
+        "model": "CampaignCreatorVideoDeal",
+        "isList": true,
         "localFields": [
           "id"
         ],
@@ -2027,6 +2123,129 @@ export const modelSchema = {
         "type": "Decimal",
         "isList": false,
         "isOptional": true
+      },
+      "notes": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "createdAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "updatedAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "organization": {
+        "kind": "relation",
+        "type": "Organization",
+        "isList": false,
+        "isOptional": false
+      },
+      "campaignCreator": {
+        "kind": "relation",
+        "type": "CampaignCreator",
+        "isList": false,
+        "isOptional": false
+      }
+    },
+    "relations": {
+      "organization": {
+        "model": "Organization",
+        "isList": false,
+        "localFields": [
+          "organizationId"
+        ],
+        "remoteFields": [
+          "id"
+        ]
+      },
+      "campaignCreator": {
+        "model": "CampaignCreator",
+        "isList": false,
+        "localFields": [
+          "campaignCreatorId"
+        ],
+        "remoteFields": [
+          "id"
+        ]
+      }
+    }
+  },
+  "CampaignCreatorVideoDeal": {
+    "table": "CampaignCreatorVideoDeal",
+    "fields": {
+      "id": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "organizationId": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "campaignCreatorId": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "sourceVideoId": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "fixedFeePerVideo": {
+        "kind": "scalar",
+        "type": "Decimal",
+        "isList": false,
+        "isOptional": true
+      },
+      "cpmAmount": {
+        "kind": "scalar",
+        "type": "Decimal",
+        "isList": false,
+        "isOptional": true
+      },
+      "paidTrafficMetric": {
+        "kind": "enum",
+        "type": "CreatorDealPaidTrafficMetric",
+        "isList": false,
+        "isOptional": false
+      },
+      "deductPaidTraffic": {
+        "kind": "scalar",
+        "type": "Boolean",
+        "isList": false,
+        "isOptional": false
+      },
+      "viewCapPerVideo": {
+        "kind": "scalar",
+        "type": "Int",
+        "isList": false,
+        "isOptional": true
+      },
+      "payoutCapPerVideo": {
+        "kind": "scalar",
+        "type": "Decimal",
+        "isList": false,
+        "isOptional": true
+      },
+      "perVideoCapScope": {
+        "kind": "enum",
+        "type": "CreatorDealPerVideoCapScope",
+        "isList": false,
+        "isOptional": false
       },
       "notes": {
         "kind": "scalar",
@@ -2643,6 +2862,341 @@ export const modelSchema = {
       }
     },
     "relations": {
+      "organization": {
+        "model": "Organization",
+        "isList": false,
+        "localFields": [
+          "organizationId"
+        ],
+        "remoteFields": [
+          "id"
+        ]
+      }
+    }
+  },
+  "OrganizationIntegrationCredential": {
+    "table": "OrganizationIntegrationCredential",
+    "fields": {
+      "id": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "organizationId": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "key": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "encryptedValue": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "valuePreview": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "lastValidatedAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": true
+      },
+      "lastValidationStatus": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "lastValidationError": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "createdAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "updatedAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "organization": {
+        "kind": "relation",
+        "type": "Organization",
+        "isList": false,
+        "isOptional": false
+      }
+    },
+    "relations": {
+      "organization": {
+        "model": "Organization",
+        "isList": false,
+        "localFields": [
+          "organizationId"
+        ],
+        "remoteFields": [
+          "id"
+        ]
+      }
+    }
+  },
+  "ReportingDayVersion": {
+    "table": "ReportingDayVersion",
+    "fields": {
+      "id": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "organizationId": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "reportDate": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "version": {
+        "kind": "scalar",
+        "type": "Int",
+        "isList": false,
+        "isOptional": false
+      },
+      "status": {
+        "kind": "enum",
+        "type": "ReportingDayBuildStatus",
+        "isList": false,
+        "isOptional": false
+      },
+      "freshness": {
+        "kind": "enum",
+        "type": "ReportingFreshness",
+        "isList": false,
+        "isOptional": false
+      },
+      "isCurrent": {
+        "kind": "scalar",
+        "type": "Boolean",
+        "isList": false,
+        "isOptional": false
+      },
+      "pricingConfigVersion": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "sourceConfigVersion": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "sourceState": {
+        "kind": "scalar",
+        "type": "Json",
+        "isList": false,
+        "isOptional": true
+      },
+      "warnings": {
+        "kind": "scalar",
+        "type": "Json",
+        "isList": false,
+        "isOptional": true
+      },
+      "error": {
+        "kind": "scalar",
+        "type": "Json",
+        "isList": false,
+        "isOptional": true
+      },
+      "createdAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "updatedAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "completedAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": true
+      },
+      "organization": {
+        "kind": "relation",
+        "type": "Organization",
+        "isList": false,
+        "isOptional": false
+      },
+      "facts": {
+        "kind": "relation",
+        "type": "ReportingDailyFact",
+        "isList": true,
+        "isOptional": false
+      }
+    },
+    "relations": {
+      "organization": {
+        "model": "Organization",
+        "isList": false,
+        "localFields": [
+          "organizationId"
+        ],
+        "remoteFields": [
+          "id"
+        ]
+      },
+      "facts": {
+        "model": "ReportingDailyFact",
+        "isList": true,
+        "localFields": [
+          "id"
+        ],
+        "remoteFields": [
+          "dayVersionId"
+        ]
+      }
+    }
+  },
+  "ReportingDailyFact": {
+    "table": "ReportingDailyFact",
+    "fields": {
+      "id": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "dayVersionId": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "organizationId": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "reportDate": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "metricKey": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "value": {
+        "kind": "scalar",
+        "type": "Decimal",
+        "isList": false,
+        "isOptional": false
+      },
+      "unit": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "currency": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "source": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "bucket": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "dimensionsKey": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "dimensions": {
+        "kind": "scalar",
+        "type": "Json",
+        "isList": false,
+        "isOptional": true
+      },
+      "provenance": {
+        "kind": "scalar",
+        "type": "Json",
+        "isList": false,
+        "isOptional": true
+      },
+      "createdAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "dayVersion": {
+        "kind": "relation",
+        "type": "ReportingDayVersion",
+        "isList": false,
+        "isOptional": false
+      },
+      "organization": {
+        "kind": "relation",
+        "type": "Organization",
+        "isList": false,
+        "isOptional": false
+      }
+    },
+    "relations": {
+      "dayVersion": {
+        "model": "ReportingDayVersion",
+        "isList": false,
+        "localFields": [
+          "dayVersionId"
+        ],
+        "remoteFields": [
+          "id"
+        ]
+      },
       "organization": {
         "model": "Organization",
         "isList": false,
@@ -4400,6 +4954,149 @@ export const modelSchema = {
       "lastSyncedAt": {
         "kind": "scalar",
         "type": "DateTime",
+        "isList": false,
+        "isOptional": true
+      },
+      "rawPayload": {
+        "kind": "scalar",
+        "type": "Json",
+        "isList": false,
+        "isOptional": true
+      },
+      "createdAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "updatedAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "organization": {
+        "kind": "relation",
+        "type": "Organization",
+        "isList": false,
+        "isOptional": false
+      }
+    },
+    "relations": {
+      "organization": {
+        "model": "Organization",
+        "isList": false,
+        "localFields": [
+          "organizationId"
+        ],
+        "remoteFields": [
+          "id"
+        ]
+      }
+    }
+  },
+  "ViralPostEnrichment": {
+    "table": "ViralPostEnrichment",
+    "fields": {
+      "id": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "organizationId": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "platform": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "platformVideoId": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "status": {
+        "kind": "enum",
+        "type": "ViralPostEnrichmentStatus",
+        "isList": false,
+        "isOptional": false
+      },
+      "attemptCount": {
+        "kind": "scalar",
+        "type": "Int",
+        "isList": false,
+        "isOptional": false
+      },
+      "nextAttemptAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "processingStartedAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": true
+      },
+      "lastFetchedAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": true
+      },
+      "lastError": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "accountDisplayName": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "accountUsername": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "caption": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "thumbnailUrl": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "videoUrl": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": true
+      },
+      "publishedAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": true
+      },
+      "viewCount": {
+        "kind": "scalar",
+        "type": "Int",
         "isList": false,
         "isOptional": true
       },

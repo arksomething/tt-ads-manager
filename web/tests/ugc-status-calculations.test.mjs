@@ -1,0 +1,164 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  allocateTotalByDailyWeights,
+  calculateUgcStatusMetrics,
+  getUgcStatusProceedsByDate,
+  getUgcStatusSpendByDate,
+} from "../src/server/dashboard/ugc-status-calculations.ts";
+
+test("calculates UGC status profit and ratios", () => {
+  const metrics = calculateUgcStatusMetrics({
+    facelessViews: 40_000,
+    proceeds: 1_000,
+    spend: 250,
+    ugcViews: 60_000,
+    views: 100_000,
+  });
+
+  assert.equal(metrics.profit, 750);
+  assert.equal(metrics.roas, 4);
+  assert.equal(metrics.margin, 0.75);
+  assert.equal(metrics.proceedsPerThousandViews, 10);
+  assert.equal(metrics.spendPerThousandViews, 2.5);
+  assert.equal(metrics.profitPerThousandViews, 7.5);
+  assert.equal(metrics.ugcViewShare, 0.6);
+  assert.equal(metrics.facelessViewShare, 0.4);
+});
+
+test("returns unavailable ratios when spend or views are zero", () => {
+  const metrics = calculateUgcStatusMetrics({
+    facelessViews: 0,
+    proceeds: 0,
+    spend: 0,
+    ugcViews: 0,
+    views: 0,
+  });
+
+  assert.equal(metrics.roas, null);
+  assert.equal(metrics.margin, null);
+  assert.equal(metrics.proceedsPerThousandViews, null);
+  assert.equal(metrics.spendPerThousandViews, null);
+  assert.equal(metrics.profitPerThousandViews, null);
+  assert.equal(metrics.ugcViewShare, null);
+  assert.equal(metrics.facelessViewShare, null);
+});
+
+test("allocates daily proceeds so rows add back to the summary total", () => {
+  const allocations = allocateTotalByDailyWeights({
+    dates: ["2026-05-04", "2026-05-05", "2026-05-06"],
+    total: 2_470.65,
+    weights: new Map([
+      ["2026-05-04", 2_914.11],
+      ["2026-05-05", 2_319.98],
+      ["2026-05-06", 2_427.36],
+    ]),
+  });
+  const total = [...allocations.values()].reduce((sum, value) => sum + value, 0);
+
+  assert.equal(Number(total.toFixed(2)), 2_470.65);
+  assert.deepEqual([...allocations.keys()], [
+    "2026-05-04",
+    "2026-05-05",
+    "2026-05-06",
+  ]);
+});
+
+test("allocates evenly when daily proceeds weights are unavailable", () => {
+  const allocations = allocateTotalByDailyWeights({
+    dates: ["2026-05-04", "2026-05-05", "2026-05-06"],
+    total: 100,
+    weights: new Map(),
+  });
+
+  assert.deepEqual([...allocations.values()], [33.33, 33.33, 33.34]);
+});
+
+test("reconciles daily organic proceeds back to the Revenue tab summary total", () => {
+  const proceeds = getUgcStatusProceedsByDate({
+    dates: ["2026-05-04", "2026-05-05", "2026-05-06"],
+    dailyRows: [
+      { date: "2026-05-04", organic: 2_914.11 },
+      { date: "2026-05-05", organic: 2_440.46 },
+      { date: "2026-05-06", organic: 2_427.36 },
+    ],
+    total: 2_157.23,
+  });
+  const total = [...proceeds.values()].reduce((sum, value) => sum + value, 0);
+
+  assert.equal(Number(total.toFixed(2)), 2_157.23);
+  assert.equal(Math.max(...proceeds.values()) < 2_157.23, true);
+});
+
+test("uses the Revenue organic proceeds source for the same UGC status range", () => {
+  const revenueOrganicProceeds = 6_125.5;
+  const proceeds = getUgcStatusProceedsByDate({
+    dates: ["2026-05-04", "2026-05-05", "2026-05-06"],
+    dailyRows: [
+      { date: "2026-05-04", organic: 1_000 },
+      { date: "2026-05-05", organic: 2_000 },
+      { date: "2026-05-06", organic: 3_125.5 },
+    ],
+    total: revenueOrganicProceeds,
+  });
+  const total = [...proceeds.values()].reduce((sum, value) => sum + value, 0);
+
+  assert.equal(Number(total.toFixed(2)), revenueOrganicProceeds);
+  assert.deepEqual([...proceeds.values()], [1_000, 2_000, 3_125.5]);
+});
+
+test("does not fabricate UGC proceeds when Revenue hides pending Singular proceeds", () => {
+  const proceeds = getUgcStatusProceedsByDate({
+    dates: ["2026-05-04", "2026-05-05"],
+    dailyRows: [
+      { date: "2026-05-04", organic: 2_500 },
+      { date: "2026-05-05", organic: 1_500 },
+    ],
+    total: 0,
+  });
+
+  assert.deepEqual([...proceeds.values()], [0, 0]);
+});
+
+test("falls back to allocation when Revenue tab daily organic proceeds are unavailable", () => {
+  const proceeds = getUgcStatusProceedsByDate({
+    dates: ["2026-05-04", "2026-05-05"],
+    dailyRows: [
+      { date: "2026-05-04", organic: null },
+      { date: "2026-05-05", organic: null },
+    ],
+    total: 100,
+  });
+
+  assert.deepEqual([...proceeds.values()], [50, 50]);
+});
+
+test("reconciles daily UGC spend back to the UGC Pay summary total", () => {
+  const spend = getUgcStatusSpendByDate({
+    dates: [
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-07",
+      "2026-05-08",
+      "2026-05-09",
+      "2026-05-10",
+    ],
+    dailyRows: [
+      { date: "2026-05-04", cpmSpend: 388.68, fixedSpend: 0 },
+      { date: "2026-05-05", cpmSpend: 216.08, fixedSpend: 0 },
+      { date: "2026-05-06", cpmSpend: 184.91, fixedSpend: 0 },
+      { date: "2026-05-07", cpmSpend: 146.81, fixedSpend: 0 },
+      { date: "2026-05-08", cpmSpend: 288.53, fixedSpend: 0 },
+      { date: "2026-05-09", cpmSpend: 211.84, fixedSpend: 0 },
+      { date: "2026-05-10", cpmSpend: 123.09, fixedSpend: 0 },
+    ],
+    totalCpmSpend: 1_157.13,
+    totalFixedSpend: 0,
+  });
+  const total = [...spend.values()].reduce((sum, row) => sum + row.spend, 0);
+
+  assert.equal(Number(total.toFixed(2)), 1_157.13);
+  assert.equal(spend.get("2026-05-04")?.spend, 288.31);
+});

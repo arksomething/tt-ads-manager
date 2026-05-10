@@ -28,6 +28,10 @@ import { sendTwilioMessage } from "./twilio-client";
 
 type TwilioPayload = Record<string, string>;
 
+type CreatorContactPointOption = {
+  id: string;
+};
+
 const removeCreatorContactPointSchema = z.object({
   contactPointId: z.string().trim().min(1),
 });
@@ -584,7 +588,8 @@ export async function sendSparkCodeRequestForOrganization(args: {
 
   const selectedContactPoint = values.contactPointId
     ? creator.contactPoints.find(
-        (contactPoint: any) => contactPoint.id === values.contactPointId,
+        (contactPoint: CreatorContactPointOption) =>
+          contactPoint.id === values.contactPointId,
       )
     : creator.contactPoints[0];
 

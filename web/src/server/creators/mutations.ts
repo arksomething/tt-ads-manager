@@ -7,6 +7,7 @@ import {
 } from "@/lib/prisma-shim";
 import { revalidatePath } from "next/cache";
 
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { prisma } from "@/lib/db";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
 import { canManageOrganization } from "@/server/auth/roles";
@@ -30,6 +31,7 @@ import {
 
 const VIRAL_ACCOUNT_RESOURCE_TYPE_PREFIX = "viral-account";
 const AUTO_IMPORTED_TIKTOK_CAMPAIGN_NAME = "All Tracked Creators";
+const PROVIDER_PAGINATION_CONCURRENCY = 3;
 
 type ProviderPlatform = "instagram" | "tiktok" | "youtube";
 type ParsedTrackedAccountUrl = {
@@ -368,11 +370,7 @@ async function getPagedProviderRecords(args: {
   perPage?: number;
   extraQuery?: Record<string, string | number | boolean | undefined>;
 }) {
-  const records: Array<Record<string, unknown>> = [];
-  let page = 1;
-  let pageCount: number | null = null;
-
-  while (pageCount == null || page <= pageCount) {
+  async function getPage(page: number) {
     const response = await viralAppClient.request<PagedProviderRecordsResponse>({
       path: args.path,
       query: {
@@ -382,18 +380,35 @@ async function getPagedProviderRecords(args: {
       },
     });
 
-    records.push(...(response.data ?? []));
     const resolvedPageCount = Number(response.pageCount ?? 1);
-    pageCount = Number.isFinite(resolvedPageCount)
+    const pageCount = Number.isFinite(resolvedPageCount)
       ? Math.max(1, Math.trunc(resolvedPageCount))
       : 1;
 
-    if ((response.data ?? []).length === 0) {
-      break;
-    }
-
-    page += 1;
+    return {
+      records: response.data ?? [],
+      pageCount,
+    };
   }
+
+  const firstPage = await getPage(1);
+  const records: Array<Record<string, unknown>> = [...firstPage.records];
+
+  if (firstPage.records.length === 0 || firstPage.pageCount <= 1) {
+    return records;
+  }
+
+  const remainingPages = Array.from(
+    { length: firstPage.pageCount - 1 },
+    (_, index) => index + 2,
+  );
+  const remainingRecords = await mapWithConcurrency(
+    remainingPages,
+    PROVIDER_PAGINATION_CONCURRENCY,
+    async (page) => (await getPage(page)).records,
+  );
+
+  records.push(...remainingRecords.flat());
 
   return records;
 }

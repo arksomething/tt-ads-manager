@@ -29,6 +29,8 @@ const SINGULAR_REPORT_METRICS = [
   "custom_installs",
   "tracker_conversions",
 ] as const;
+// Singular's revenue cohort metric is already proceeds for this app.
+const SINGULAR_SOURCE_REVENUE_COHORT_METRIC = "revenue";
 
 type CachedValue<T> = {
   expiresAt: number;
@@ -56,8 +58,62 @@ type SingularReportCacheEntry =
   | SingularPendingReportCacheEntry
   | SingularReadyReportCacheEntry;
 
+export type SingularSourceRevenuePoint = {
+  date: string | null;
+  revenue: number;
+  spend: number;
+};
+
+export type SingularSourceRevenueRow = {
+  source: string | null;
+  label: string;
+  currency: string | null;
+  spend: number;
+  revenue: number;
+  revenueAvailable: boolean;
+  installs: number;
+  conversions: number;
+  points: SingularSourceRevenuePoint[];
+};
+
+export type SingularSourceRevenueReport = {
+  configured: boolean;
+  isPending: boolean;
+  cohortPeriod: string;
+  cohortMetric: string;
+  rowCount: number;
+  totalRevenue: number;
+  rows: SingularSourceRevenueRow[];
+  warnings: string[];
+};
+
+type SingularSourceRevenuePendingCacheEntry = {
+  kind: "pending";
+  expiresAt: number;
+  reportId: string;
+  query: SingularCreateAsyncReportArgs;
+  appNames: string[];
+  cohortPeriod: string;
+  cohortMetric: string;
+  lastPolledAt: number;
+};
+
+type SingularSourceRevenueReadyCacheEntry = {
+  kind: "ready";
+  expiresAt: number;
+  value: SingularSourceRevenueReport;
+};
+
+type SingularSourceRevenueCacheEntry =
+  | SingularSourceRevenuePendingCacheEntry
+  | SingularSourceRevenueReadyCacheEntry;
+
 const singularSourceCache = new Map<string, CachedValue<string[]>>();
 const singularReportCache = new Map<string, SingularReportCacheEntry>();
+const singularSourceRevenueReportCache = new Map<
+  string,
+  SingularSourceRevenueCacheEntry
+>();
 
 export type TikTokSingularReportRow = {
   rowKey: string;
@@ -137,6 +193,25 @@ function getEmptyTikTokSingularOverlay(args?: {
     cohortPeriod: args?.cohortPeriod ?? "7d",
     sourceNames: args?.sourceNames ?? [],
     rowCount: 0,
+    rows: [],
+    warnings: args?.warnings ?? [],
+  };
+}
+
+function getEmptySingularSourceRevenueReport(args?: {
+  configured?: boolean;
+  isPending?: boolean;
+  cohortPeriod?: string;
+  cohortMetric?: string;
+  warnings?: string[];
+}): SingularSourceRevenueReport {
+  return {
+    configured: args?.configured ?? false,
+    isPending: args?.isPending ?? false,
+    cohortPeriod: args?.cohortPeriod ?? "7d",
+    cohortMetric: args?.cohortMetric ?? SINGULAR_SOURCE_REVENUE_COHORT_METRIC,
+    rowCount: 0,
+    totalRevenue: 0,
     rows: [],
     warnings: args?.warnings ?? [],
   };
@@ -232,13 +307,14 @@ function normalizeCohortPeriod(period: string) {
   return period.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
 }
 
-function getRevenueMetricKeys(period: string) {
+function getCohortMetricKeys(metric: string, period: string) {
+  const normalizedMetric = normalizeCohortPeriod(metric);
   const normalizedPeriod = normalizeCohortPeriod(period);
   return uniqueNonEmptyStrings([
-    `revenue_${normalizedPeriod}`,
-    normalizedPeriod === "actual" ? "revenue_actual" : null,
-    normalizedPeriod === "ltv" ? "revenue_ltv" : null,
-    "revenue",
+    `${normalizedMetric}_${normalizedPeriod}`,
+    normalizedPeriod === "actual" ? `${normalizedMetric}_actual` : null,
+    normalizedPeriod === "ltv" ? `${normalizedMetric}_ltv` : null,
+    normalizedMetric,
   ]);
 }
 
@@ -292,8 +368,15 @@ function getFirstOptionalNumber(record: Record<string, unknown>, keys: string[])
   return null;
 }
 
-function getRevenueValue(record: Record<string, unknown>, period: string) {
-  const directRevenue = getFirstOptionalNumber(record, getRevenueMetricKeys(period));
+function getCohortMetricValue(
+  record: Record<string, unknown>,
+  metric: string,
+  period: string,
+) {
+  const directRevenue = getFirstOptionalNumber(
+    record,
+    getCohortMetricKeys(metric, period),
+  );
 
   if (directRevenue !== null) {
     return {
@@ -305,7 +388,7 @@ function getRevenueValue(record: Record<string, unknown>, period: string) {
   const normalizedPeriod = normalizeCohortPeriod(period);
   const nestedRevenue = getNestedNumber(
     record,
-    "revenue",
+    normalizeCohortPeriod(metric),
     uniqueNonEmptyStrings([period.trim(), normalizedPeriod]),
   );
 
@@ -315,8 +398,51 @@ function getRevenueValue(record: Record<string, unknown>, period: string) {
   };
 }
 
+function getRevenueValue(record: Record<string, unknown>, period: string) {
+  return getCohortMetricValue(record, "revenue", period);
+}
+
 function toDateOnlyString(value: Date) {
   return value.toISOString().slice(0, 10);
+}
+
+function normalizeDateOnly(value: unknown) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value !== "string" && typeof value !== "number") {
+    return null;
+  }
+
+  const stringValue = String(value).trim();
+  const directMatch = stringValue.match(/^(\d{4}-\d{2}-\d{2})/);
+
+  if (directMatch?.[1]) {
+    return directMatch[1];
+  }
+
+  const parsed = new Date(stringValue);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+}
+
+function getReportRowDate(record: Record<string, unknown>) {
+  for (const key of [
+    "date",
+    "start_date",
+    "end_date",
+    "cohort_date",
+    "install_date",
+    "event_date",
+  ]) {
+    const date = normalizeDateOnly(record[key]);
+
+    if (date) {
+      return date;
+    }
+  }
+
+  return null;
 }
 
 function splitDateRangeIntoChunks(args: {
@@ -373,15 +499,22 @@ function mergeTikTokSingularOverlays(overlays: TikTokSingularOverlay[]) {
 }
 
 function buildRowKey(record: TikTokSingularReportRow) {
+  const creativeKey = record.creativeId
+    ? `creative:${record.creativeId}`
+    : record.tiktokPostId
+      ? `post:${record.tiktokPostId}`
+      : record.creativeName
+        ? `name:${record.creativeName}`
+        : record.creativeUrl
+          ? `url:${record.creativeUrl}`
+          : "";
+
   return [
     record.source,
     record.app,
     record.campaignId,
     record.subCampaignId,
-    record.creativeId,
-    record.creativeName,
-    record.tiktokPostId,
-    record.creativeUrl,
+    creativeKey,
   ]
     .map((value) => value?.trim() || "")
     .join("::");
@@ -510,6 +643,23 @@ function buildReportCacheKey(args: {
   ].join("|");
 }
 
+function buildSourceRevenueReportCacheKey(args: {
+  startDate: string;
+  endDate: string;
+  cohortPeriod: string;
+  cohortMetric: string;
+  appNames: string[];
+}) {
+  return [
+    "source-revenue",
+    args.startDate,
+    args.endDate,
+    args.cohortPeriod,
+    args.cohortMetric,
+    args.appNames.join(","),
+  ].join("|");
+}
+
 function buildSourceCacheKey() {
   const env = getSingularEnv();
   return `${env.SINGULAR_API_BASE_URL}|${env.SINGULAR_SOURCE_NAMES ?? ""}`;
@@ -585,6 +735,27 @@ function buildSingularReportQuery(args: {
   };
 }
 
+function buildSingularSourceRevenueReportQuery(args: {
+  startDate: string;
+  endDate: string;
+  cohortPeriod: string;
+  cohortMetric: string;
+  appNames: string[];
+}): SingularCreateAsyncReportArgs {
+  return {
+    startDate: args.startDate,
+    endDate: args.endDate,
+    timeBreakdown: "day",
+    appNames: args.appNames,
+    dimensions: ["source"],
+    metrics: [...SINGULAR_REPORT_METRICS],
+    cohortMetrics: [args.cohortMetric],
+    cohortPeriods: [args.cohortPeriod],
+    displayUnenriched: true,
+    format: "json",
+  };
+}
+
 function getUnauthorizedDimensionsFromError(error: unknown) {
   if (!(error instanceof SingularApiError || error instanceof Error)) {
     return [];
@@ -618,6 +789,131 @@ function normalizeSingularWarnings(warnings: string[]) {
       return `Singular does not allow the requested dimensions (${unauthorizedDimensions.join(", ")}) for this API key, so the dashboard is loading aggregate performance without those columns.`;
     }),
   );
+}
+
+function normalizeSourceRevenueLabel(source: string | null) {
+  const label = source?.trim();
+  return label && label.length > 0 ? label : "Unattributed / organic";
+}
+
+function normalizeSourceRevenueReportRow(
+  record: Record<string, unknown>,
+  cohortPeriod: string,
+  cohortMetric: string,
+): SingularSourceRevenueRow {
+  const source = getFirstMeaningfulString(record, ["source"]);
+  const revenue = getCohortMetricValue(record, cohortMetric, cohortPeriod);
+
+  return {
+    source,
+    label: normalizeSourceRevenueLabel(source),
+    currency: getFirstString(record, ["adn_original_currency"]),
+    spend: getFirstNumber(record, ["adn_cost"]),
+    revenue: revenue.value,
+    revenueAvailable: revenue.available,
+    installs: getFirstNumber(record, [
+      "custom_installs",
+      "tracker_installs",
+      "adn_installs",
+    ]),
+    conversions: getFirstNumber(record, ["tracker_conversions"]),
+    points: [
+      {
+        date: getReportRowDate(record),
+        revenue: revenue.value,
+        spend: getFirstNumber(record, ["adn_cost"]),
+      },
+    ],
+  };
+}
+
+function buildSourceRevenueRowKey(row: SingularSourceRevenueRow) {
+  return row.label.trim().toLowerCase();
+}
+
+function aggregateSingularSourceRevenueRows(rows: SingularSourceRevenueRow[]) {
+  const grouped = new Map<string, SingularSourceRevenueRow>();
+
+  for (const row of rows) {
+    const key = buildSourceRevenueRowKey(row);
+    const existing = grouped.get(key);
+
+    if (existing) {
+      existing.spend += row.spend;
+      existing.revenue += row.revenue;
+      existing.revenueAvailable ||= row.revenueAvailable;
+      existing.installs += row.installs;
+      existing.conversions += row.conversions;
+      existing.points.push(...row.points);
+      existing.currency = existing.currency === row.currency ? existing.currency : null;
+      continue;
+    }
+
+    grouped.set(key, {
+      ...row,
+      points: [...row.points],
+    });
+  }
+
+  return [...grouped.values()]
+    .map((row) => ({
+      ...row,
+      points: aggregateSourceRevenuePoints(row.points),
+    }))
+    .sort((left, right) => right.revenue - left.revenue || left.label.localeCompare(right.label));
+}
+
+function aggregateSourceRevenuePoints(points: SingularSourceRevenuePoint[]) {
+  const grouped = new Map<string, { revenue: number; spend: number }>();
+  const undatedPoints: SingularSourceRevenuePoint[] = [];
+
+  for (const point of points) {
+    if (!point.date) {
+      undatedPoints.push(point);
+      continue;
+    }
+
+    const existing = grouped.get(point.date) ?? { revenue: 0, spend: 0 };
+    existing.revenue += point.revenue;
+    existing.spend += point.spend;
+    grouped.set(point.date, existing);
+  }
+
+  return [
+    ...[...grouped.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([date, value]) => ({
+        date,
+        revenue: value.revenue,
+        spend: value.spend,
+      })),
+    ...undatedPoints,
+  ];
+}
+
+function mergeSingularSourceRevenueReports(
+  reports: SingularSourceRevenueReport[],
+) {
+  const firstReport = reports[0];
+
+  if (!firstReport) {
+    return getEmptySingularSourceRevenueReport();
+  }
+
+  const rows = aggregateSingularSourceRevenueRows(
+    reports.flatMap((report) => report.rows),
+  );
+
+  return {
+    configured: reports.some((report) => report.configured),
+    isPending: reports.some((report) => report.isPending),
+    cohortPeriod: firstReport.cohortPeriod,
+    cohortMetric: firstReport.cohortMetric,
+    rowCount: rows.length,
+    totalRevenue: rows.reduce((total, row) => total + row.revenue, 0),
+    rows,
+    warnings: normalizeSingularWarnings(reports.flatMap((report) => report.warnings)),
+  };
 }
 
 async function getTikTokSingularOverlayForRange(args: {
@@ -743,7 +1039,7 @@ async function completePendingReport(
       cohortPeriod: entry.cohortPeriod,
       sourceNames: entry.sourceNames,
       warnings: [
-        "Singular is still preparing the report for this date window. Run the same lookup again in a few seconds to reuse the in-flight report.",
+        "Singular is still preparing the report for this date window. This page will check again automatically.",
       ],
     });
   }
@@ -764,7 +1060,7 @@ async function pollPendingReport(
       cohortPeriod: entry.cohortPeriod,
       sourceNames: entry.sourceNames,
       warnings: [
-        "The pending Singular report expired before it finished. Run the lookup again to start a fresh report.",
+        "The pending Singular report expired before it finished. Submit the lookup again to start a fresh report.",
       ],
     });
   }
@@ -830,9 +1126,228 @@ async function pollPendingReport(
     cohortPeriod: entry.cohortPeriod,
     sourceNames: entry.sourceNames,
     warnings: [
-      `Singular report status is ${status.status?.toLowerCase() ?? "pending"}. Run the same lookup again in a few seconds to reuse it once the export is ready.`,
+      `Singular report status is ${status.status?.toLowerCase() ?? "pending"}. This page will check again automatically and reuse the export once it is ready.`,
     ],
   });
+}
+
+async function getSingularSourceRevenueReportForRange(args: {
+  startDate: string;
+  endDate: string;
+  cohortPeriod: string;
+  cohortMetric: string;
+  appNames: string[];
+}): Promise<SingularSourceRevenueReport> {
+  const cacheKey = buildSourceRevenueReportCacheKey({
+    startDate: args.startDate,
+    endDate: args.endDate,
+    cohortPeriod: args.cohortPeriod,
+    cohortMetric: args.cohortMetric,
+    appNames: args.appNames,
+  });
+  const cached = singularSourceRevenueReportCache.get(cacheKey);
+
+  if (cached?.kind === "ready" && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  if (cached?.kind === "pending" && cached.expiresAt > Date.now()) {
+    return completePendingSourceRevenueReport(cacheKey, cached);
+  }
+
+  const query = buildSingularSourceRevenueReportQuery({
+    startDate: args.startDate,
+    endDate: args.endDate,
+    cohortPeriod: args.cohortPeriod,
+    cohortMetric: args.cohortMetric,
+    appNames: args.appNames,
+  });
+
+  try {
+    const reportId = await singularClient.createAsyncReport(query);
+    const pendingEntry: SingularSourceRevenuePendingCacheEntry = {
+      kind: "pending",
+      expiresAt: Date.now() + SINGULAR_PENDING_REPORT_TTL_MS,
+      reportId,
+      query,
+      appNames: args.appNames,
+      cohortPeriod: args.cohortPeriod,
+      cohortMetric: args.cohortMetric,
+      lastPolledAt: Date.now(),
+    };
+
+    singularSourceRevenueReportCache.set(cacheKey, pendingEntry);
+
+    await sleep(SINGULAR_INITIAL_REPORT_WAIT_MS);
+
+    return pollPendingSourceRevenueReport(cacheKey, {
+      ...pendingEntry,
+      lastPolledAt: 0,
+    });
+  } catch (error) {
+    singularSourceRevenueReportCache.delete(cacheKey);
+
+    return getEmptySingularSourceRevenueReport({
+      configured: true,
+      cohortPeriod: args.cohortPeriod,
+      cohortMetric: args.cohortMetric,
+      warnings: normalizeSingularWarnings([
+        error instanceof SingularApiError || error instanceof Error
+          ? error.message
+          : "Could not load Singular source proceeds for this date window.",
+      ]),
+    });
+  }
+}
+
+async function completePendingSourceRevenueReport(
+  cacheKey: string,
+  entry: SingularSourceRevenuePendingCacheEntry,
+): Promise<SingularSourceRevenueReport> {
+  if (Date.now() - entry.lastPolledAt < SINGULAR_STATUS_POLL_INTERVAL_MS) {
+    return getEmptySingularSourceRevenueReport({
+      configured: true,
+      isPending: true,
+      cohortPeriod: entry.cohortPeriod,
+      cohortMetric: entry.cohortMetric,
+      warnings: [
+        "Singular is still preparing the source proceeds report for this date window. This page will check again automatically.",
+      ],
+    });
+  }
+
+  return pollPendingSourceRevenueReport(cacheKey, entry);
+}
+
+async function pollPendingSourceRevenueReport(
+  cacheKey: string,
+  entry: SingularSourceRevenuePendingCacheEntry,
+): Promise<SingularSourceRevenueReport> {
+  if (entry.expiresAt <= Date.now()) {
+    singularSourceRevenueReportCache.delete(cacheKey);
+
+    return getEmptySingularSourceRevenueReport({
+      configured: true,
+      cohortPeriod: entry.cohortPeriod,
+      cohortMetric: entry.cohortMetric,
+      warnings: [
+        "The pending Singular source proceeds report expired before it finished. Refresh again to start a fresh report.",
+      ],
+    });
+  }
+
+  const status = await singularClient.getReportStatus(entry.reportId);
+
+  if (status.status === "DONE" && status.download_url) {
+    const payload = await singularClient.downloadReport(status.download_url);
+    const rows = aggregateSingularSourceRevenueRows(
+      extractReportRows(payload)
+        .map((record) =>
+          normalizeSourceRevenueReportRow(
+            record,
+            entry.cohortPeriod,
+            entry.cohortMetric,
+          ),
+        )
+        .filter(
+          (row) =>
+            row.spend > 0 ||
+            row.revenue > 0 ||
+            row.installs > 0 ||
+            row.conversions > 0,
+        ),
+    );
+    const report: SingularSourceRevenueReport = {
+      configured: true,
+      isPending: false,
+      cohortPeriod: entry.cohortPeriod,
+      cohortMetric: entry.cohortMetric,
+      rowCount: rows.length,
+      totalRevenue: rows.reduce((total, row) => total + row.revenue, 0),
+      rows,
+      warnings: rows.some((row) => row.revenueAvailable)
+        ? []
+        : [
+            `Singular returned source rows, but ${entry.cohortPeriod} ${entry.cohortMetric} is not ready for this date window yet.`,
+          ],
+    };
+
+    singularSourceRevenueReportCache.set(cacheKey, {
+      kind: "ready",
+      expiresAt: Date.now() + SINGULAR_REPORT_CACHE_TTL_MS,
+      value: report,
+    });
+
+    return report;
+  }
+
+  if (status.status === "FAILED") {
+    singularSourceRevenueReportCache.delete(cacheKey);
+
+    return getEmptySingularSourceRevenueReport({
+      configured: true,
+      cohortPeriod: entry.cohortPeriod,
+      cohortMetric: entry.cohortMetric,
+      warnings: [
+        status.error ??
+          status.error_message ??
+          status.message ??
+          "Singular failed to prepare the source proceeds report for this date window.",
+      ],
+    });
+  }
+
+  singularSourceRevenueReportCache.set(cacheKey, {
+    ...entry,
+    lastPolledAt: Date.now(),
+  });
+
+  return getEmptySingularSourceRevenueReport({
+    configured: true,
+    isPending: true,
+    cohortPeriod: entry.cohortPeriod,
+    cohortMetric: entry.cohortMetric,
+    warnings: [
+      `Singular source proceeds report status is ${status.status?.toLowerCase() ?? "pending"}. This page will check again automatically.`,
+    ],
+  });
+}
+
+export async function getSingularSourceRevenueReport(args: {
+  startDate: string;
+  endDate: string;
+}): Promise<SingularSourceRevenueReport> {
+  if (!hasSingularEnv()) {
+    return getEmptySingularSourceRevenueReport();
+  }
+
+  const env = getSingularEnv();
+  const appNames = splitCommaSeparatedList(env.SINGULAR_APP_NAMES);
+  const cohortMetric = SINGULAR_SOURCE_REVENUE_COHORT_METRIC;
+  const rangeDays = getInclusiveDateRangeDays(args.startDate, args.endDate);
+  const dateChunks =
+    rangeDays > MAX_SINGULAR_REPORT_RANGE_DAYS
+      ? splitDateRangeIntoChunks({
+          startDate: args.startDate,
+          endDate: args.endDate,
+          maxDaysInclusive: MAX_SINGULAR_REPORT_RANGE_DAYS,
+        })
+      : [{ startDate: args.startDate, endDate: args.endDate }];
+  const reports: SingularSourceRevenueReport[] = [];
+
+  for (const chunk of dateChunks) {
+    reports.push(
+      await getSingularSourceRevenueReportForRange({
+        startDate: chunk.startDate,
+        endDate: chunk.endDate,
+        cohortPeriod: env.SINGULAR_COHORT_PERIOD,
+        cohortMetric,
+        appNames,
+      }),
+    );
+  }
+
+  return mergeSingularSourceRevenueReports(reports);
 }
 
 export async function getTikTokSingularOverlay(args: {

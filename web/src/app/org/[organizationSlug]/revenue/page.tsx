@@ -1,10 +1,12 @@
 import Link from "next/link";
 
+import { AdProfitAutoRefresh } from "@/components/org-dashboard/ad-profit-auto-refresh";
 import { DashboardIcon } from "@/components/org-dashboard/org-icons";
+import { RevenueProfitabilityClient } from "@/components/org-dashboard/revenue-profitability-client";
+import { RevenueTrendChartClient } from "@/components/org-dashboard/revenue-trend-chart-client";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
 import {
   getRevenueAttributionReport,
-  type RevenueAttributionDailyRow,
   type RevenueAttributionReport,
   type RevenueAttributionSourceRow,
 } from "@/server/adapty/revenue";
@@ -120,6 +122,15 @@ function formatPercent(value: number | null) {
     : "Unavailable";
 }
 
+function formatSignedAmount(value: number | null, currency: string | null) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "Unavailable";
+  }
+
+  const absoluteValue = formatAmount(Math.abs(value), currency);
+  return value < 0 ? `-${absoluteValue}` : absoluteValue;
+}
+
 function formatDate(value: string) {
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return Number.isNaN(parsed.getTime()) ? value : dateFormatter.format(parsed);
@@ -160,8 +171,20 @@ function SummaryPill(args: {
 }
 
 function RevenueShareBar({ report }: { report: RevenueAttributionReport }) {
-  const tiktokPercent = Math.max(0, Math.min(report.totals.tiktokShare ?? 0, 1));
-  const ugcPercent = Math.max(0, Math.min(report.totals.ugcShare ?? 0, 1));
+  const paidPercent = Math.max(0, Math.min(report.totals.paidShare ?? 0, 1));
+  const renewalPercent = Math.max(
+    0,
+    Math.min(
+      report.totals.total > 0
+        ? report.totals.renewalBucket / report.totals.total
+        : 0,
+      1,
+    ),
+  );
+  const organicPercent = Math.max(
+    0,
+    Math.min(report.totals.organicShare ?? 0, 1),
+  );
 
   return (
     <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
@@ -171,12 +194,13 @@ function RevenueShareBar({ report }: { report: RevenueAttributionReport }) {
             Attribution split
           </p>
           <h2 className="mt-2 text-xl font-medium tracking-[-0.04em] text-foreground">
-            TikTok vs UGC revenue
+            Paid, renewals, and organic proceeds
           </h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          {formatPercent(report.totals.tiktokShare)} TikTok ·{" "}
-          {formatPercent(report.totals.ugcShare)} UGC
+          {formatPercent(report.totals.paidShare)} paid ·{" "}
+          {formatPercent(report.totals.renewalShare)} renewal ·{" "}
+          {formatPercent(report.totals.organicShare)} organic
         </p>
       </div>
 
@@ -184,34 +208,50 @@ function RevenueShareBar({ report }: { report: RevenueAttributionReport }) {
         <div className="flex h-full w-full">
           <div
             className="h-full bg-[#79A8FF]"
-            style={{ width: `${tiktokPercent * 100}%` }}
+            style={{ width: `${paidPercent * 100}%` }}
+          />
+          <div
+            className="h-full bg-[#C8A26A]"
+            style={{ width: `${renewalPercent * 100}%` }}
           />
           <div
             className="h-full bg-[#F8C972]"
-            style={{ width: `${ugcPercent * 100}%` }}
+            style={{ width: `${organicPercent * 100}%` }}
           />
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      <div className="mt-4 grid gap-3 lg:grid-cols-3">
         <div className="rounded-[1.05rem] border border-white/[0.08] bg-black/[0.18] p-3.5">
           <div className="flex items-center gap-2">
             <span className="h-2.5 w-2.5 rounded-full bg-[#79A8FF]" />
-            <p className="text-sm font-medium text-foreground">TikTok</p>
+            <p className="text-sm font-medium text-foreground">Paid sources</p>
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
-            {formatAmount(report.totals.tiktok, report.currency)} attributed from
-            matching Adapty segments.
+            {formatAmount(report.totals.paid, report.currency)} attributed from
+            {report.appleSourceProvider === "none"
+              ? " TikTok, Snap, Facebook, and other supported source rows."
+              : " TikTok, Apple Ads, Snap, Facebook, and other supported source rows."}
+          </p>
+        </div>
+        <div className="rounded-[1.05rem] border border-white/[0.08] bg-black/[0.18] p-3.5">
+          <div className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-full bg-[#C8A26A]" />
+            <p className="text-sm font-medium text-foreground">Renewals</p>
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {formatAmount(report.totals.renewal, report.currency)} renewal
+            proceeds identified by Adapty renewal status.
           </p>
         </div>
         <div className="rounded-[1.05rem] border border-white/[0.08] bg-black/[0.18] p-3.5">
           <div className="flex items-center gap-2">
             <span className="h-2.5 w-2.5 rounded-full bg-[#F8C972]" />
-            <p className="text-sm font-medium text-foreground">UGC</p>
+            <p className="text-sm font-medium text-foreground">Organic / UGC</p>
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
-            {formatAmount(report.totals.ugc, report.currency)} calculated as total
-            revenue minus TikTok revenue.
+            {formatAmount(report.totals.organic, report.currency)} calculated as
+            Adapty total proceeds minus paid-source and renewal proceeds.
           </p>
         </div>
       </div>
@@ -219,69 +259,8 @@ function RevenueShareBar({ report }: { report: RevenueAttributionReport }) {
   );
 }
 
-function buildLinePath(args: {
-  rows: RevenueAttributionDailyRow[];
-  maxValue: number;
-  getValue: (row: RevenueAttributionDailyRow) => number | null;
-}) {
-  const width = 720;
-  const height = 260;
-  const paddingX = 28;
-  const paddingY = 24;
-  const usableWidth = width - paddingX * 2;
-  const usableHeight = height - paddingY * 2;
-  let path = "";
-
-  args.rows.forEach((row, index) => {
-    const value = args.getValue(row);
-
-    if (value === null) {
-      return;
-    }
-
-    const x =
-      paddingX +
-      (index * usableWidth) / Math.max(args.rows.length - 1, 1);
-    const y =
-      height -
-      paddingY -
-      (Math.max(value, 0) / Math.max(args.maxValue, 1)) * usableHeight;
-    path += `${path ? " L" : "M"} ${x.toFixed(2)} ${y.toFixed(2)}`;
-  });
-
-  return path || null;
-}
-
 function RevenueTrendChart({ report }: { report: RevenueAttributionReport }) {
-  const maxValue = Math.max(
-    ...report.dailyRows.flatMap((row) => [
-      row.total,
-      row.tiktok ?? 0,
-      row.ugc ?? 0,
-    ]),
-    1,
-  );
-  const totalPath = buildLinePath({
-    getValue: (row) => row.total,
-    maxValue,
-    rows: report.dailyRows,
-  });
-  const tiktokPath = report.hasDailySourceBreakdown
-    ? buildLinePath({
-        getValue: (row) => row.tiktok,
-        maxValue,
-        rows: report.dailyRows,
-      })
-    : null;
-  const ugcPath = report.hasDailySourceBreakdown
-    ? buildLinePath({
-        getValue: (row) => row.ugc,
-        maxValue,
-        rows: report.dailyRows,
-      })
-    : null;
-  const firstDate = report.dailyRows[0]?.date;
-  const lastDate = report.dailyRows[report.dailyRows.length - 1]?.date;
+  const includeApple = report.appleSourceProvider !== "none";
 
   return (
     <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
@@ -291,74 +270,20 @@ function RevenueTrendChart({ report }: { report: RevenueAttributionReport }) {
             Daily trend
           </p>
           <h2 className="mt-2 text-xl font-medium tracking-[-0.04em] text-foreground">
-            Revenue by day
+            Proceeds by day
           </h2>
         </div>
-        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-[#90FF4D]" />
-            Total
-          </span>
-          <span className="inline-flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-[#79A8FF]" />
-            TikTok
-          </span>
-          <span className="inline-flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-[#F8C972]" />
-            UGC
-          </span>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          Hover a day for source breakdown, spend, profit, and ROAS
+        </p>
       </div>
 
-      <div className="mt-5 overflow-hidden rounded-[1.15rem] border border-white/[0.08] bg-black/[0.18] p-3">
-        <svg
-          aria-label="Daily revenue trend"
-          className="h-72 w-full"
-          preserveAspectRatio="none"
-          role="img"
-          viewBox="0 0 720 260"
-        >
-          <path d="M28 24 H692" stroke="rgba(255,255,255,0.08)" strokeWidth="1" />
-          <path d="M28 130 H692" stroke="rgba(255,255,255,0.08)" strokeWidth="1" />
-          <path d="M28 236 H692" stroke="rgba(255,255,255,0.08)" strokeWidth="1" />
-          {totalPath ? (
-            <path
-              d={totalPath}
-              fill="none"
-              stroke="#90FF4D"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth="3"
-            />
-          ) : null}
-          {tiktokPath ? (
-            <path
-              d={tiktokPath}
-              fill="none"
-              stroke="#79A8FF"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth="2.5"
-            />
-          ) : null}
-          {ugcPath ? (
-            <path
-              d={ugcPath}
-              fill="none"
-              stroke="#F8C972"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth="2.5"
-            />
-          ) : null}
-        </svg>
-      </div>
-
-      <div className="mt-3 flex justify-between text-xs text-muted-foreground">
-        <span>{firstDate ? formatDate(firstDate) : "Start"}</span>
-        <span>{formatAmount(maxValue, report.currency)}</span>
-        <span>{lastDate ? formatDate(lastDate) : "End"}</span>
-      </div>
+      <RevenueTrendChartClient
+        currency={report.currency}
+        hasDailySourceBreakdown={report.hasDailySourceBreakdown}
+        includeApple={includeApple}
+        rows={report.dailyRows}
+      />
     </section>
   );
 }
@@ -366,23 +291,39 @@ function RevenueTrendChart({ report }: { report: RevenueAttributionReport }) {
 function SourceBadge({ kind }: { kind: RevenueAttributionSourceRow["kind"] }) {
   if (kind === "tiktok") {
     return (
-      <span className="rounded-full border border-[#79A8FF]/25 bg-[#79A8FF]/10 px-2.5 py-1 text-[0.58rem] uppercase tracking-[0.2em] text-[#B8D0FF]">
+      <span className="rounded-full border border-[#B9A7FF]/25 bg-[#B9A7FF]/10 px-2.5 py-1 text-[0.58rem] uppercase tracking-[0.2em] text-[#D8CFFF]">
         TikTok
       </span>
     );
   }
 
-  if (kind === "unattributed") {
+  if (kind === "apple") {
+    return (
+      <span className="rounded-full border border-[#FF8FB3]/25 bg-[#FF8FB3]/10 px-2.5 py-1 text-[0.58rem] uppercase tracking-[0.2em] text-[#FFD2DF]">
+        Apple Ads
+      </span>
+    );
+  }
+
+  if (kind === "organic") {
     return (
       <span className="rounded-full border border-white/[0.1] bg-white/[0.05] px-2.5 py-1 text-[0.58rem] uppercase tracking-[0.2em] text-muted-foreground">
-        UGC
+        Organic
+      </span>
+    );
+  }
+
+  if (kind === "renewal") {
+    return (
+      <span className="rounded-full border border-[#C8A26A]/25 bg-[#C8A26A]/10 px-2.5 py-1 text-[0.58rem] uppercase tracking-[0.2em] text-[#F2D9A8]">
+        Renewal
       </span>
     );
   }
 
   return (
-    <span className="rounded-full border border-[#F8C972]/25 bg-[#F8C972]/10 px-2.5 py-1 text-[0.58rem] uppercase tracking-[0.2em] text-[#FFE4A3]">
-      UGC
+    <span className="rounded-full border border-[#79A8FF]/25 bg-[#79A8FF]/10 px-2.5 py-1 text-[0.58rem] uppercase tracking-[0.2em] text-[#B8D0FF]">
+      Paid
     </span>
   );
 }
@@ -396,17 +337,27 @@ function SourceBreakdownTable({ report }: { report: RevenueAttributionReport }) 
             Source table
           </p>
           <h2 className="mt-2 text-xl font-medium tracking-[-0.04em] text-foreground">
-            Adapty attribution segments
+            Proceeds by source
           </h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          Segmented by {report.attributionDimension.replace(/_/g, " ")}
+          {report.sourceProvider === "singular"
+            ? `Singular ${report.singularCohortPeriod ?? ""} source split${
+                report.appleSourceProvider === "adapty_dashboard"
+                  ? " plus Adapty Ads Manager Apple Search Ads"
+                  : report.appleSourceProvider === "adapty"
+                    ? " plus Adapty Apple Ads channel"
+                  : ""
+              }`
+            : report.appleSourceProvider === "adapty_dashboard"
+              ? `Adapty ${report.attributionDimension.replace(/_/g, " ")} split plus Ads Manager Apple Search Ads`
+              : `Adapty ${report.attributionDimension.replace(/_/g, " ")} split`}
         </p>
       </div>
 
       {report.sourceRows.length > 0 ? (
         <div className="mt-5 overflow-x-auto">
-          <table className="w-full min-w-[640px] border-separate border-spacing-0 text-left text-sm">
+          <table className="w-full min-w-[840px] border-separate border-spacing-0 text-left text-sm">
             <thead>
               <tr className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
                 <th className="border-b border-white/[0.08] px-3 py-3 font-medium">
@@ -416,10 +367,16 @@ function SourceBreakdownTable({ report }: { report: RevenueAttributionReport }) 
                   Bucket
                 </th>
                 <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
-                  Revenue
+                  Proceeds
                 </th>
                 <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
                   Share
+                </th>
+                <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
+                  Spend
+                </th>
+                <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
+                  Installs
                 </th>
               </tr>
             </thead>
@@ -438,6 +395,16 @@ function SourceBreakdownTable({ report }: { report: RevenueAttributionReport }) 
                   <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
                     {formatPercent(row.share)}
                   </td>
+                  <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
+                    {row.spend === null
+                      ? "Unavailable"
+                      : formatAmount(row.spend, report.currency)}
+                  </td>
+                  <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
+                    {row.installs === null
+                      ? "Unavailable"
+                      : decimalFormatter.format(row.installs)}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -445,7 +412,7 @@ function SourceBreakdownTable({ report }: { report: RevenueAttributionReport }) 
         </div>
       ) : (
         <p className="mt-5 text-sm leading-6 text-muted-foreground">
-          Adapty returned no attribution segments for this date range.
+          No proceeds source rows were available for this date range.
         </p>
       )}
     </section>
@@ -461,6 +428,7 @@ export default async function RevenuePage({
   const { startDate, endDate } = normalizeDateRange(resolvedSearchParams);
   const report = await getRevenueAttributionReport({
     endDate,
+    organizationSlug,
     startDate,
   });
 
@@ -470,15 +438,20 @@ export default async function RevenuePage({
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-3xl">
             <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
-              Revenue attribution
+              Proceeds attribution
             </p>
             <h1 className="mt-2 text-2xl font-medium tracking-[-0.045em] text-foreground">
-              See how much revenue comes from TikTok and how much remains UGC.
+              Proceeds by paid source and organic lift.
             </h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Total revenue comes from Adapty. TikTok is classified from matching
-              attribution segments, and UGC is calculated as total revenue minus
-              TikTok revenue.
+              Total proceeds come from Adapty. Apple Ads proceeds use Adapty
+              Ads Manager when dashboard auth is configured, then fall back to
+              Adapty attribution channel. Renewal proceeds use the Adapty
+              period split: Activation is new proceeds, renewal periods are old-source proceeds.
+            </p>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              Apple Search Ads cost, profit, and ROAS come from Adapty Ads
+              Manager when the bearer token, app id, and company id are present.
             </p>
           </div>
 
@@ -492,10 +465,26 @@ export default async function RevenuePage({
 
         <div className="mt-5 flex flex-wrap gap-2">
           <SummaryPill label={`Adapty ${report.configured ? "connected" : "missing"}`} />
-          <SummaryPill label={`${formatDate(startDate)} to ${formatDate(endDate)}`} />
-          <SummaryPill label={`Matches ${report.tiktokPatterns.join(", ")}`} />
           <SummaryPill
-            label={`Dimension ${report.attributionDimension.replace(/_/g, " ")}`}
+            label={`Singular ${report.singularConfigured ? (report.singularPending ? "preparing" : "connected") : "missing"}`}
+          />
+          <SummaryPill label={`${formatDate(startDate)} to ${formatDate(endDate)}`} />
+          <SummaryPill label={`Timezone ${report.timeZone}`} />
+          <SummaryPill
+            label={
+              report.sourceProvider === "singular"
+                ? `Sources Singular ${report.singularCohortPeriod ?? ""}`
+                : `Sources ${report.attributionDimension.replace(/_/g, " ")}`
+            }
+          />
+          <SummaryPill
+            label={`Apple Ads ${
+              report.appleSourceProvider === "adapty_dashboard"
+                ? `Ads Manager ${report.appleAdsDashboardRowCount} rows`
+                : report.appleSourceProvider === "adapty"
+                  ? "Adapty channel"
+                : "not found"
+            }`}
           />
         </div>
       </section>
@@ -538,7 +527,7 @@ export default async function RevenuePage({
               className="inline-flex min-h-11 w-full items-center justify-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68] md:w-auto"
               type="submit"
             >
-              Refresh revenue
+              Refresh proceeds
             </button>
           </div>
         </form>
@@ -546,10 +535,16 @@ export default async function RevenuePage({
 
       {!report.configured ? (
         <section className="rounded-[1.35rem] border border-[#FFD24D]/20 bg-[#FFD24D]/[0.08] p-4 text-sm leading-6 text-[#FFEAB1]">
-          Add ADAPTY_API_KEY to the server environment to load mobile app revenue
+          Add ADAPTY_API_KEY to the server environment to load mobile app proceeds
           from Adapty.
         </section>
       ) : null}
+
+      <AdProfitAutoRefresh
+        enabled={report.singularPending}
+        label="Preparing proceeds report"
+        message="Singular is preparing the source proceeds report."
+      />
 
       {report.warnings.length > 0 ? (
         <section className="rounded-[1.35rem] border border-[#FFD24D]/20 bg-[#FFD24D]/[0.08] p-4 text-sm text-[#FFEAB1]">
@@ -564,35 +559,109 @@ export default async function RevenuePage({
         </section>
       ) : null}
 
+      {report.providerTimeZones.length > 0 ? (
+        <section className="rounded-[1.35rem] border border-white/[0.08] bg-white/[0.03] p-4 text-sm text-muted-foreground">
+          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+            Timezone reconciliation
+          </p>
+          <div className="mt-3 grid gap-2 lg:grid-cols-2">
+            {report.providerTimeZones.map((row) => (
+              <div
+                key={`${row.provider}-${row.source}-${row.timeZone}`}
+                className="rounded-[1rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium text-foreground">
+                    {row.provider} · {row.source}
+                  </p>
+                  <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-1 text-[0.62rem] uppercase tracking-[0.16em] text-muted-foreground">
+                    {row.timeZone}
+                  </span>
+                </div>
+                <p className="mt-1.5 text-xs leading-5">{row.reconciliation}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
           icon="payouts"
-          label="Total revenue"
-          meta="Adapty revenue for the selected purchase-date window"
+          label="Total proceeds"
+          meta="Adapty proceeds for the selected purchase-date window"
           value={formatAmount(report.totals.total, report.currency)}
         />
         <StatCard
-          icon="integrations"
-          label="TikTok revenue"
-          meta={`${formatPercent(report.totals.tiktokShare)} of total revenue`}
-          value={formatAmount(report.totals.tiktok, report.currency)}
+          icon="payouts"
+          label="New proceeds"
+          meta={`${formatPercent(report.totals.newShare)} of total after renewals`}
+          value={formatAmount(report.totals.newProceeds, report.currency)}
         />
         <StatCard
-          icon="creators"
-          label="UGC revenue"
-          meta="Total revenue minus TikTok revenue"
-          value={formatAmount(report.totals.ugc, report.currency)}
+          icon="payouts"
+          label="Renewal proceeds"
+          meta={`${formatPercent(report.totals.renewalShare)} of total proceeds`}
+          value={formatAmount(report.totals.renewal, report.currency)}
+        />
+        <StatCard
+          icon="integrations"
+          label="Paid proceeds"
+          meta={`${formatPercent(report.totals.paidShare)} of total proceeds`}
+          value={formatAmount(report.totals.paid, report.currency)}
         />
         <StatCard
           icon="compare"
-          label="TikTok share"
-          meta={`${formatPercent(report.totals.ugcShare)} remains UGC`}
-          value={formatPercent(report.totals.tiktokShare)}
+          label="TikTok proceeds"
+          meta={`${formatPercent(report.totals.tiktokShare)} of total proceeds`}
+          value={formatAmount(report.totals.tiktok, report.currency)}
+        />
+        <StatCard
+          icon="compare"
+          label="Apple Ads proceeds"
+          meta={
+            report.appleSourceProvider === "none"
+              ? "No Apple Search Ads revenue found"
+              : report.appleSourceProvider === "adapty_dashboard"
+                ? `${formatPercent(report.totals.appleShare)} of total proceeds from Ads Manager`
+                : `${formatPercent(report.totals.appleShare)} of total proceeds from Adapty attribution_channel`
+          }
+          value={
+            report.appleSourceProvider === "none"
+              ? "Unavailable"
+              : formatAmount(report.totals.apple, report.currency)
+          }
+        />
+        <StatCard
+          icon="integrations"
+          label="Apple Ads cost"
+          meta={
+            report.totals.appleSpend === null
+              ? "Adapty Ads Manager spend unavailable"
+              : `${formatSignedAmount(report.totals.appleProfit, report.currency)} profit · ${formatPercent(report.totals.appleRoas)} ROAS`
+          }
+          value={
+            report.totals.appleSpend === null
+              ? "Unavailable"
+              : formatAmount(report.totals.appleSpend, report.currency)
+          }
+        />
+        <StatCard
+          icon="creators"
+          label="Organic / UGC proceeds"
+          meta={`${formatPercent(report.totals.organicShare)} remains after paid + renewals`}
+          value={formatAmount(report.totals.organic, report.currency)}
         />
       </section>
 
       <RevenueShareBar report={report} />
       <RevenueTrendChart report={report} />
+      <RevenueProfitabilityClient
+        endDate={endDate}
+        organizationSlug={organizationSlug}
+        searchParams={resolvedSearchParams}
+        startDate={startDate}
+      />
       <SourceBreakdownTable report={report} />
     </div>
   );
