@@ -4,7 +4,10 @@ import {
   getRevenueUgcPaySearchParams,
 } from "@/server/adapty/revenue-profitability-calculations";
 import { getRevenueAttributionReport } from "@/server/adapty/revenue";
-import { getOrganizationUgcPayData } from "@/server/ugc-pay/queries";
+import {
+  getOrganizationUgcPayData,
+  type UgcPayVideoRow,
+} from "@/server/ugc-pay/queries";
 import { getFacelessCostAmount } from "@/server/viewsbase/faceless-calculations";
 import {
   getViewsBaseFacelessReport,
@@ -15,7 +18,9 @@ import {
   calculateUgcStatusMetrics,
   getUgcStatusProceedsByDate,
   getUgcStatusSpendByDate,
+  selectTopUgcStatusVideos,
   type UgcStatusMetrics,
+  type UgcStatusTopVideoRow,
 } from "./ugc-status-calculations";
 
 const UGC_STATUS_DAILY_QUERY_CONCURRENCY = 3;
@@ -31,6 +36,10 @@ export type UgcStatusDailyRow = UgcStatusMetrics & {
   facelessSpend: number;
   facelessViews: number;
   proceeds: number;
+  topVideos: {
+    faceless: UgcStatusTopVideoRow[];
+    ugc: UgcStatusTopVideoRow[];
+  };
   ugcCpmSpend: number;
   ugcFixedSpend: number;
   ugcSpend: number;
@@ -107,6 +116,45 @@ function getFacelessDailyCost(
   });
 }
 
+function getUgcVideoTitle(video: UgcPayVideoRow) {
+  const title = video.titleOrCaption?.trim();
+
+  if (title) {
+    return title;
+  }
+
+  return video.sourceVideoId || video.videoId || "Untitled video";
+}
+
+export function getTopUgcStatusVideos(
+  videos: UgcPayVideoRow[],
+): UgcStatusTopVideoRow[] {
+  return selectTopUgcStatusVideos(
+    videos.map((video) => ({
+      creatorName: video.creatorName,
+      id: video.videoId,
+      spend: video.videoPay,
+      title: getUgcVideoTitle(video),
+      url: video.videoUrl,
+      views: video.payableViews,
+    })),
+  );
+}
+
+function getTopFacelessVideos(
+  report: ViewsBaseFacelessReport | null,
+  date: string,
+): UgcStatusTopVideoRow[] {
+  return (report?.topVideosByDate[date] ?? []).map((video) => ({
+    creatorName: video.creatorName ?? video.creatorHandle,
+    id: video.id,
+    spend: video.spend,
+    title: video.title,
+    url: video.url,
+    views: video.views,
+  }));
+}
+
 export async function getUgcStatusData(args: {
   organizationSlug: string;
   searchParams: DashboardSearchParams;
@@ -141,6 +189,7 @@ export async function getUgcStatusData(args: {
           cpmSpend: dailyData.summary.videoPay,
           fixedSpend: dailyData.summary.fixedPay,
           spend: dailyData.summary.totalPay,
+          topVideos: getTopUgcStatusVideos(dailyData.videos),
           views: dailyData.summary.payableViews,
         };
       }),
@@ -198,6 +247,7 @@ export async function getUgcStatusData(args: {
       cpmSpend: 0,
       fixedSpend: 0,
       spend: 0,
+      topVideos: [],
       views: 0,
     };
     const faceless = facelessSpendByDate.get(date) ?? {
@@ -217,6 +267,10 @@ export async function getUgcStatusData(args: {
       date,
       facelessSpend: faceless.spend,
       facelessViews: faceless.views,
+      topVideos: {
+        faceless: getTopFacelessVideos(facelessSpendReport.report, date),
+        ugc: ugc.topVideos ?? [],
+      },
       ugcCpmSpend: reconciledUgcSpend.cpmSpend,
       ugcFixedSpend: reconciledUgcSpend.fixedSpend,
       ugcSpend: reconciledUgcSpend.spend,

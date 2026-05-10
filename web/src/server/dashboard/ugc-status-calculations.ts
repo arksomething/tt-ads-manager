@@ -20,6 +20,15 @@ export type UgcStatusMetrics = {
   facelessViewShare: number | null;
 };
 
+export type UgcStatusTopVideoRow = {
+  creatorName: string | null;
+  id: string;
+  spend: number | null;
+  title: string;
+  url: string | null;
+  views: number;
+};
+
 function roundCurrency(value: number) {
   return Math.round(value * 100) / 100;
 }
@@ -130,6 +139,12 @@ export function getUgcStatusSpendByDate(args: {
   }
 
   return spendByDate;
+}
+
+export function selectTopUgcStatusVideos(
+  videos: UgcStatusTopVideoRow[],
+): UgcStatusTopVideoRow[] {
+  return [...videos].sort((a, b) => b.views - a.views).slice(0, 5);
 }
 
 export function allocateTotalByDailyWeights(args: {

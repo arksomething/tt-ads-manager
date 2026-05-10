@@ -6,6 +6,7 @@ import {
   calculateUgcStatusMetrics,
   getUgcStatusProceedsByDate,
   getUgcStatusSpendByDate,
+  selectTopUgcStatusVideos,
 } from "../src/server/dashboard/ugc-status-calculations.ts";
 
 test("calculates UGC status profit and ratios", () => {
@@ -161,4 +162,20 @@ test("reconciles daily UGC spend back to the UGC Pay summary total", () => {
 
   assert.equal(Number(total.toFixed(2)), 1_157.13);
   assert.equal(spend.get("2026-05-04")?.spend, 288.31);
+});
+
+test("selects the top five UGC status videos by views", () => {
+  const videos = [
+    { id: "1", title: "one", creatorName: "A", url: null, views: 10, spend: 1 },
+    { id: "2", title: "two", creatorName: "B", url: null, views: 60, spend: 6 },
+    { id: "3", title: "three", creatorName: "C", url: null, views: 20, spend: 2 },
+    { id: "4", title: "four", creatorName: "D", url: null, views: 50, spend: 5 },
+    { id: "5", title: "five", creatorName: "E", url: null, views: 40, spend: 4 },
+    { id: "6", title: "six", creatorName: "F", url: null, views: 30, spend: 3 },
+  ];
+
+  assert.deepEqual(
+    selectTopUgcStatusVideos(videos).map((video) => video.id),
+    ["2", "4", "5", "6", "3"],
+  );
 });

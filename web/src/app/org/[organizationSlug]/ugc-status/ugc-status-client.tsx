@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { DashboardIcon } from "@/components/org-dashboard/org-icons";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
@@ -93,6 +93,84 @@ function formatRatio(value: number | null) {
 function formatDate(value: string) {
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return Number.isNaN(parsed.getTime()) ? value : dateFormatter.format(parsed);
+}
+
+function TopVideoList({
+  currency,
+  label,
+  spendLabel,
+  videos,
+}: {
+  currency: string | null;
+  label: string;
+  spendLabel: string;
+  videos: UgcStatusData["rows"][number]["topVideos"]["ugc"];
+}) {
+  return (
+    <div className="rounded-[1rem] border border-white/[0.08] bg-black/20 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-medium text-foreground">{label}</h3>
+        <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+          Top {videos.length || 0}
+        </span>
+      </div>
+
+      {videos.length > 0 ? (
+        <div className="mt-3 divide-y divide-white/[0.06]">
+          {videos.map((video, index) => (
+            <div
+              className="grid grid-cols-[2rem_minmax(0,1fr)_auto] gap-3 py-3 text-sm"
+              key={video.id}
+            >
+              <div className="text-muted-foreground">{index + 1}</div>
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  {video.url ? (
+                    <a
+                      className="truncate font-medium text-foreground hover:text-white"
+                      href={video.url}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      {video.title}
+                    </a>
+                  ) : (
+                    <p className="truncate font-medium text-foreground">
+                      {video.title}
+                    </p>
+                  )}
+                  {video.url ? (
+                    <DashboardIcon
+                      aria-hidden="true"
+                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                      name="externalLink"
+                    />
+                  ) : null}
+                </div>
+                <p className="mt-1 truncate text-xs text-muted-foreground">
+                  {video.creatorName ?? "Unknown creator"}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="font-medium text-foreground">
+                  {formatViews(video.views)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {video.spend === null
+                    ? spendLabel
+                    : `${formatAmount(video.spend, currency)} ${spendLabel}`}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-4 text-sm text-muted-foreground">
+          No video rows for this day.
+        </p>
+      )}
+    </div>
+  );
 }
 
 function appendSearchParams(
@@ -333,6 +411,8 @@ function UgcStatusSkeleton() {
 }
 
 function UgcStatusTable({ data }: { data: UgcStatusData }) {
+  const [expandedDate, setExpandedDate] = useState<string | null>(null);
+
   return (
     <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -350,9 +430,10 @@ function UgcStatusTable({ data }: { data: UgcStatusData }) {
       </div>
 
       <div className="mt-5 overflow-x-auto">
-        <table className="w-full min-w-[1220px] border-separate border-spacing-0 text-left text-sm">
+        <table className="w-full min-w-[1260px] border-separate border-spacing-0 text-left text-sm">
           <thead>
             <tr className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+              <th className="w-10 border-b border-white/[0.08] px-3 py-3 font-medium" />
               <th className="border-b border-white/[0.08] px-3 py-3 font-medium">
                 Day
               </th>
@@ -398,54 +479,99 @@ function UgcStatusTable({ data }: { data: UgcStatusData }) {
             </tr>
           </thead>
           <tbody>
-            {data.rows.map((row) => (
-              <tr className="text-foreground" key={row.date}>
-                <td className="border-b border-white/[0.06] px-3 py-3">
-                  {formatDate(row.date)}
-                </td>
-                <td className="border-b border-white/[0.06] px-3 py-3 text-right font-medium">
-                  {formatAmount(row.proceeds, data.currency)}
-                </td>
-                <td className="border-b border-white/[0.06] px-3 py-3 text-right">
-                  {formatAmount(row.spend, data.currency)}
-                </td>
-                <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
-                  {formatAmount(row.ugcSpend, data.currency)}
-                </td>
-                <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
-                  {formatAmount(row.ugcFixedSpend, data.currency)}
-                </td>
-                <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
-                  {formatAmount(row.ugcCpmSpend, data.currency)}
-                </td>
-                <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
-                  {formatAmount(row.facelessSpend, data.currency)}
-                </td>
-                <td className="border-b border-white/[0.06] px-3 py-3 text-right">
-                  {formatSignedAmount(row.profit, data.currency)}
-                </td>
-                <td className="border-b border-white/[0.06] px-3 py-3 text-right">
-                  {formatViews(row.views)}
-                </td>
-                <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
-                  {formatViews(row.ugcViews)}
-                </td>
-                <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
-                  {formatViews(row.facelessViews)}
-                </td>
-                <td className="border-b border-white/[0.06] px-3 py-3 text-right">
-                  {formatRatio(row.roas)}
-                </td>
-                <td className="border-b border-white/[0.06] px-3 py-3 text-right">
-                  {formatPercent(row.margin)}
-                </td>
-                <td className="border-b border-white/[0.06] px-3 py-3 text-right">
-                  {row.profitPerThousandViews === null
-                    ? "Unavailable"
-                    : formatSignedAmount(row.profitPerThousandViews, data.currency)}
-                </td>
-              </tr>
-            ))}
+            {data.rows.map((row) => {
+              const isExpanded = expandedDate === row.date;
+
+              return (
+                <Fragment key={row.date}>
+                  <tr className="text-foreground">
+                    <td className="border-b border-white/[0.06] px-3 py-3">
+                      <button
+                        aria-expanded={isExpanded}
+                        aria-label={`Toggle ${formatDate(row.date)} video breakdown`}
+                        className="flex h-7 w-7 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.03] text-muted-foreground transition hover:border-white/[0.18] hover:text-foreground"
+                        onClick={() =>
+                          setExpandedDate(isExpanded ? null : row.date)
+                        }
+                        type="button"
+                      >
+                        <DashboardIcon
+                          className="h-3.5 w-3.5"
+                          name={isExpanded ? "chevronDown" : "chevronRight"}
+                        />
+                      </button>
+                    </td>
+                    <td className="border-b border-white/[0.06] px-3 py-3">
+                      {formatDate(row.date)}
+                    </td>
+                    <td className="border-b border-white/[0.06] px-3 py-3 text-right font-medium">
+                      {formatAmount(row.proceeds, data.currency)}
+                    </td>
+                    <td className="border-b border-white/[0.06] px-3 py-3 text-right">
+                      {formatAmount(row.spend, data.currency)}
+                    </td>
+                    <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
+                      {formatAmount(row.ugcSpend, data.currency)}
+                    </td>
+                    <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
+                      {formatAmount(row.ugcFixedSpend, data.currency)}
+                    </td>
+                    <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
+                      {formatAmount(row.ugcCpmSpend, data.currency)}
+                    </td>
+                    <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
+                      {formatAmount(row.facelessSpend, data.currency)}
+                    </td>
+                    <td className="border-b border-white/[0.06] px-3 py-3 text-right">
+                      {formatSignedAmount(row.profit, data.currency)}
+                    </td>
+                    <td className="border-b border-white/[0.06] px-3 py-3 text-right">
+                      {formatViews(row.views)}
+                    </td>
+                    <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
+                      {formatViews(row.ugcViews)}
+                    </td>
+                    <td className="border-b border-white/[0.06] px-3 py-3 text-right text-muted-foreground">
+                      {formatViews(row.facelessViews)}
+                    </td>
+                    <td className="border-b border-white/[0.06] px-3 py-3 text-right">
+                      {formatRatio(row.roas)}
+                    </td>
+                    <td className="border-b border-white/[0.06] px-3 py-3 text-right">
+                      {formatPercent(row.margin)}
+                    </td>
+                    <td className="border-b border-white/[0.06] px-3 py-3 text-right">
+                      {row.profitPerThousandViews === null
+                        ? "Unavailable"
+                        : formatSignedAmount(row.profitPerThousandViews, data.currency)}
+                    </td>
+                  </tr>
+                  {isExpanded ? (
+                    <tr>
+                      <td
+                        className="border-b border-white/[0.06] px-3 py-4"
+                        colSpan={15}
+                      >
+                        <div className="grid gap-4 lg:grid-cols-2">
+                          <TopVideoList
+                            currency={data.currency}
+                            label="UGC videos by payable views"
+                            spendLabel="paid"
+                            videos={row.topVideos.ugc}
+                          />
+                          <TopVideoList
+                            currency={data.currency}
+                            label="Faceless posted videos by views"
+                            spendLabel="est. payout"
+                            videos={row.topVideos.faceless}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
