@@ -160,20 +160,7 @@ export type ViewsBaseFacelessReport = {
   };
   dailyRows: ViewsBaseDailySpendRow[];
   creatorRows: ViewsBaseCreatorSpendRow[];
-  topVideosByDate: Record<string, ViewsBaseFacelessTopVideoRow[]>;
   paymentRows: NonNullable<ViewsBasePaymentSummaryResponse["summary"]>;
-};
-
-export type ViewsBaseFacelessTopVideoRow = {
-  creatorName: string | null;
-  creatorHandle: string | null;
-  date: string;
-  id: string;
-  platform: string | null;
-  spend: number;
-  title: string;
-  url: string | null;
-  views: number;
 };
 
 function normalizeText(value: unknown) {
@@ -192,81 +179,6 @@ function toFiniteNumber(value: unknown, fallback = 0) {
 
 function roundCurrency(value: number) {
   return Math.round(value * 100) / 100;
-}
-
-function getVideoPostedDate(video: ViewsBaseVideoRow) {
-  return normalizeDateInput(normalizeText(video.posted_at)?.slice(0, 10));
-}
-
-function getFacelessVideoTitle(video: ViewsBaseVideoRow) {
-  return (
-    normalizeText(video.platform_post_id) ??
-    normalizeText(video.url) ??
-    normalizeText(video.id) ??
-    "Untitled video"
-  );
-}
-
-function buildTopFacelessVideosByDate(args: {
-  videos: ViewsBaseVideoRow[];
-  startDate: string;
-  endDate: string;
-}) {
-  const rowsByDate = new Map<string, ViewsBaseFacelessTopVideoRow[]>();
-
-  args.videos.forEach((video, index) => {
-    const date = getVideoPostedDate(video);
-
-    if (!date || date < args.startDate || date > args.endDate) {
-      return;
-    }
-
-    const rows = rowsByDate.get(date) ?? [];
-    const views = Math.max(
-      0,
-      Math.round(toFiniteNumber(video.finalized_views ?? video.current_views, 0)),
-    );
-
-    rows.push({
-      creatorHandle: normalizeText(video.influencer?.handle),
-      creatorName: normalizeText(video.influencer?.name),
-      date,
-      id:
-        normalizeText(video.id) ??
-        normalizeText(video.platform_post_id) ??
-        `${date}-${index}`,
-      platform: normalizeText(video.platform),
-      spend: roundCurrency(calculateVideoProjectedSpend(video)),
-      title: getFacelessVideoTitle(video),
-      url: normalizeText(video.url),
-      views,
-    });
-    rowsByDate.set(date, rows);
-  });
-
-  return Object.fromEntries(
-    [...rowsByDate.entries()].map(([date, rows]) => [
-      date,
-      rows.sort((a, b) => b.views - a.views).slice(0, 5),
-    ]),
-  );
-}
-
-function aggregateTopFacelessVideosByDate(reports: ViewsBaseFacelessReport[]) {
-  const rowsByDate = new Map<string, ViewsBaseFacelessTopVideoRow[]>();
-
-  for (const report of reports) {
-    for (const [date, rows] of Object.entries(report.topVideosByDate)) {
-      rowsByDate.set(date, [...(rowsByDate.get(date) ?? []), ...rows]);
-    }
-  }
-
-  return Object.fromEntries(
-    [...rowsByDate.entries()].map(([date, rows]) => [
-      date,
-      rows.sort((a, b) => b.views - a.views).slice(0, 5),
-    ]),
-  );
 }
 
 function getSpendTotals(dailyRows: ViewsBaseDailySpendRow[]) {
@@ -616,11 +528,6 @@ async function getSingleViewsBaseFacelessReport(args: {
     },
     dailyRows,
     creatorRows,
-    topVideosByDate: buildTopFacelessVideosByDate({
-      videos,
-      startDate: args.startDate,
-      endDate: args.endDate,
-    }),
     paymentRows: paymentSummary.summary ?? [],
   } satisfies ViewsBaseFacelessReport;
 }
@@ -790,7 +697,6 @@ function aggregateReports(args: {
   const pendingCpms = args.reports
     .map((report) => report.stats.pendingCpm)
     .filter((value): value is number => value != null);
-  const topVideosByDate = aggregateTopFacelessVideosByDate(args.reports);
 
   return {
     campaign: {
@@ -837,7 +743,6 @@ function aggregateReports(args: {
     },
     dailyRows,
     creatorRows,
-    topVideosByDate,
     paymentRows: args.reports.flatMap((report) => report.paymentRows),
   } satisfies ViewsBaseFacelessReport;
 }

@@ -143,8 +143,41 @@ export function getUgcStatusSpendByDate(args: {
 
 export function selectTopUgcStatusVideos(
   videos: UgcStatusTopVideoRow[],
+  limit = 5,
 ): UgcStatusTopVideoRow[] {
-  return [...videos].sort((a, b) => b.views - a.views).slice(0, 5);
+  return [...videos].sort((a, b) => b.views - a.views).slice(0, limit);
+}
+
+function addDateOnlyDays(value: string, days: number) {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+
+export function getUgcStatusTopVideoSearchParams(args: {
+  date: string;
+  lookbackDays?: number;
+  searchParams: Record<string, string | string[] | undefined>;
+  viewWindowDays?: number;
+}) {
+  const lookbackDays = args.lookbackDays ?? 30;
+  const viewWindowDays = args.viewWindowDays ?? 7;
+
+  return {
+    ...args.searchParams,
+    endDate: args.date,
+    globalViewWindowDays: String(viewWindowDays),
+    payMode: "gained",
+    reportTimeZone: "UTC",
+    startDate: args.date,
+    videoWindowStartDate: addDateOnlyDays(args.date, -lookbackDays),
+    viewWindowMode: "first-days",
+  };
 }
 
 export function allocateTotalByDailyWeights(args: {

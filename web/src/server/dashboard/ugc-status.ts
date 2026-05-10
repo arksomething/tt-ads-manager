@@ -18,6 +18,7 @@ import {
   calculateUgcStatusMetrics,
   getUgcStatusProceedsByDate,
   getUgcStatusSpendByDate,
+  getUgcStatusTopVideoSearchParams,
   selectTopUgcStatusVideos,
   type UgcStatusMetrics,
   type UgcStatusTopVideoRow,
@@ -36,10 +37,6 @@ export type UgcStatusDailyRow = UgcStatusMetrics & {
   facelessSpend: number;
   facelessViews: number;
   proceeds: number;
-  topVideos: {
-    faceless: UgcStatusTopVideoRow[];
-    ugc: UgcStatusTopVideoRow[];
-  };
   ugcCpmSpend: number;
   ugcFixedSpend: number;
   ugcSpend: number;
@@ -68,6 +65,16 @@ export type UgcStatusData = {
   ugcSpend: number;
   ugcViews: number;
   rows: UgcStatusDailyRow[];
+};
+
+export type UgcStatusTopVideosData = {
+  date: string;
+  facelessUnavailableReason: string;
+  limit: number;
+  lookbackDays: number;
+  ugc: UgcStatusTopVideoRow[];
+  viewWindowDays: number;
+  warnings: string[];
 };
 
 async function mapWithConcurrency<T, R>(
@@ -128,6 +135,7 @@ function getUgcVideoTitle(video: UgcPayVideoRow) {
 
 export function getTopUgcStatusVideos(
   videos: UgcPayVideoRow[],
+  limit = 5,
 ): UgcStatusTopVideoRow[] {
   return selectTopUgcStatusVideos(
     videos.map((video) => ({
@@ -138,21 +146,42 @@ export function getTopUgcStatusVideos(
       url: video.videoUrl,
       views: video.payableViews,
     })),
+    limit,
   );
 }
 
-function getTopFacelessVideos(
-  report: ViewsBaseFacelessReport | null,
-  date: string,
-): UgcStatusTopVideoRow[] {
-  return (report?.topVideosByDate[date] ?? []).map((video) => ({
-    creatorName: video.creatorName ?? video.creatorHandle,
-    id: video.id,
-    spend: video.spend,
-    title: video.title,
-    url: video.url,
-    views: video.views,
-  }));
+export async function getUgcStatusTopVideosData(args: {
+  date: string;
+  limit?: number;
+  organizationSlug: string;
+  searchParams: DashboardSearchParams;
+}): Promise<UgcStatusTopVideosData> {
+  const limit = Math.max(Math.min(args.limit ?? 5, 25), 1);
+  const lookbackDays = 30;
+  const viewWindowDays = 7;
+  const ugcPayData = await getOrganizationUgcPayData({
+    organizationSlug: args.organizationSlug,
+    searchParams: getUgcStatusTopVideoSearchParams({
+      date: args.date,
+      lookbackDays,
+      searchParams: args.searchParams,
+      viewWindowDays,
+    }),
+  });
+
+  return {
+    date: args.date,
+    facelessUnavailableReason:
+      "Faceless 30-day lookback and 7-day gained-view video deltas are not available from UGC Pay.",
+    limit,
+    lookbackDays,
+    ugc: getTopUgcStatusVideos(ugcPayData.videos, limit),
+    viewWindowDays,
+    warnings: [
+      ...ugcPayData.warnings,
+      ...(ugcPayData.errorMessage ? [ugcPayData.errorMessage] : []),
+    ],
+  };
 }
 
 export async function getUgcStatusData(args: {
@@ -189,7 +218,6 @@ export async function getUgcStatusData(args: {
           cpmSpend: dailyData.summary.videoPay,
           fixedSpend: dailyData.summary.fixedPay,
           spend: dailyData.summary.totalPay,
-          topVideos: getTopUgcStatusVideos(dailyData.videos),
           views: dailyData.summary.payableViews,
         };
       }),
@@ -247,7 +275,6 @@ export async function getUgcStatusData(args: {
       cpmSpend: 0,
       fixedSpend: 0,
       spend: 0,
-      topVideos: [],
       views: 0,
     };
     const faceless = facelessSpendByDate.get(date) ?? {
@@ -267,10 +294,6 @@ export async function getUgcStatusData(args: {
       date,
       facelessSpend: faceless.spend,
       facelessViews: faceless.views,
-      topVideos: {
-        faceless: getTopFacelessVideos(facelessSpendReport.report, date),
-        ugc: ugc.topVideos ?? [],
-      },
       ugcCpmSpend: reconciledUgcSpend.cpmSpend,
       ugcFixedSpend: reconciledUgcSpend.fixedSpend,
       ugcSpend: reconciledUgcSpend.spend,

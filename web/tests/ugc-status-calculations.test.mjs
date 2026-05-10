@@ -6,6 +6,7 @@ import {
   calculateUgcStatusMetrics,
   getUgcStatusProceedsByDate,
   getUgcStatusSpendByDate,
+  getUgcStatusTopVideoSearchParams,
   selectTopUgcStatusVideos,
 } from "../src/server/dashboard/ugc-status-calculations.ts";
 
@@ -164,7 +165,7 @@ test("reconciles daily UGC spend back to the UGC Pay summary total", () => {
   assert.equal(spend.get("2026-05-04")?.spend, 288.31);
 });
 
-test("selects the top five UGC status videos by views", () => {
+test("selects the requested top UGC status videos by views", () => {
   const videos = [
     { id: "1", title: "one", creatorName: "A", url: null, views: 10, spend: 1 },
     { id: "2", title: "two", creatorName: "B", url: null, views: 60, spend: 6 },
@@ -175,7 +176,30 @@ test("selects the top five UGC status videos by views", () => {
   ];
 
   assert.deepEqual(
-    selectTopUgcStatusVideos(videos).map((video) => video.id),
-    ["2", "4", "5", "6", "3"],
+    selectTopUgcStatusVideos(videos, 3).map((video) => video.id),
+    ["2", "4", "5"],
+  );
+});
+
+test("builds UGC status top video search params with a 30 day lookback and 7 day view window", () => {
+  assert.deepEqual(
+    getUgcStatusTopVideoSearchParams({
+      date: "2026-05-10",
+      searchParams: {
+        campaign: "creator-campaign",
+        startDate: "2026-05-04",
+        videoWindowStartDate: "2026-01-01",
+      },
+    }),
+    {
+      campaign: "creator-campaign",
+      endDate: "2026-05-10",
+      globalViewWindowDays: "7",
+      payMode: "gained",
+      reportTimeZone: "UTC",
+      startDate: "2026-05-10",
+      videoWindowStartDate: "2026-04-10",
+      viewWindowMode: "first-days",
+    },
   );
 });

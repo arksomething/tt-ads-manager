@@ -5,7 +5,10 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { DashboardIcon } from "@/components/org-dashboard/org-icons";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
-import { type UgcStatusData } from "@/server/dashboard/ugc-status";
+import {
+  type UgcStatusData,
+  type UgcStatusTopVideosData,
+} from "@/server/dashboard/ugc-status";
 
 type UgcStatusClientProps = {
   endDate: string;
@@ -25,6 +28,20 @@ type LoadState =
       error: string | null;
       status: "error" | "loading";
     };
+
+type TopVideosLoadState =
+  | {
+      data: UgcStatusTopVideosData;
+      error: null;
+      status: "ready";
+    }
+  | {
+      data: null;
+      error: string | null;
+      status: "error" | "loading";
+    };
+
+type TopVideosByDate = Record<string, TopVideosLoadState | undefined>;
 
 const currencyFormatterCache = new Map<string, Intl.NumberFormat>();
 const integerFormatter = new Intl.NumberFormat("en-US", {
@@ -104,7 +121,7 @@ function TopVideoList({
   currency: string | null;
   label: string;
   spendLabel: string;
-  videos: UgcStatusData["rows"][number]["topVideos"]["ugc"];
+  videos: UgcStatusTopVideosData["ugc"];
 }) {
   return (
     <div className="rounded-[1rem] border border-white/[0.08] bg-black/20 p-4">
@@ -169,6 +186,90 @@ function TopVideoList({
           No video rows for this day.
         </p>
       )}
+    </div>
+  );
+}
+
+function TopVideosUnavailable({
+  message,
+  title,
+}: {
+  message: string;
+  title: string;
+}) {
+  return (
+    <div className="rounded-[1rem] border border-white/[0.08] bg-black/20 p-4">
+      <h3 className="text-sm font-medium text-foreground">{title}</h3>
+      <p className="mt-4 text-sm leading-6 text-muted-foreground">{message}</p>
+    </div>
+  );
+}
+
+function TopVideosLoading() {
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {Array.from({ length: 2 }).map((_, index) => (
+        <div
+          className="rounded-[1rem] border border-white/[0.08] bg-black/20 p-4"
+          key={index}
+        >
+          <SkeletonBlock className="h-4 w-36" />
+          <div className="mt-4 space-y-3">
+            {Array.from({ length: 5 }).map((__, itemIndex) => (
+              <SkeletonBlock className="h-9 w-full" key={itemIndex} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TopVideosPanel({
+  currency,
+  state,
+}: {
+  currency: string | null;
+  state: TopVideosLoadState | undefined;
+}) {
+  if (!state || state.status === "loading") {
+    return <TopVideosLoading />;
+  }
+
+  if (state.status === "error") {
+    return (
+      <TopVideosUnavailable
+        message={state.error ?? "Could not load top videos right now."}
+        title="Video breakdown unavailable"
+      />
+    );
+  }
+
+  const topVideos = state.data;
+
+  if (!topVideos) {
+    return <TopVideosLoading />;
+  }
+
+  return (
+    <div className="space-y-3">
+      {topVideos.warnings.length > 0 ? (
+        <div className="rounded-[1rem] border border-[#FFD24D]/20 bg-[#FFD24D]/[0.08] px-4 py-3 text-sm text-[#FFEAB1]">
+          {topVideos.warnings[0]}
+        </div>
+      ) : null}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <TopVideoList
+          currency={currency}
+          label="UGC videos by 30/7 gained views"
+          spendLabel="paid"
+          videos={topVideos.ugc}
+        />
+        <TopVideosUnavailable
+          message={topVideos.facelessUnavailableReason}
+          title="Faceless 30/7 gained views"
+        />
+      </div>
     </div>
   );
 }
@@ -410,8 +511,94 @@ function UgcStatusSkeleton() {
   );
 }
 
-function UgcStatusTable({ data }: { data: UgcStatusData }) {
+function UgcStatusTable({
+  data,
+  organizationSlug,
+  searchParams,
+}: {
+  data: UgcStatusData;
+  organizationSlug: string;
+  searchParams: DashboardSearchParams;
+}) {
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
+  const [topVideoStates, setTopVideoStates] = useState<TopVideosByDate>({});
+  const searchParamsKey = useMemo(
+    () => JSON.stringify(searchParams),
+    [searchParams],
+  );
+
+  useEffect(() => {
+    setExpandedDate(null);
+    setTopVideoStates({});
+  }, [data.endDate, data.startDate, searchParamsKey]);
+
+  function loadTopVideos(date: string) {
+    const existingState = topVideoStates[date];
+
+    if (existingState?.status === "loading" || existingState?.status === "ready") {
+      return;
+    }
+
+    setTopVideoStates((current) => ({
+      ...current,
+      [date]: {
+        data: null,
+        error: null,
+        status: "loading",
+      },
+    }));
+
+    const params = new URLSearchParams();
+    appendSearchParams(params, searchParams);
+    params.set("date", date);
+    params.set("limit", "5");
+
+    fetch(
+      `/api/org/${encodeURIComponent(organizationSlug)}/ugc-status/top-videos?${params.toString()}`,
+      {
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+        },
+      },
+    )
+      .then(async (response) => {
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            typeof payload?.error === "string"
+              ? payload.error
+              : "Could not load top videos right now.",
+          );
+        }
+
+        return payload as UgcStatusTopVideosData;
+      })
+      .then((topVideos) => {
+        setTopVideoStates((current) => ({
+          ...current,
+          [date]: {
+            data: topVideos,
+            error: null,
+            status: "ready",
+          },
+        }));
+      })
+      .catch((error) => {
+        setTopVideoStates((current) => ({
+          ...current,
+          [date]: {
+            data: null,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Could not load top videos right now.",
+            status: "error",
+          },
+        }));
+      });
+  }
 
   return (
     <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
@@ -490,9 +677,13 @@ function UgcStatusTable({ data }: { data: UgcStatusData }) {
                         aria-expanded={isExpanded}
                         aria-label={`Toggle ${formatDate(row.date)} video breakdown`}
                         className="flex h-7 w-7 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.03] text-muted-foreground transition hover:border-white/[0.18] hover:text-foreground"
-                        onClick={() =>
-                          setExpandedDate(isExpanded ? null : row.date)
-                        }
+                        onClick={() => {
+                          setExpandedDate(isExpanded ? null : row.date);
+
+                          if (!isExpanded) {
+                            loadTopVideos(row.date);
+                          }
+                        }}
                         type="button"
                       >
                         <DashboardIcon
@@ -552,20 +743,10 @@ function UgcStatusTable({ data }: { data: UgcStatusData }) {
                         className="border-b border-white/[0.06] px-3 py-4"
                         colSpan={15}
                       >
-                        <div className="grid gap-4 lg:grid-cols-2">
-                          <TopVideoList
-                            currency={data.currency}
-                            label="UGC videos by payable views"
-                            spendLabel="paid"
-                            videos={row.topVideos.ugc}
-                          />
-                          <TopVideoList
-                            currency={data.currency}
-                            label="Faceless posted videos by views"
-                            spendLabel="est. payout"
-                            videos={row.topVideos.faceless}
-                          />
-                        </div>
+                        <TopVideosPanel
+                          currency={data.currency}
+                          state={topVideoStates[row.date]}
+                        />
                       </td>
                     </tr>
                   ) : null}
@@ -708,7 +889,15 @@ function SpendBreakdownTable({ data }: { data: UgcStatusData }) {
   );
 }
 
-function UgcStatusContent({ data }: { data: UgcStatusData }) {
+function UgcStatusContent({
+  data,
+  organizationSlug,
+  searchParams,
+}: {
+  data: UgcStatusData;
+  organizationSlug: string;
+  searchParams: DashboardSearchParams;
+}) {
   return (
     <>
       <WarningPanel data={data} />
@@ -818,7 +1007,11 @@ function UgcStatusContent({ data }: { data: UgcStatusData }) {
       </section>
 
       <SpendBreakdownTable data={data} />
-      <UgcStatusTable data={data} />
+      <UgcStatusTable
+        data={data}
+        organizationSlug={organizationSlug}
+        searchParams={searchParams}
+      />
     </>
   );
 }
@@ -910,7 +1103,13 @@ export function UgcStatusClient({
         startDate={startDate}
       />
 
-      {state.status === "ready" ? <UgcStatusContent data={state.data} /> : null}
+      {state.status === "ready" ? (
+        <UgcStatusContent
+          data={state.data}
+          organizationSlug={organizationSlug}
+          searchParams={searchParams}
+        />
+      ) : null}
 
       {state.status === "error" ? (
         <section className="rounded-[1.55rem] border border-[#FFD24D]/20 bg-[#FFD24D]/[0.08] p-5 text-sm leading-6 text-[#FFEAB1]">
