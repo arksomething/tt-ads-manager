@@ -470,6 +470,58 @@ function getInclusiveDateKeys(startDate: string, endDate: string) {
   return keys;
 }
 
+function roundCurrency(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function allocateTotalByDailyWeights(args: {
+  dates: string[];
+  total: number;
+  weights: Map<string, number>;
+}) {
+  const allocations = new Map<string, number>();
+  const totalWeight = args.dates.reduce(
+    (sum, date) => sum + Math.max(args.weights.get(date) ?? 0, 0),
+    0,
+  );
+
+  if (args.dates.length === 0) {
+    return allocations;
+  }
+
+  if (totalWeight <= 0) {
+    const evenAllocation = roundCurrency(args.total / args.dates.length);
+    let runningTotal = 0;
+
+    for (const date of args.dates.slice(0, -1)) {
+      allocations.set(date, evenAllocation);
+      runningTotal += evenAllocation;
+    }
+
+    allocations.set(
+      args.dates[args.dates.length - 1] ?? "",
+      roundCurrency(args.total - runningTotal),
+    );
+    return allocations;
+  }
+
+  let runningTotal = 0;
+
+  for (const date of args.dates.slice(0, -1)) {
+    const allocation = roundCurrency(
+      args.total * (Math.max(args.weights.get(date) ?? 0, 0) / totalWeight),
+    );
+    allocations.set(date, allocation);
+    runningTotal += allocation;
+  }
+
+  allocations.set(
+    args.dates[args.dates.length - 1] ?? "",
+    roundCurrency(args.total - runningTotal),
+  );
+  return allocations;
+}
+
 function pointsToDateMap(points: NormalizedPoint[]) {
   const map = new Map<string, number>();
 
@@ -883,6 +935,129 @@ function buildDailyRows(args: {
   };
 }
 
+function getDailyWeightMap(
+  rows: RevenueAttributionDailyRow[],
+  getValue: (row: RevenueAttributionDailyRow) => number | null,
+  fallback?: Map<string, number>,
+) {
+  return new Map(
+    rows.map((row) => [
+      row.date,
+      Math.max(getValue(row) ?? fallback?.get(row.date) ?? 0, 0),
+    ]),
+  );
+}
+
+function shouldPublishReconciledNullableSeries(args: {
+  rows: RevenueAttributionDailyRow[];
+  total: number;
+  getValue: (row: RevenueAttributionDailyRow) => number | null;
+}) {
+  return (
+    args.total > 0 ||
+    args.rows.some((row) => args.getValue(row) !== null)
+  );
+}
+
+export function reconcileRevenueDailyRowsToTotals(args: {
+  rows: RevenueAttributionDailyRow[];
+  totals: {
+    total: number;
+    newProceeds: number;
+    renewal: number;
+    paid: number;
+    tiktok: number;
+    apple: number;
+    organic: number;
+  };
+  includeSourceBreakdown: boolean;
+}) {
+  const dates = args.rows.map((row) => row.date);
+  const totalWeights = getDailyWeightMap(args.rows, (row) => row.total);
+  const totalByDate = allocateTotalByDailyWeights({
+    dates,
+    total: args.totals.total,
+    weights: totalWeights,
+  });
+  const newProceedsByDate = allocateTotalByDailyWeights({
+    dates,
+    total: args.totals.newProceeds,
+    weights: getDailyWeightMap(
+      args.rows,
+      (row) => row.newProceeds,
+      totalWeights,
+    ),
+  });
+  const renewalByDate = allocateTotalByDailyWeights({
+    dates,
+    total: args.totals.renewal,
+    weights: getDailyWeightMap((args.rows), (row) => row.renewal, totalWeights),
+  });
+  const paidByDate = allocateTotalByDailyWeights({
+    dates,
+    total: args.totals.paid,
+    weights: getDailyWeightMap(args.rows, (row) => row.paid, totalWeights),
+  });
+  const tiktokByDate = allocateTotalByDailyWeights({
+    dates,
+    total: args.totals.tiktok,
+    weights: getDailyWeightMap(args.rows, (row) => row.tiktok, totalWeights),
+  });
+  const appleByDate = allocateTotalByDailyWeights({
+    dates,
+    total: args.totals.apple,
+    weights: getDailyWeightMap(args.rows, (row) => row.apple, totalWeights),
+  });
+  const organicByDate = allocateTotalByDailyWeights({
+    dates,
+    total: args.totals.organic,
+    weights: getDailyWeightMap(args.rows, (row) => row.organic, totalWeights),
+  });
+  const publishPaid = args.includeSourceBreakdown
+    ? shouldPublishReconciledNullableSeries({
+        rows: args.rows,
+        total: args.totals.paid,
+        getValue: (row) => row.paid,
+      })
+    : false;
+  const publishTiktok = args.includeSourceBreakdown
+    ? shouldPublishReconciledNullableSeries({
+        rows: args.rows,
+        total: args.totals.tiktok,
+        getValue: (row) => row.tiktok,
+      })
+    : false;
+  const publishApple = args.includeSourceBreakdown
+    ? shouldPublishReconciledNullableSeries({
+        rows: args.rows,
+        total: args.totals.apple,
+        getValue: (row) => row.apple,
+      })
+    : false;
+  const publishOrganic = args.includeSourceBreakdown
+    ? shouldPublishReconciledNullableSeries({
+        rows: args.rows,
+        total: args.totals.organic,
+        getValue: (row) => row.organic,
+      })
+    : false;
+
+  return args.rows.map((row) => ({
+    ...row,
+    apple: publishApple ? appleByDate.get(row.date) ?? 0 : null,
+    newProceeds: newProceedsByDate.get(row.date) ?? 0,
+    organic: publishOrganic ? organicByDate.get(row.date) ?? 0 : null,
+    paid: publishPaid ? paidByDate.get(row.date) ?? 0 : null,
+    renewal: renewalByDate.get(row.date) ?? 0,
+    tiktok: publishTiktok ? tiktokByDate.get(row.date) ?? 0 : null,
+    total: totalByDate.get(row.date) ?? 0,
+  }));
+}
+
+function getDailyRowsTotal(rows: RevenueAttributionDailyRow[]) {
+  return roundCurrency(rows.reduce((total, row) => total + row.total, 0));
+}
+
 function getProviderTimeZoneRows(args: {
   singularRows?: SingularSourceRevenueRow[];
 }): RevenueProviderTimeZoneRow[] {
@@ -1169,7 +1344,7 @@ export async function getRevenueAttributionReport(args: {
       tiktokPatterns,
       totalSeries: periodMetric.series,
     });
-    const dailyRows = sourceSplitPending
+    const rawDailyRows = sourceSplitPending
       ? daily.rows.map((row) => ({
           ...row,
           organic: 0,
@@ -1182,6 +1357,19 @@ export async function getRevenueAttributionReport(args: {
     const hasDailySourceBreakdown = sourceSplitPending
       ? false
       : daily.hasSourceDailyBreakdown;
+    const dailyRows = reconcileRevenueDailyRowsToTotals({
+      includeSourceBreakdown: hasDailySourceBreakdown,
+      rows: rawDailyRows,
+      totals: {
+        apple: appleRevenue,
+        newProceeds: renewalBucket.newProceeds,
+        organic: organicRevenue,
+        paid: paidRevenue,
+        renewal: oldSourceRevenue,
+        tiktok: tiktokRevenue,
+        total: totalRevenue,
+      },
+    });
     const providerTimeZones = getProviderTimeZoneRows({
       singularRows: singularSourceReport.configured
         ? singularSourceReport.rows
@@ -1256,6 +1444,11 @@ export async function getRevenueAttributionReport(args: {
       ...(totalRevenue > 0 && !hasDailySourceBreakdown
         ? [
             "The source report did not return daily attribution points, so the daily chart only shows total proceeds.",
+          ]
+        : []),
+      ...(Math.abs(getDailyRowsTotal(rawDailyRows) - roundCurrency(totalRevenue)) > 0.01
+        ? [
+            "Provider daily proceeds did not reconcile to the selected range total, so daily proceeds were proportionally reconciled to the range total.",
           ]
         : []),
     ]);
