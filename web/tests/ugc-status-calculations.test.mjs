@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   allocateTotalByDailyWeights,
   calculateUgcStatusMetrics,
-  getUgcStatusProceedsByDate,
   getUgcStatusSpendByDate,
   getUgcStatusTopVideoSearchParams,
   selectTopUgcStatusVideos,
@@ -75,101 +74,6 @@ test("allocates evenly when daily proceeds weights are unavailable", () => {
   });
 
   assert.deepEqual([...allocations.values()], [33.33, 33.33, 33.34]);
-});
-
-test("reconciles daily organic proceeds back to the Revenue tab summary total", () => {
-  const proceeds = getUgcStatusProceedsByDate({
-    dates: ["2026-05-04", "2026-05-05", "2026-05-06"],
-    dailyRows: [
-      { date: "2026-05-04", organic: 2_914.11 },
-      { date: "2026-05-05", organic: 2_440.46 },
-      { date: "2026-05-06", organic: 2_427.36 },
-    ],
-    total: 2_157.23,
-  });
-  const total = [...proceeds.values()].reduce((sum, value) => sum + value, 0);
-
-  assert.equal(Number(total.toFixed(2)), 2_157.23);
-  assert.equal(Math.max(...proceeds.values()) < 2_157.23, true);
-});
-
-test("uses the Revenue organic proceeds source for the same UGC status range", () => {
-  const revenueOrganicProceeds = 6_125.5;
-  const proceeds = getUgcStatusProceedsByDate({
-    dates: ["2026-05-04", "2026-05-05", "2026-05-06"],
-    dailyRows: [
-      { date: "2026-05-04", organic: 1_000 },
-      { date: "2026-05-05", organic: 2_000 },
-      { date: "2026-05-06", organic: 3_125.5 },
-    ],
-    total: revenueOrganicProceeds,
-  });
-  const total = [...proceeds.values()].reduce((sum, value) => sum + value, 0);
-
-  assert.equal(Number(total.toFixed(2)), revenueOrganicProceeds);
-  assert.deepEqual([...proceeds.values()], [1_000, 2_000, 3_125.5]);
-});
-
-test("does not fabricate UGC proceeds when Revenue hides pending Singular proceeds", () => {
-  const proceeds = getUgcStatusProceedsByDate({
-    dates: ["2026-05-04", "2026-05-05"],
-    dailyRows: [
-      { date: "2026-05-04", organic: 2_500 },
-      { date: "2026-05-05", organic: 1_500 },
-    ],
-    total: 0,
-  });
-
-  assert.deepEqual([...proceeds.values()], [0, 0]);
-});
-
-test("falls back to allocation when Revenue tab daily organic proceeds are unavailable", () => {
-  const proceeds = getUgcStatusProceedsByDate({
-    dates: ["2026-05-04", "2026-05-05"],
-    dailyRows: [
-      { date: "2026-05-04", organic: null },
-      { date: "2026-05-05", organic: null },
-    ],
-    total: 100,
-  });
-
-  assert.deepEqual([...proceeds.values()], [50, 50]);
-});
-
-test("uses activity weights when daily organic proceeds have gaps", () => {
-  const proceeds = getUgcStatusProceedsByDate({
-    dates: ["2026-05-07", "2026-05-08", "2026-05-09"],
-    dailyRows: [
-      { date: "2026-05-07", organic: 0 },
-      { date: "2026-05-08", organic: 0 },
-      { date: "2026-05-09", organic: 100 },
-    ],
-    fallbackWeights: new Map([
-      ["2026-05-07", 200],
-      ["2026-05-08", 300],
-      ["2026-05-09", 500],
-    ]),
-    total: 1_000,
-  });
-
-  assert.deepEqual([...proceeds.values()], [200, 300, 500]);
-});
-
-test("keeps daily organic proceeds when the daily split covers active dates", () => {
-  const proceeds = getUgcStatusProceedsByDate({
-    dates: ["2026-05-07", "2026-05-08"],
-    dailyRows: [
-      { date: "2026-05-07", organic: 20 },
-      { date: "2026-05-08", organic: 80 },
-    ],
-    fallbackWeights: new Map([
-      ["2026-05-07", 500],
-      ["2026-05-08", 500],
-    ]),
-    total: 1_000,
-  });
-
-  assert.deepEqual([...proceeds.values()], [200, 800]);
 });
 
 test("reconciles daily UGC spend back to the UGC Pay summary total", () => {

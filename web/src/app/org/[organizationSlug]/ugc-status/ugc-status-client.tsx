@@ -612,7 +612,7 @@ function UgcStatusTable({
           </h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          Daily proceeds reconcile to the Revenue tab UGC/F total.
+          Daily proceeds use each day's Revenue UGC/F total.
         </p>
       </div>
 

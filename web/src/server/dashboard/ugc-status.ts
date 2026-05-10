@@ -16,7 +16,6 @@ import {
 
 import {
   calculateUgcStatusMetrics,
-  getUgcStatusProceedsByDate,
   getUgcStatusSpendByDate,
   getUgcStatusTopVideoSearchParams,
   selectTopUgcStatusVideos,
@@ -192,7 +191,13 @@ export async function getUgcStatusData(args: {
 }): Promise<UgcStatusData> {
   const ugcPaySearchParams = getRevenueUgcPaySearchParams(args);
   const dateKeys = getDateKeys(args.startDate, args.endDate);
-  const [revenueReport, ugcPayData, ugcDailyRows, facelessSpendReport] =
+  const [
+    revenueReport,
+    ugcPayData,
+    ugcDailyRows,
+    revenueDailyRows,
+    facelessSpendReport,
+  ] =
     await Promise.all([
       getRevenueAttributionReport({
         endDate: args.endDate,
@@ -219,6 +224,19 @@ export async function getUgcStatusData(args: {
           fixedSpend: dailyData.summary.fixedPay,
           spend: dailyData.summary.totalPay,
           views: dailyData.summary.payableViews,
+        };
+      }),
+      mapWithConcurrency(dateKeys, UGC_STATUS_DAILY_QUERY_CONCURRENCY, async (date) => {
+        const dailyReport = await getRevenueAttributionReport({
+          endDate: date,
+          organizationSlug: args.organizationSlug,
+          startDate: date,
+        });
+
+        return {
+          date,
+          proceeds: dailyReport.totals.organic,
+          warnings: dailyReport.warnings,
         };
       }),
       getViewsBaseFacelessReport({
@@ -259,20 +277,15 @@ export async function getUgcStatusData(args: {
     ),
   );
   const ugcByDate = new Map(ugcDailyRows.map((row) => [row.date, row] as const));
-  const activityWeightsByDate = new Map(
-    dateKeys.map((date) => {
-      const ugcViewsForDate = ugcByDate.get(date)?.views ?? 0;
-      const facelessViewsForDate = facelessSpendByDate.get(date)?.views ?? 0;
-
-      return [date, ugcViewsForDate + facelessViewsForDate] as const;
-    }),
+  const proceedsByDate = new Map(
+    revenueDailyRows.map((row) => [row.date, row.proceeds] as const),
   );
-  const proceedsByDate = getUgcStatusProceedsByDate({
-    dailyRows: revenueReport.dailyRows,
-    dates: dateKeys,
-    fallbackWeights: activityWeightsByDate,
-    total: revenueReport.totals.organic,
-  });
+  const proceedsWarnings = [
+    ...new Set([
+      ...revenueReport.warnings,
+      ...revenueDailyRows.flatMap((row) => row.warnings),
+    ]),
+  ];
   const ugcSpendByDate = getUgcStatusSpendByDate({
     dailyRows: ugcDailyRows,
     dates: dateKeys,
@@ -340,7 +353,7 @@ export async function getUgcStatusData(args: {
     facelessSpend,
     facelessViews,
     proceedsConfigured: revenueReport.configured,
-    proceedsWarnings: revenueReport.warnings,
+    proceedsWarnings,
     rows,
     startDate: args.startDate,
     summary,
