@@ -136,6 +136,42 @@ test("falls back to allocation when Revenue tab daily organic proceeds are unava
   assert.deepEqual([...proceeds.values()], [50, 50]);
 });
 
+test("uses activity weights when daily organic proceeds have gaps", () => {
+  const proceeds = getUgcStatusProceedsByDate({
+    dates: ["2026-05-07", "2026-05-08", "2026-05-09"],
+    dailyRows: [
+      { date: "2026-05-07", organic: 0 },
+      { date: "2026-05-08", organic: 0 },
+      { date: "2026-05-09", organic: 100 },
+    ],
+    fallbackWeights: new Map([
+      ["2026-05-07", 200],
+      ["2026-05-08", 300],
+      ["2026-05-09", 500],
+    ]),
+    total: 1_000,
+  });
+
+  assert.deepEqual([...proceeds.values()], [200, 300, 500]);
+});
+
+test("keeps daily organic proceeds when the daily split covers active dates", () => {
+  const proceeds = getUgcStatusProceedsByDate({
+    dates: ["2026-05-07", "2026-05-08"],
+    dailyRows: [
+      { date: "2026-05-07", organic: 20 },
+      { date: "2026-05-08", organic: 80 },
+    ],
+    fallbackWeights: new Map([
+      ["2026-05-07", 500],
+      ["2026-05-08", 500],
+    ]),
+    total: 1_000,
+  });
+
+  assert.deepEqual([...proceeds.values()], [200, 800]);
+});
+
 test("reconciles daily UGC spend back to the UGC Pay summary total", () => {
   const spend = getUgcStatusSpendByDate({
     dates: [

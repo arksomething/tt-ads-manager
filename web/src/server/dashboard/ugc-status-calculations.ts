@@ -74,17 +74,28 @@ export function calculateUgcStatusMetrics(
 export function getUgcStatusProceedsByDate(args: {
   total: number;
   dates: string[];
+  fallbackWeights?: Map<string, number>;
   dailyRows: Array<{
     date: string;
     organic: number | null;
   }>;
 }) {
+  const organicWeights = new Map(
+    args.dailyRows.map((row) => [row.date, Math.max(row.organic ?? 0, 0)] as const),
+  );
+  const fallbackWeights = args.fallbackWeights;
+  const activeFallbackDates =
+    fallbackWeights && args.dates.filter((date) => (fallbackWeights.get(date) ?? 0) > 0);
+  const shouldUseFallbackWeights =
+    fallbackWeights &&
+    activeFallbackDates &&
+    activeFallbackDates.length > 0 &&
+    activeFallbackDates.some((date) => (organicWeights.get(date) ?? 0) <= 0);
+
   return allocateTotalByDailyWeights({
     dates: args.dates,
     total: args.total,
-    weights: new Map(
-      args.dailyRows.map((row) => [row.date, Math.max(row.organic ?? 0, 0)] as const),
-    ),
+    weights: shouldUseFallbackWeights ? fallbackWeights : organicWeights,
   });
 }
 

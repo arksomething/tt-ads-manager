@@ -259,9 +259,18 @@ export async function getUgcStatusData(args: {
     ),
   );
   const ugcByDate = new Map(ugcDailyRows.map((row) => [row.date, row] as const));
+  const activityWeightsByDate = new Map(
+    dateKeys.map((date) => {
+      const ugcViewsForDate = ugcByDate.get(date)?.views ?? 0;
+      const facelessViewsForDate = facelessSpendByDate.get(date)?.views ?? 0;
+
+      return [date, ugcViewsForDate + facelessViewsForDate] as const;
+    }),
+  );
   const proceedsByDate = getUgcStatusProceedsByDate({
     dailyRows: revenueReport.dailyRows,
     dates: dateKeys,
+    fallbackWeights: activityWeightsByDate,
     total: revenueReport.totals.organic,
   });
   const ugcSpendByDate = getUgcStatusSpendByDate({
