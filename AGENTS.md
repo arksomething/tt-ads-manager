@@ -26,11 +26,15 @@ npm run typecheck
 npm run build
 ```
 
-4. Deploy production from `web/` using the linked Vercel project:
+4. Deploy production from the repo root using the linked Vercel project:
 
 ```bash
 npx vercel deploy --prod
 ```
+
+Do not run `npx vercel deploy --prod` from `web/`. The Vercel project root is
+already configured as `web`, so running the command inside `web/` makes Vercel
+look for `web/web` and fail with a missing path error.
 
 If a prebuilt deploy is more appropriate:
 
