@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { getDateRangeCacheHeaders } from "@/lib/cache-control";
 import { getRevenueProfitabilityData } from "@/server/adapty/revenue-profitability";
 
 type RouteContext = {
@@ -54,9 +55,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     });
 
     return NextResponse.json(data, {
-      headers: {
-        "Cache-Control": "private, max-age=30, stale-while-revalidate=300",
-      },
+      headers: getDateRangeCacheHeaders({ endDate, startDate }),
     });
   } catch (error) {
     console.error("Revenue profitability lookup failed", error);

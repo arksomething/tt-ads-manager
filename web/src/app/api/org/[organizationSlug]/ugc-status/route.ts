@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { getDateRangeCacheHeaders } from "@/lib/cache-control";
 import { getOrganizationDashboardLayoutData } from "@/server/dashboard/org-shell";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
 import { getUgcStatusData } from "@/server/dashboard/ugc-status";
@@ -71,9 +72,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     });
 
     return NextResponse.json(data, {
-      headers: {
-        "Cache-Control": "private, max-age=30, stale-while-revalidate=300",
-      },
+      headers: getDateRangeCacheHeaders({ endDate, startDate }),
     });
   } catch (error) {
     console.error("UGC status lookup failed", error);

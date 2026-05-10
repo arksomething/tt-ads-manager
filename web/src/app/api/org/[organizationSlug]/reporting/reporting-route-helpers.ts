@@ -5,6 +5,7 @@ import {
   type ReportingDailyFact,
   type ReportingDayVersion,
 } from "@/lib/prisma-shim";
+import { getDateRangeCacheHeaders } from "@/lib/cache-control";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
 
 export type ReportingRouteContext = {
@@ -30,9 +31,9 @@ type SourceMetricTotal = MetricTotal & {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-export const REPORTING_CACHE_HEADERS = {
-  "Cache-Control": "private, max-age=30, stale-while-revalidate=300",
-};
+export function getReportingCacheHeaders(range: ReportingDateRange) {
+  return getDateRangeCacheHeaders(range);
+}
 
 export async function getOrganizationSlug(context: ReportingRouteContext) {
   const params = await context.params;

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { getDateRangeCacheHeaders } from "@/lib/cache-control";
 import {
   getOrganizationViewTallyAdSpendData,
   type OrganizationViewTallyAdSpendData,
@@ -40,9 +41,11 @@ export async function GET(
     });
 
     return NextResponse.json(data, {
-      headers: {
-        "Cache-Control": "private, max-age=30, stale-while-revalidate=300",
-      },
+      headers: getDateRangeCacheHeaders({
+        endDate: request.nextUrl.searchParams.get("endDate"),
+        missingDateIncludesToday: true,
+        startDate: request.nextUrl.searchParams.get("startDate"),
+      }),
     });
   } catch (error) {
     console.error("View Tally ad spend lookup failed", error);
