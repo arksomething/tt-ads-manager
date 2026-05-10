@@ -194,3 +194,42 @@ test("reconciles inflated provider daily proceeds to range totals", async () => 
   assert.equal(sum("apple"), 13.43);
   assert.ok(reconciled[0].total < rows[0].total);
 });
+
+test("uses Adapty total series instead of summing total plus period components", async () => {
+  const { getRevenueTotalPointMap } = await import(
+    "../src/server/adapty/revenue.ts"
+  );
+  const totals = getRevenueTotalPointMap([
+    {
+      label: "Activation",
+      points: [
+        { date: "2026-05-04", value: 1_805.29 },
+        { date: "2026-05-05", value: 1_462.74 },
+      ],
+      unit: "USD",
+      value: 3_268.03,
+    },
+    {
+      label: "Renewal 1",
+      points: [
+        { date: "2026-05-04", value: 83.61 },
+        { date: "2026-05-05", value: 151.92 },
+      ],
+      unit: "USD",
+      value: 235.53,
+    },
+    {
+      label: "Total",
+      points: [
+        { date: "2026-05-04", value: 2_204.77 },
+        { date: "2026-05-05", value: 1_851.42 },
+      ],
+      unit: "USD",
+      value: 4_056.19,
+    },
+  ]);
+
+  assert.equal(totals.get("2026-05-04"), 2_204.77);
+  assert.equal(totals.get("2026-05-05"), 1_851.42);
+  assert.notEqual(totals.get("2026-05-04"), 2_204.77 + 1_805.29 + 83.61);
+});

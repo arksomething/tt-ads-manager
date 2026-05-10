@@ -552,6 +552,20 @@ function getMergedPointMap(series: readonly NormalizedSeries[]) {
   return map;
 }
 
+function isTotalSeriesLabel(label: string | null) {
+  return label?.trim().toLowerCase() === "total";
+}
+
+export function getRevenueTotalPointMap(series: readonly NormalizedSeries[]) {
+  const totalSeries = series.filter((row) => isTotalSeriesLabel(row.label));
+
+  if (totalSeries.length > 0) {
+    return getMergedPointMap(totalSeries);
+  }
+
+  return getMergedPointMap(series);
+}
+
 function getPeriodRevenueSplit(series: readonly NormalizedSeries[]) {
   const activationSeries = series.filter((row) => isActivationPeriodLabel(row.label));
   const renewalSeries = series.filter((row) => isRenewalPeriodLabel(row.label));
@@ -765,7 +779,7 @@ function buildDailyRows(args: {
   excludeAppleRows?: boolean;
 }) {
   const dateKeys = getInclusiveDateKeys(args.startDate, args.endDate);
-  const totalMap = getMergedPointMap(args.totalSeries);
+  const totalMap = getRevenueTotalPointMap(args.totalSeries);
   const paidMap = new Map<string, number>();
   const tiktokMap = new Map<string, number>();
   const appleMap = new Map<string, number>();
@@ -880,9 +894,14 @@ function buildDailyRows(args: {
     renewalMap.size > 0 ||
     sourceTotalMap.size > 0;
   const hasDailySpendBreakdown = paidSpendMap.size > 0;
-  const firstTotalSeriesMap = args.totalSeries[0]
-    ? pointsToDateMap(args.totalSeries[0].points)
-    : new Map<string, number>();
+  const firstTotalSeriesMap =
+    args.totalSeries.find((row) => isTotalSeriesLabel(row.label))
+      ? pointsToDateMap(
+          args.totalSeries.find((row) => isTotalSeriesLabel(row.label))?.points ?? [],
+        )
+      : args.totalSeries[0]
+        ? pointsToDateMap(args.totalSeries[0].points)
+        : new Map<string, number>();
 
   return {
     hasSourceDailyBreakdown,
