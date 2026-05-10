@@ -377,7 +377,7 @@ function getMetricContainer(payload: unknown): MetricContainer | null {
   return null;
 }
 
-function normalizeMetricSeries(payload: unknown) {
+export function normalizeMetricSeries(payload: unknown) {
   const container = getMetricContainer(payload);
 
   if (!container) {
@@ -395,8 +395,10 @@ function normalizeMetricSeries(payload: unknown) {
     const normalized = normalizeSeries(row);
     return normalized ? [normalized] : [];
   });
+  const totalSeriesValue = getTotalSeriesValue(series);
   const total =
     getFirstNumber(container.metric, REVENUE_NUMBER_KEYS) ??
+    totalSeriesValue ??
     series.reduce((sum, row) => sum + row.value, 0);
 
   return {
@@ -554,6 +556,16 @@ function getMergedPointMap(series: readonly NormalizedSeries[]) {
 
 function isTotalSeriesLabel(label: string | null) {
   return label?.trim().toLowerCase() === "total";
+}
+
+function getTotalSeriesValue(series: readonly NormalizedSeries[]) {
+  const totalSeries = series.filter((row) => isTotalSeriesLabel(row.label));
+
+  if (totalSeries.length === 0) {
+    return null;
+  }
+
+  return totalSeries.reduce((total, row) => total + row.value, 0);
 }
 
 export function getRevenueTotalPointMap(series: readonly NormalizedSeries[]) {

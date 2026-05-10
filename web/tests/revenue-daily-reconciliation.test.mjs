@@ -196,10 +196,10 @@ test("reconciles inflated provider daily proceeds to range totals", async () => 
 });
 
 test("uses Adapty total series instead of summing total plus period components", async () => {
-  const { getRevenueTotalPointMap } = await import(
+  const { getRevenueTotalPointMap, normalizeMetricSeries } = await import(
     "../src/server/adapty/revenue.ts"
   );
-  const totals = getRevenueTotalPointMap([
+  const series = [
     {
       label: "Activation",
       points: [
@@ -227,9 +227,24 @@ test("uses Adapty total series instead of summing total plus period components",
       unit: "USD",
       value: 4_056.19,
     },
-  ]);
+  ];
+  const totals = getRevenueTotalPointMap(series);
+  const metric = normalizeMetricSeries({
+    data: {
+      proceeds: {
+        data: series.map((row) => ({
+          data: row.points,
+          name: row.label,
+          unit: row.unit,
+          value: row.value,
+        })),
+      },
+    },
+  });
 
   assert.equal(totals.get("2026-05-04"), 2_204.77);
   assert.equal(totals.get("2026-05-05"), 1_851.42);
   assert.notEqual(totals.get("2026-05-04"), 2_204.77 + 1_805.29 + 83.61);
+  assert.equal(metric.total, 4_056.19);
+  assert.notEqual(metric.total, 4_056.19 + 3_268.03 + 235.53);
 });
