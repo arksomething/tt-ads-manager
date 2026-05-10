@@ -168,16 +168,13 @@ function getCompleteDailyProfitabilityTotals(
     return null;
   }
 
-  const proceeds = dailyRows.reduce((total, row) => total + row.proceeds, 0);
   const spend = dailyRows.reduce(
     (total, row) => total + (row.totalSpend ?? 0),
     0,
   );
 
   return {
-    blendedRoas: getRatio(proceeds, spend),
     knownSpend: spend,
-    netProfit: proceeds - spend,
   };
 }
 
@@ -348,10 +345,8 @@ export function buildRevenueProfitabilityData(args: {
   const dailyTotals = getCompleteDailyProfitabilityTotals(dailyRows);
   const fallbackKnownSpend = paidSourceSpend + ugcSpend + facelessSpend;
   const knownSpend = dailyTotals?.knownSpend ?? fallbackKnownSpend;
-  const netProfit =
-    dailyTotals?.netProfit ?? args.report.totals.total - fallbackKnownSpend;
-  const blendedRoas =
-    dailyTotals?.blendedRoas ?? getRatio(args.report.totals.total, fallbackKnownSpend);
+  const netProfit = args.report.totals.total - knownSpend;
+  const blendedRoas = getRatio(args.report.totals.total, knownSpend);
 
   return {
     blendedRoas,

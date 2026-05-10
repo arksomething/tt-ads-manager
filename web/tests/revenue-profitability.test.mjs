@@ -83,7 +83,7 @@ registerHooks({
   },
 });
 
-test("profitability summary totals reconcile to complete daily rows", async () => {
+test("profitability spend reconciles to complete daily rows while profit uses range proceeds", async () => {
   const { buildRevenueProfitabilityData } = await import(
     "../src/server/adapty/revenue-profitability.ts"
   );
@@ -155,6 +155,73 @@ test("profitability summary totals reconcile to complete daily rows", async () =
   assert.equal(dailyProceeds, 300);
   assert.equal(dailySpend, 153);
   assert.equal(result.knownSpend, dailySpend);
-  assert.equal(result.netProfit, dailyProceeds - dailySpend);
-  assert.equal(result.blendedRoas, dailyProceeds / dailySpend);
+  assert.equal(result.netProfit, 999 - dailySpend);
+  assert.equal(result.blendedRoas, 999 / dailySpend);
+});
+
+test("profitability net profit cannot exceed total proceeds when known spend is positive", async () => {
+  const { buildRevenueProfitabilityData } = await import(
+    "../src/server/adapty/revenue-profitability.ts"
+  );
+  const result = buildRevenueProfitabilityData({
+    facelessSpendReport: {
+      configured: true,
+      errorMessage: null,
+      report: {
+        dailyRows: [
+          { date: "2026-05-04", projectedSpend: null, totalSpend: 100 },
+          { date: "2026-05-05", projectedSpend: null, totalSpend: 200 },
+        ],
+        totals: {
+          projectedSpend: null,
+          totalSpend: 300,
+        },
+      },
+    },
+    report: {
+      currency: "USD",
+      dailyRows: [
+        {
+          date: "2026-05-04",
+          paidSpend: 300,
+          total: 10_000,
+        },
+        {
+          date: "2026-05-05",
+          paidSpend: 400,
+          total: 10_000,
+        },
+      ],
+      sourceRows: [
+        {
+          kind: "paid",
+          label: "TikTok",
+          rawLabel: "tiktok",
+          revenue: 1_000,
+          spend: 700,
+        },
+      ],
+      totals: {
+        organic: 1_000,
+        renewal: 0,
+        total: 1_500,
+      },
+    },
+    ugcPayData: {
+      dailyRows: [
+        { date: "2026-05-04", totalPay: 50 },
+        { date: "2026-05-05", totalPay: 50 },
+      ],
+      data: {
+        summary: {
+          totalPay: 100,
+        },
+      },
+    },
+  });
+
+  assert.equal(result.knownSpend, 1_100);
+  assert.equal(result.netProfit, 400);
+  assert.equal(result.blendedRoas, 1_500 / 1_100);
+  assert.ok(result.netProfit <= 1_500);
 });
