@@ -112,6 +112,29 @@ function formatDate(value: string) {
   return Number.isNaN(parsed.getTime()) ? value : dateFormatter.format(parsed);
 }
 
+function InfoTip({ label, tip }: { label: string; tip: string }) {
+  return (
+    <span
+      aria-label={`${label}: ${tip}`}
+      className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/[0.08] bg-black/[0.18] text-muted-foreground"
+      role="img"
+      tabIndex={0}
+      title={tip}
+    >
+      <DashboardIcon className="h-3 w-3" name="info" />
+    </span>
+  );
+}
+
+function LabelWithTip({ label, tip }: { label: string; tip: string }) {
+  return (
+    <span className="inline-flex items-center justify-end gap-1.5">
+      <span>{label}</span>
+      <InfoTip label={label} tip={tip} />
+    </span>
+  );
+}
+
 function TopVideoList({
   currency,
   label,
@@ -301,14 +324,16 @@ function StatCard(args: {
   icon: "payouts" | "integrations" | "creators" | "compare" | "videos" | "revenue";
   label: string;
   meta: string;
+  tip?: string;
   value: string;
 }) {
   return (
     <article className="rounded-[1.25rem] border border-white/[0.08] bg-white/[0.03] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">
-          {args.label}
-        </p>
+        <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-muted-foreground">
+          <span>{args.label}</span>
+          {args.tip ? <InfoTip label={args.label} tip={args.tip} /> : null}
+        </div>
         <span className="inline-flex h-8 w-8 items-center justify-center rounded-[0.75rem] border border-white/[0.08] bg-black/[0.22] text-muted-foreground">
           <DashboardIcon className="h-4 w-4" name={args.icon} />
         </span>
@@ -626,34 +651,61 @@ function UgcStatusTable({
                 Day
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
-                UGC/F proceeds
+                <LabelWithTip
+                  label="UGC/F proceeds"
+                  tip="Revenue new/non-renewal proceeds minus known paid ad spend. Adapty proceeds, Singular paid spend, and Apple Ads spend can refresh on different upstream schedules."
+                />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
-                Spend
+                <LabelWithTip
+                  label="Spend"
+                  tip="UGC Pay plus ViewsBase faceless spend. UGC Pay depends on View Tally/TikTok inputs; faceless spend depends on the latest ViewsBase sync."
+                />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
-                UGC spend
+                <LabelWithTip
+                  label="UGC spend"
+                  tip="Creator payout calculated from UGC Pay deal terms, eligible views, paid-view deductions, and caps for the selected UTC report date."
+                />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
-                UGC fixed
+                <LabelWithTip
+                  label="UGC fixed"
+                  tip="Fixed creator fees included when their fee date falls inside the selected report range."
+                />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
-                UGC CPM/video
+                <LabelWithTip
+                  label="UGC CPM/video"
+                  tip="Variable creator pay from payable views. Payable views can change when View Tally or paid-view deduction data updates."
+                />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
-                Faceless spend
+                <LabelWithTip
+                  label="Faceless spend"
+                  tip="ViewsBase faceless cost uses the latest available actual or projected spend for that day."
+                />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
                 Profit
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
-                Views
+                <LabelWithTip
+                  label="Views"
+                  tip="Combined UGC payable views and ViewsBase faceless views. These sources can update after the report date."
+                />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
-                UGC views
+                <LabelWithTip
+                  label="UGC views"
+                  tip="UGC Pay payable views after the selected view window, paid traffic deduction, and view cap rules."
+                />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
-                Faceless views
+                <LabelWithTip
+                  label="Faceless views"
+                  tip="ViewsBase paid views for the faceless bucket. Upstream rows may arrive later than Revenue or UGC Pay data."
+                />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
                 ROAS
@@ -776,6 +828,7 @@ function SpendBreakdownTable({ data }: { data: UgcStatusData }) {
         data.summary.ugcFixedSpend,
         data.summary.ugcViews,
       ),
+      tip: "Fixed creator fees from UGC Pay. They appear on the configured fixed-fee date, not necessarily the post date.",
       views: data.summary.ugcViews,
     },
     {
@@ -787,6 +840,7 @@ function SpendBreakdownTable({ data }: { data: UgcStatusData }) {
         data.summary.ugcCpmSpend,
         data.summary.ugcViews,
       ),
+      tip: "Variable UGC Pay from payable views. This can change when View Tally or paid-view deduction data refreshes.",
       views: data.summary.ugcViews,
     },
     {
@@ -798,6 +852,7 @@ function SpendBreakdownTable({ data }: { data: UgcStatusData }) {
         data.summary.ugcSpend,
         data.summary.ugcViews,
       ),
+      tip: "Total UGC Pay for the selected range after creator terms, paid-view deductions, and caps.",
       views: data.summary.ugcViews,
     },
     {
@@ -812,6 +867,7 @@ function SpendBreakdownTable({ data }: { data: UgcStatusData }) {
         data.summary.facelessSpend,
         data.summary.facelessViews,
       ),
+      tip: "ViewsBase faceless cost. Actual spend is used when available; otherwise the report uses projected spend.",
       views: data.summary.facelessViews,
     },
   ];
@@ -843,24 +899,33 @@ function SpendBreakdownTable({ data }: { data: UgcStatusData }) {
                 Bucket
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
-                Spend
+                <LabelWithTip
+                  label="Spend"
+                  tip="Spend timing depends on the source row: UGC Pay is recalculated from view and deal inputs; ViewsBase can switch from projected to actual spend."
+                />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
                 Share
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
-                Views
+                <LabelWithTip
+                  label="Views"
+                  tip="Views come from UGC Pay or ViewsBase and may update independently of spend and Revenue proceeds."
+                />
               </th>
-                <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
-                  Spend / 1K views
-                </th>
+              <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
+                Spend / 1K views
+              </th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
               <tr className="text-foreground" key={row.label}>
                 <td className="border-b border-white/[0.06] px-3 py-3">
-                  {row.label}
+                  <span className="inline-flex items-center gap-2">
+                    <span>{row.label}</span>
+                    <InfoTip label={row.label} tip={row.tip} />
+                  </span>
                 </td>
                 <td className="border-b border-white/[0.06] px-3 py-3">
                   <span className="inline-flex rounded-full border border-white/[0.08] bg-black/[0.2] px-2.5 py-1 text-[0.62rem] uppercase tracking-[0.16em] text-muted-foreground">
@@ -908,30 +973,35 @@ function UgcStatusContent({
           icon="revenue"
           label="UGC/F proceeds"
           meta="Non-renewal proceeds minus known paid ad spend"
+          tip="Uses Revenue new/non-renewal proceeds and subtracts known paid ad spend. Adapty, Singular, and Apple Ads can each update at different times."
           value={formatAmount(data.summary.proceeds, data.currency)}
         />
         <StatCard
           icon="integrations"
           label="UGC/F spend"
           meta={`${formatAmount(data.summary.ugcSpend, data.currency)} UGC + ${formatAmount(data.summary.facelessSpend, data.currency)} faceless`}
+          tip="Combines UGC Pay and ViewsBase faceless costs. View, paid-deduction, and faceless spend sources may refresh after the report date."
           value={formatAmount(data.summary.spend, data.currency)}
         />
         <StatCard
           icon="payouts"
           label="UGC/F profit"
           meta="UGC/F proceeds minus UGC Pay and faceless spend"
+          tip="Profit changes whenever Revenue proceeds, paid ad spend, UGC Pay, or ViewsBase faceless spend refreshes upstream."
           value={formatSignedAmount(data.summary.profit, data.currency)}
         />
         <StatCard
           icon="videos"
           label="UGC views"
           meta="UGC Pay payable views"
+          tip="Payable views after report window rules, paid-view deductions, and caps. View Tally and TikTok paid data can lag."
           value={formatViews(data.summary.ugcViews)}
         />
         <StatCard
           icon="videos"
           label="Faceless views"
           meta="ViewsBase paid views"
+          tip="ViewsBase paid views for the selected range. These can update independently from Revenue and UGC Pay."
           value={formatViews(data.summary.facelessViews)}
         />
       </section>
