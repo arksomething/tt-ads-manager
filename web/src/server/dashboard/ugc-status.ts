@@ -272,34 +272,12 @@ export async function getUgcStatusData(args: {
   const facelessViews = facelessSpendReport.report?.totals.rangeViews ?? 0;
   const ugcSpend = ugcPayData.summary.totalPay;
   const ugcViews = ugcPayData.summary.payableViews;
-  const appleSpendByDate = new Map(
-    appleDailySpendRows.map((row) => [row.date, row.spend] as const),
-  );
-  const paidSourceSpend = revenueReport.sourceRows
+  const paidSourceProceeds = revenueReport.sourceRows
     .filter((row) => row.kind !== "organic" && row.kind !== "renewal")
-    .reduce(
-      (total, row) =>
-        typeof row.spend === "number" && Number.isFinite(row.spend)
-          ? total + row.spend
-          : total,
-      0,
-    );
-  const unknownPaidSpendLabels = revenueReport.sourceRows
-    .filter(
-      (row) =>
-        row.kind !== "organic" &&
-        row.kind !== "renewal" &&
-        row.spend === null,
-    )
-    .map((row) => row.label);
+    .reduce((total, row) => total + row.revenue, 0);
   const proceedsWarnings = [
     ...revenueReport.warnings,
     ...appleDailySpendRows.flatMap((row) => row.warnings),
-    ...(unknownPaidSpendLabels.length > 0
-      ? [
-          `Paid ad spend is unavailable for ${unknownPaidSpendLabels.join(", ")}, so UGC/F proceeds only subtract known paid spend.`,
-        ]
-      : []),
   ];
   const facelessSpendByDate = new Map(
     (facelessSpendReport.report?.dailyRows ?? []).map(
@@ -315,7 +293,6 @@ export async function getUgcStatusData(args: {
   );
   const ugcByDate = new Map(ugcDailyRows.map((row) => [row.date, row] as const));
   const proceedsByDate = getUgcStatusDailyProceedsMap({
-    appleSpendByDate,
     dailyRows: revenueReport.dailyRows,
     dates: dateKeys,
   });
@@ -375,7 +352,7 @@ export async function getUgcStatusData(args: {
       facelessViews,
       proceeds: getUgcStatusSummaryProceeds({
         newProceeds: revenueReport.totals.newProceeds,
-        paidSourceSpend,
+        paidSourceProceeds,
       }),
       spend: ugcSpend + facelessSpend,
       ugcViews,

@@ -129,11 +129,11 @@ export function getUgcStatusDailyProceedsMap(args: {
   dailyRows: Array<{
     date: string;
     newProceeds: number | null;
+    paid: number | null;
     paidSpend: number | null;
     renewal: number | null;
     total: number;
   }>;
-  appleSpendByDate?: Map<string, number>;
 }) {
   const dailyRowsByDate = new Map(args.dailyRows.map((row) => [row.date, row]));
 
@@ -143,19 +143,18 @@ export function getUgcStatusDailyProceedsMap(args: {
       const nonRenewalProceeds =
         row?.newProceeds ??
         (row ? Math.max(row.total - (row.renewal ?? 0), 0) : 0);
-      const paidSpend =
-        (row?.paidSpend ?? 0) + (args.appleSpendByDate?.get(date) ?? 0);
+      const paidProceeds = row?.paid ?? 0;
 
-      return [date, roundCurrency(nonRenewalProceeds - paidSpend)];
+      return [date, roundCurrency(Math.max(nonRenewalProceeds - paidProceeds, 0))];
     }),
   );
 }
 
 export function getUgcStatusSummaryProceeds(args: {
   newProceeds: number;
-  paidSourceSpend: number;
+  paidSourceProceeds: number;
 }) {
-  return roundCurrency(args.newProceeds - args.paidSourceSpend);
+  return roundCurrency(Math.max(args.newProceeds - args.paidSourceProceeds, 0));
 }
 
 export function selectTopUgcStatusVideos(

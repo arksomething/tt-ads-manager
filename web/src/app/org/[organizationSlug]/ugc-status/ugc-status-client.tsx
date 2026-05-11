@@ -386,7 +386,7 @@ function HeaderAndControls({
             </h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
               Proceeds are calculated from Revenue as non-renewal proceeds minus
-              known paid ad spend.
+              paid-source proceeds.
               Spend comes from exact UGC Pay and ViewsBase faceless costs.
             </p>
           </div>
@@ -637,8 +637,8 @@ function UgcStatusTable({
           </h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          Daily proceeds use Revenue non-renewal proceeds minus known paid ad
-          spend.
+          Daily proceeds use Revenue non-renewal proceeds minus paid-source
+          proceeds.
         </p>
       </div>
 
@@ -653,7 +653,7 @@ function UgcStatusTable({
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
                 <LabelWithTip
                   label="UGC/F proceeds"
-                  tip="Revenue new/non-renewal proceeds minus known paid ad spend. Negative values are shown when paid spend exceeds non-renewal proceeds for the day. Adapty proceeds, Singular paid spend, and Apple Ads spend can refresh on different upstream schedules."
+                  tip="Revenue new/non-renewal proceeds minus paid-source proceeds, floored at zero when source timing differs by day. Adapty proceeds and Singular paid-source proceeds can refresh on different upstream schedules."
                 />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
@@ -972,8 +972,8 @@ function UgcStatusContent({
         <StatCard
           icon="revenue"
           label="UGC/F proceeds"
-          meta="Non-renewal proceeds minus known paid ad spend"
-          tip="Uses Revenue new/non-renewal proceeds and subtracts known paid ad spend. Adapty, Singular, and Apple Ads can each update at different times."
+          meta="Non-renewal proceeds minus paid-source proceeds"
+          tip="Uses Revenue new/non-renewal proceeds and subtracts proceeds attributed to paid sources, floored at zero when source timing differs by day. Adapty and Singular can each update at different times."
           value={formatAmount(data.summary.proceeds, data.currency)}
         />
         <StatCard
@@ -987,7 +987,7 @@ function UgcStatusContent({
           icon="payouts"
           label="UGC/F profit"
           meta="UGC/F proceeds minus UGC Pay and faceless spend"
-          tip="Profit changes whenever Revenue proceeds, paid ad spend, UGC Pay, or ViewsBase faceless spend refreshes upstream."
+          tip="Profit changes whenever Revenue proceeds, paid-source attribution, UGC Pay, or ViewsBase faceless spend refreshes upstream."
           value={formatSignedAmount(data.summary.profit, data.currency)}
         />
         <StatCard

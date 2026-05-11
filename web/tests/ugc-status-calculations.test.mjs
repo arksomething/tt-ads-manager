@@ -78,17 +78,14 @@ test("allocates evenly when daily proceeds weights are unavailable", () => {
   assert.deepEqual([...allocations.values()], [33.33, 33.33, 33.34]);
 });
 
-test("calculates UGC status proceeds as non-renewal proceeds minus known ad spend", () => {
+test("calculates UGC status proceeds as non-renewal proceeds minus paid-source proceeds", () => {
   const proceeds = getUgcStatusDailyProceedsMap({
     dates: ["2026-05-04", "2026-05-05", "2026-05-06"],
-    appleSpendByDate: new Map([
-      ["2026-05-04", 12.5],
-      ["2026-05-05", 7.25],
-    ]),
     dailyRows: [
       {
         date: "2026-05-04",
         newProceeds: 1_000,
+        paid: 300,
         paidSpend: 300,
         renewal: 100,
         total: 1_100,
@@ -96,6 +93,7 @@ test("calculates UGC status proceeds as non-renewal proceeds minus known ad spen
       {
         date: "2026-05-05",
         newProceeds: null,
+        paid: 50,
         paidSpend: 50,
         renewal: 200,
         total: 900,
@@ -103,6 +101,7 @@ test("calculates UGC status proceeds as non-renewal proceeds minus known ad spen
       {
         date: "2026-05-06",
         newProceeds: 100,
+        paid: 125,
         paidSpend: 125,
         renewal: 0,
         total: 100,
@@ -110,13 +109,13 @@ test("calculates UGC status proceeds as non-renewal proceeds minus known ad spen
     ],
   });
 
-  assert.deepEqual([...proceeds.values()], [687.5, 642.75, -25]);
+  assert.deepEqual([...proceeds.values()], [700, 650, 0]);
   assert.equal(
     getUgcStatusSummaryProceeds({
       newProceeds: 1_900,
-      paidSourceSpend: 494.75,
+      paidSourceProceeds: 475,
     }),
-    1_405.25,
+    1_425,
   );
 });
 
