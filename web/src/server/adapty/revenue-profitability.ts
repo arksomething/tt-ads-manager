@@ -19,6 +19,34 @@ import {
 } from "./revenue-profitability-calculations";
 
 const UGC_PAY_DAILY_QUERY_CONCURRENCY = 3;
+const SUPERWALL_REVENUE_FEE_RATE = 0.01;
+const MONTHLY_OPERATING_COSTS = [
+  {
+    key: "office",
+    label: "Office",
+    monthlyAmount: 1_900,
+  },
+  {
+    key: "superwall",
+    label: "Superwall",
+    monthlyAmount: 200,
+  },
+  {
+    key: "adapty",
+    label: "Adapty",
+    monthlyAmount: 1_400,
+  },
+  {
+    key: "singular",
+    label: "Singular",
+    monthlyAmount: 1_000,
+  },
+  {
+    key: "misc",
+    label: "Bullshit",
+    monthlyAmount: 1_000,
+  },
+] as const;
 
 type RevenueUgcPaySpendData = {
   data: OrganizationUgcPayData;
@@ -35,7 +63,13 @@ type FacelessSpendReport = {
 };
 
 export type RevenueProfitabilityRow = {
-  kind: "organic-cost" | "organic-total" | "paid" | "renewal";
+  kind:
+    | "operating-cost"
+    | "operating-total"
+    | "organic-cost"
+    | "organic-total"
+    | "paid"
+    | "renewal";
   key: string;
   label: string;
   basis: string;
@@ -48,10 +82,11 @@ export type RevenueProfitabilityRow = {
 
 export type RevenueProfitabilityDailyRow = {
   date: string;
+  facelessSpend: number;
+  operatingSpend: number;
   proceeds: number;
   paidSpend: number | null;
   ugcSpend: number;
-  facelessSpend: number;
   totalSpend: number | null;
   profit: number | null;
   roas: number | null;
@@ -66,6 +101,7 @@ export type RevenueProfitabilityData = {
   facelessSpend: number;
   knownSpend: number;
   netProfit: number;
+  operatingSpend: number;
   paidSourceSpend: number;
   rows: RevenueProfitabilityRow[];
   ugcSpend: number;
@@ -154,6 +190,68 @@ function getProfit(proceeds: number, spend: number | null) {
     : null;
 }
 
+function roundCurrency(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function getDaysInUtcMonth(date: string) {
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return 30;
+  }
+
+  return new Date(
+    Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+}
+
+function getMonthlyCostDailyAmount(date: string, monthlyAmount: number) {
+  return monthlyAmount / getDaysInUtcMonth(date);
+}
+
+function getOperatingCostDailyBreakdown(args: {
+  date: string;
+  proceeds: number;
+}) {
+  const fixedRows = MONTHLY_OPERATING_COSTS.map((cost) => ({
+    ...cost,
+    amount: getMonthlyCostDailyAmount(args.date, cost.monthlyAmount),
+  }));
+  const superwallRevenueFee = args.proceeds * SUPERWALL_REVENUE_FEE_RATE;
+  const rows = fixedRows.map((row) =>
+    row.key === "superwall"
+      ? {
+          ...row,
+          amount: row.amount + superwallRevenueFee,
+        }
+      : row,
+  );
+
+  return {
+    rows,
+    total: roundCurrency(rows.reduce((total, row) => total + row.amount, 0)),
+  };
+}
+
+function getOperatingCostRows(dailyRows: RevenueProfitabilityDailyRow[]) {
+  const spendByKey = new Map<string, number>();
+
+  for (const row of dailyRows) {
+    for (const cost of getOperatingCostDailyBreakdown({
+      date: row.date,
+      proceeds: row.proceeds,
+    }).rows) {
+      spendByKey.set(cost.key, (spendByKey.get(cost.key) ?? 0) + cost.amount);
+    }
+  }
+
+  return MONTHLY_OPERATING_COSTS.map((cost) => ({
+    cost,
+    spend: roundCurrency(spendByKey.get(cost.key) ?? 0),
+  }));
+}
+
 function getCompleteDailyProfitabilityTotals(
   dailyRows: RevenueProfitabilityDailyRow[],
 ) {
@@ -174,12 +272,17 @@ function getCompleteDailyProfitabilityTotals(
   );
 
   return {
-    knownSpend: spend,
+    knownSpend: roundCurrency(spend),
   };
 }
 
 function buildProfitabilityRows(args: {
   facelessSpend: number;
+  operatingCostRows: Array<{
+    cost: (typeof MONTHLY_OPERATING_COSTS)[number];
+    spend: number;
+  }>;
+  operatingSpend: number;
   report: RevenueAttributionReport;
   ugcPayData: RevenueUgcPaySpendData;
 }) {
@@ -265,8 +368,35 @@ function buildProfitabilityRows(args: {
       margin: null,
     },
   ];
+  const operatingRows: RevenueProfitabilityRow[] = [
+    {
+      kind: "operating-total",
+      key: "operating:total",
+      label: "Operating costs",
+      basis: "Monthly fixed costs prorated by calendar day plus Superwall 1% revenue fee",
+      proceeds: null,
+      spend: args.operatingSpend,
+      profit: null,
+      roas: null,
+      margin: null,
+    },
+    ...args.operatingCostRows.map(({ cost, spend }) => ({
+      kind: "operating-cost" as const,
+      key: `operating:${cost.key}`,
+      label: cost.label,
+      basis:
+        cost.key === "superwall"
+          ? "$200/month prorated daily + 1% of daily proceeds"
+          : `$${cost.monthlyAmount.toLocaleString("en-US")}/month prorated daily`,
+      proceeds: null,
+      spend,
+      profit: null,
+      roas: null,
+      margin: null,
+    })),
+  ];
 
-  return [...organicRows, ...paidRows];
+  return [...organicRows, ...operatingRows, ...paidRows];
 }
 
 function getFacelessReportCost(report: ViewsBaseFacelessReport | null) {
@@ -295,13 +425,8 @@ export function buildRevenueProfitabilityData(args: {
   ugcPayData: RevenueUgcPaySpendData;
 }): RevenueProfitabilityData {
   const facelessSpend = getFacelessReportCost(args.facelessSpendReport.report);
-  const rows = buildProfitabilityRows({
-    facelessSpend,
-    report: args.report,
-    ugcPayData: args.ugcPayData,
-  });
-  const paidSourceSpend = rows
-    .filter((row) => row.kind === "paid")
+  const paidSourceSpend = args.report.sourceRows
+    .filter((row) => row.kind !== "organic" && row.kind !== "renewal")
     .reduce(
       (total, row) =>
         typeof row.spend === "number" && Number.isFinite(row.spend)
@@ -309,8 +434,11 @@ export function buildRevenueProfitabilityData(args: {
           : total,
       0,
     );
-  const unknownSpendLabels = rows
-    .filter((row) => row.kind === "paid" && row.spend === null)
+  const paidRows = args.report.sourceRows.filter(
+    (row) => row.kind !== "organic" && row.kind !== "renewal",
+  );
+  const unknownSpendLabels = paidRows
+    .filter((row) => row.spend === null)
     .map((row) => row.label);
   const ugcSpend = args.ugcPayData.data.summary.totalPay;
   const ugcPayByDate = new Map(
@@ -324,16 +452,23 @@ export function buildRevenueProfitabilityData(args: {
   const dailyRows = args.report.dailyRows.map((row) => {
     const ugcDailySpend = ugcPayByDate.get(row.date) ?? 0;
     const facelessDailySpend = facelessSpendByDate.get(row.date) ?? 0;
+    const operatingSpend = getOperatingCostDailyBreakdown({
+      date: row.date,
+      proceeds: row.total,
+    }).total;
     const paidSpend = row.paidSpend;
     const totalSpend =
       typeof paidSpend === "number" && Number.isFinite(paidSpend)
-        ? paidSpend + ugcDailySpend + facelessDailySpend
+        ? roundCurrency(
+            paidSpend + ugcDailySpend + facelessDailySpend + operatingSpend,
+          )
         : null;
     const profit = getProfit(row.total, totalSpend);
 
     return {
       date: row.date,
       facelessSpend: facelessDailySpend,
+      operatingSpend,
       paidSpend,
       proceeds: row.total,
       profit,
@@ -342,10 +477,22 @@ export function buildRevenueProfitabilityData(args: {
       ugcSpend: ugcDailySpend,
     };
   });
+  const operatingCostRows = getOperatingCostRows(dailyRows);
+  const operatingSpend = roundCurrency(
+    operatingCostRows.reduce((total, row) => total + row.spend, 0),
+  );
+  const rows = buildProfitabilityRows({
+    facelessSpend,
+    operatingCostRows,
+    operatingSpend,
+    report: args.report,
+    ugcPayData: args.ugcPayData,
+  });
   const dailyTotals = getCompleteDailyProfitabilityTotals(dailyRows);
-  const fallbackKnownSpend = paidSourceSpend + ugcSpend + facelessSpend;
+  const fallbackKnownSpend =
+    paidSourceSpend + ugcSpend + facelessSpend + operatingSpend;
   const knownSpend = dailyTotals?.knownSpend ?? fallbackKnownSpend;
-  const netProfit = args.report.totals.total - knownSpend;
+  const netProfit = roundCurrency(args.report.totals.total - knownSpend);
   const blendedRoas = getRatio(args.report.totals.total, knownSpend);
 
   return {
@@ -357,6 +504,7 @@ export function buildRevenueProfitabilityData(args: {
     facelessSpend,
     knownSpend,
     netProfit,
+    operatingSpend,
     paidSourceSpend,
     rows,
     ugcSpend,

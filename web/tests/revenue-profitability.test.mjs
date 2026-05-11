@@ -151,12 +151,22 @@ test("profitability spend reconciles to complete daily rows while profit uses ra
     (total, row) => total + row.totalSpend,
     0,
   );
+  const roundedDailySpend = Number(dailySpend.toFixed(2));
 
   assert.equal(dailyProceeds, 300);
-  assert.equal(dailySpend, 153);
-  assert.equal(result.knownSpend, dailySpend);
-  assert.equal(result.netProfit, 999 - dailySpend);
-  assert.equal(result.blendedRoas, 999 / dailySpend);
+  assert.equal(roundedDailySpend, 510.84);
+  assert.equal(result.knownSpend, roundedDailySpend);
+  assert.equal(result.operatingSpend, 357.84);
+  assert.equal(result.netProfit, 488.16);
+  assert.equal(result.blendedRoas, 999 / roundedDailySpend);
+  assert.equal(
+    result.rows.find((row) => row.key === "operating:office")?.spend,
+    122.58,
+  );
+  assert.equal(
+    result.rows.find((row) => row.key === "operating:superwall")?.spend,
+    15.9,
+  );
 });
 
 test("profitability net profit cannot exceed total proceeds when known spend is positive", async () => {
@@ -220,8 +230,9 @@ test("profitability net profit cannot exceed total proceeds when known spend is 
     },
   });
 
-  assert.equal(result.knownSpend, 1_100);
-  assert.equal(result.netProfit, 400);
-  assert.equal(result.blendedRoas, 1_500 / 1_100);
+  assert.equal(result.knownSpend, 1_654.84);
+  assert.equal(result.operatingSpend, 554.84);
+  assert.equal(result.netProfit, -154.84);
+  assert.equal(result.blendedRoas, 1_500 / 1_654.84);
   assert.ok(result.netProfit <= 1_500);
 });

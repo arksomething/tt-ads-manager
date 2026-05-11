@@ -6,7 +6,13 @@ import { DashboardIcon } from "@/components/org-dashboard/org-icons";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
 
 type RevenueProfitabilityRow = {
-  kind: "organic-cost" | "organic-total" | "paid" | "renewal";
+  kind:
+    | "operating-cost"
+    | "operating-total"
+    | "organic-cost"
+    | "organic-total"
+    | "paid"
+    | "renewal";
   key: string;
   label: string;
   basis: string;
@@ -19,10 +25,11 @@ type RevenueProfitabilityRow = {
 
 type RevenueProfitabilityDailyRow = {
   date: string;
+  facelessSpend: number;
+  operatingSpend: number;
   proceeds: number;
   paidSpend: number | null;
   ugcSpend: number;
-  facelessSpend: number;
   totalSpend: number | null;
   profit: number | null;
   roas: number | null;
@@ -37,6 +44,7 @@ type RevenueProfitabilityData = {
   facelessSpend: number;
   knownSpend: number;
   netProfit: number;
+  operatingSpend: number;
   paidSourceSpend: number;
   rows: RevenueProfitabilityRow[];
   ugcSpend: number;
@@ -224,7 +232,7 @@ function RevenueProfitabilityContent({
           </h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          Paid ad spend + UGC Pay owed + ViewsBase faceless spend
+          Paid ad spend + UGC Pay owed + ViewsBase faceless spend + operating costs
         </p>
       </div>
 
@@ -233,14 +241,15 @@ function RevenueProfitabilityContent({
         Adapty Ads Manager for Apple Search Ads when dashboard auth is
         configured. UGC spend is loaded from exact daily UGC Pay queries using
         gained views and the first 7 days. Faceless spend uses ViewsBase&apos;s
-        daily ledger total or projected price, whichever is higher.
+        daily ledger total or projected price, whichever is higher. Operating
+        costs are prorated by calendar day.
       </p>
 
       <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <StatCard
           icon="integrations"
           label="Known spend"
-          meta={`${formatAmount(data.paidSourceSpend, data.currency)} ad + ${formatAmount(data.ugcSpend, data.currency)} UGC + ${formatAmount(data.facelessSpend, data.currency)} faceless`}
+          meta={`${formatAmount(data.paidSourceSpend, data.currency)} ad + ${formatAmount(data.ugcSpend, data.currency)} UGC + ${formatAmount(data.facelessSpend, data.currency)} faceless + ${formatAmount(data.operatingSpend, data.currency)} ops`}
           value={formatAmount(data.knownSpend, data.currency)}
         />
         <StatCard
@@ -256,24 +265,16 @@ function RevenueProfitabilityContent({
           value={formatPercent(data.blendedRoas)}
         />
         <StatCard
+          icon="integrations"
+          label="Operating costs"
+          meta="Monthly fixed costs prorated daily + Superwall 1%"
+          value={formatAmount(data.operatingSpend, data.currency)}
+        />
+        <StatCard
           icon="creators"
           label="UGC owed"
           meta="Gained views, first 7 days"
           value={formatAmount(data.ugcSpend, data.currency)}
-        />
-        <StatCard
-          icon="creators"
-          label="Faceless spend"
-          meta={
-            data.facelessErrorMessage
-              ? "ViewsBase unavailable"
-              : "From ViewsBase all-campaign daily cost"
-          }
-          value={
-            data.facelessConfigured
-              ? formatAmount(data.facelessSpend, data.currency)
-              : "Unavailable"
-          }
         />
       </div>
 
@@ -322,14 +323,14 @@ function RevenueProfitabilityContent({
             {data.rows.map((row) => (
               <tr
                 className={
-                  row.kind === "organic-cost"
+                  row.kind === "organic-cost" || row.kind === "operating-cost"
                     ? "bg-white/[0.015] text-muted-foreground"
                     : "text-foreground"
                 }
                 key={row.key}
               >
                 <td className="border-b border-white/[0.06] px-3 py-3 font-medium">
-                  {row.kind === "organic-cost" ? (
+                  {row.kind === "organic-cost" || row.kind === "operating-cost" ? (
                     <span className="pl-5 text-muted-foreground">
                       {row.label}
                     </span>
@@ -351,17 +352,17 @@ function RevenueProfitabilityContent({
                     : formatAmount(row.spend, data.currency)}
                 </td>
                 <td className="border-b border-white/[0.06] px-3 py-3 text-right">
-                  {row.kind === "organic-cost"
+                  {row.kind === "organic-cost" || row.kind === "operating-cost"
                     ? "Included above"
                     : formatSignedAmount(row.profit, data.currency)}
                 </td>
                 <td className="border-b border-white/[0.06] px-3 py-3 text-right">
-                  {row.kind === "organic-cost"
+                  {row.kind === "organic-cost" || row.kind === "operating-cost"
                     ? "Included above"
                     : formatPercent(row.roas)}
                 </td>
                 <td className="border-b border-white/[0.06] px-3 py-3 text-right">
-                  {row.kind === "organic-cost"
+                  {row.kind === "organic-cost" || row.kind === "operating-cost"
                     ? "Included above"
                     : formatPercent(row.margin)}
                 </td>
@@ -389,6 +390,9 @@ function RevenueProfitabilityContent({
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
                 Faceless
+              </th>
+              <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
+                Operating
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
                 Known spend
@@ -420,6 +424,9 @@ function RevenueProfitabilityContent({
                 </td>
                 <td className="border-b border-white/[0.06] px-3 py-3 text-right">
                   {formatAmount(row.facelessSpend, data.currency)}
+                </td>
+                <td className="border-b border-white/[0.06] px-3 py-3 text-right">
+                  {formatAmount(row.operatingSpend, data.currency)}
                 </td>
                 <td className="border-b border-white/[0.06] px-3 py-3 text-right">
                   {row.totalSpend === null
