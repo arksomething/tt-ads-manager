@@ -248,3 +248,54 @@ test("uses Adapty total series instead of summing total plus period components",
   assert.equal(metric.total, 4_056.19);
   assert.notEqual(metric.total, 4_056.19 + 3_268.03 + 235.53);
 });
+
+test("derives exact organic source daily proceeds without source total rows", async () => {
+  const { getOrganicSourceDailyRows, getOrganicSourceSeries } = await import(
+    "../src/server/adapty/revenue.ts"
+  );
+  const series = [
+    {
+      label: "No Data",
+      points: [
+        { date: "2026-05-04", value: 333.05 },
+        { date: "2026-05-05", value: 255.63 },
+      ],
+      unit: "USD",
+      value: 588.68,
+    },
+    {
+      label: "apple_search_ads",
+      points: [
+        { date: "2026-05-04", value: 1_871.72 },
+        { date: "2026-05-05", value: 1_595.79 },
+      ],
+      unit: "USD",
+      value: 3_467.51,
+    },
+    {
+      label: "Total",
+      points: [
+        { date: "2026-05-04", value: 2_204.77 },
+        { date: "2026-05-05", value: 1_851.42 },
+      ],
+      unit: "USD",
+      value: 4_056.19,
+    },
+  ];
+  const organicSeries = getOrganicSourceSeries({
+    applePatterns: ["apple_search_ads"],
+    creatorPatterns: ["social custom"],
+    sourceSeries: series,
+    tiktokPatterns: ["tiktok"],
+  });
+  const dailyRows = getOrganicSourceDailyRows({
+    endDate: "2026-05-05",
+    sourceSeries: organicSeries,
+    startDate: "2026-05-04",
+  });
+
+  assert.deepEqual(
+    dailyRows.map((row) => row.proceeds),
+    [333.05, 255.63],
+  );
+});

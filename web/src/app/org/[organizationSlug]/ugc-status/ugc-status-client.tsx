@@ -612,7 +612,7 @@ function UgcStatusTable({
           </h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          Daily proceeds use each day's Revenue UGC/F total.
+          Daily proceeds use exact Adapty organic / unattributed source rows.
         </p>
       </div>
 
@@ -906,7 +906,7 @@ function UgcStatusContent({
         <StatCard
           icon="revenue"
           label="UGC/F proceeds"
-          meta="Revenue tab organic / UGC proceeds after paid + renewals"
+          meta="Exact Adapty organic / unattributed source proceeds"
           value={formatAmount(data.summary.proceeds, data.currency)}
         />
         <StatCard

@@ -1,4 +1,5 @@
 import { getSingularEnv, hasSingularEnv } from "@/lib/server-env";
+import { dateRangeIncludesToday } from "@/lib/cache-control";
 
 import {
   SingularApiError,
@@ -39,6 +40,7 @@ type CachedValue<T> = {
 
 type SingularPendingReportCacheEntry = {
   kind: "pending";
+  cacheable?: boolean;
   expiresAt: number;
   reportId: string;
   query: SingularCreateAsyncReportArgs;
@@ -89,6 +91,7 @@ export type SingularSourceRevenueReport = {
 
 type SingularSourceRevenuePendingCacheEntry = {
   kind: "pending";
+  cacheable?: boolean;
   expiresAt: number;
   reportId: string;
   query: SingularCreateAsyncReportArgs;
@@ -930,7 +933,11 @@ async function getTikTokSingularOverlayForRange(args: {
     sourceNames: args.sourceNames,
     appNames: args.appNames,
   });
-  const cached = readReportCache(cacheKey);
+  const cacheable = !dateRangeIncludesToday({
+    endDate: args.endDate,
+    startDate: args.startDate,
+  });
+  const cached = cacheable ? readReportCache(cacheKey) : null;
 
   if (cached?.kind === "ready") {
     return cached.value;
@@ -957,6 +964,7 @@ async function getTikTokSingularOverlayForRange(args: {
       const reportId = await singularClient.createAsyncReport(query);
       const pendingEntry: SingularPendingReportCacheEntry = {
         kind: "pending",
+        cacheable,
         expiresAt: Date.now() + SINGULAR_PENDING_REPORT_TTL_MS,
         reportId,
         query,
@@ -966,7 +974,9 @@ async function getTikTokSingularOverlayForRange(args: {
         lastPolledAt: Date.now(),
       };
 
-      singularReportCache.set(cacheKey, pendingEntry);
+      if (cacheable) {
+        singularReportCache.set(cacheKey, pendingEntry);
+      }
 
       await sleep(SINGULAR_INITIAL_REPORT_WAIT_MS);
 
@@ -1090,11 +1100,13 @@ async function pollPendingReport(
       warnings: [],
     };
 
-    singularReportCache.set(cacheKey, {
-      kind: "ready",
-      expiresAt: Date.now() + SINGULAR_REPORT_CACHE_TTL_MS,
-      value: overlay,
-    });
+    if (entry.cacheable !== false) {
+      singularReportCache.set(cacheKey, {
+        kind: "ready",
+        expiresAt: Date.now() + SINGULAR_REPORT_CACHE_TTL_MS,
+        value: overlay,
+      });
+    }
 
     return overlay;
   }
@@ -1115,10 +1127,12 @@ async function pollPendingReport(
     });
   }
 
-  singularReportCache.set(cacheKey, {
-    ...entry,
-    lastPolledAt: Date.now(),
-  });
+  if (entry.cacheable !== false) {
+    singularReportCache.set(cacheKey, {
+      ...entry,
+      lastPolledAt: Date.now(),
+    });
+  }
 
   return getEmptyTikTokSingularOverlay({
     configured: true,
@@ -1145,7 +1159,11 @@ async function getSingularSourceRevenueReportForRange(args: {
     cohortMetric: args.cohortMetric,
     appNames: args.appNames,
   });
-  const cached = singularSourceRevenueReportCache.get(cacheKey);
+  const cacheable = !dateRangeIncludesToday({
+    endDate: args.endDate,
+    startDate: args.startDate,
+  });
+  const cached = cacheable ? singularSourceRevenueReportCache.get(cacheKey) : null;
 
   if (cached?.kind === "ready" && cached.expiresAt > Date.now()) {
     return cached.value;
@@ -1167,6 +1185,7 @@ async function getSingularSourceRevenueReportForRange(args: {
     const reportId = await singularClient.createAsyncReport(query);
     const pendingEntry: SingularSourceRevenuePendingCacheEntry = {
       kind: "pending",
+      cacheable,
       expiresAt: Date.now() + SINGULAR_PENDING_REPORT_TTL_MS,
       reportId,
       query,
@@ -1176,7 +1195,9 @@ async function getSingularSourceRevenueReportForRange(args: {
       lastPolledAt: Date.now(),
     };
 
-    singularSourceRevenueReportCache.set(cacheKey, pendingEntry);
+    if (cacheable) {
+      singularSourceRevenueReportCache.set(cacheKey, pendingEntry);
+    }
 
     await sleep(SINGULAR_INITIAL_REPORT_WAIT_MS);
 
@@ -1272,11 +1293,13 @@ async function pollPendingSourceRevenueReport(
           ],
     };
 
-    singularSourceRevenueReportCache.set(cacheKey, {
-      kind: "ready",
-      expiresAt: Date.now() + SINGULAR_REPORT_CACHE_TTL_MS,
-      value: report,
-    });
+    if (entry.cacheable !== false) {
+      singularSourceRevenueReportCache.set(cacheKey, {
+        kind: "ready",
+        expiresAt: Date.now() + SINGULAR_REPORT_CACHE_TTL_MS,
+        value: report,
+      });
+    }
 
     return report;
   }
@@ -1297,10 +1320,12 @@ async function pollPendingSourceRevenueReport(
     });
   }
 
-  singularSourceRevenueReportCache.set(cacheKey, {
-    ...entry,
-    lastPolledAt: Date.now(),
-  });
+  if (entry.cacheable !== false) {
+    singularSourceRevenueReportCache.set(cacheKey, {
+      ...entry,
+      lastPolledAt: Date.now(),
+    });
+  }
 
   return getEmptySingularSourceRevenueReport({
     configured: true,

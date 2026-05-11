@@ -128,7 +128,7 @@ export function getUgcStatusDailyProceedsMap(args: {
   dates: string[];
   dailyRows: Array<{
     date: string;
-    organic: number | null;
+    proceeds: number | null;
   }>;
 }) {
   const dailyRowsByDate = new Map(args.dailyRows.map((row) => [row.date, row]));
@@ -136,7 +136,7 @@ export function getUgcStatusDailyProceedsMap(args: {
   return new Map(
     args.dates.map((date) => [
       date,
-      Math.max(dailyRowsByDate.get(date)?.organic ?? 0, 0),
+      Math.max(dailyRowsByDate.get(date)?.proceeds ?? 0, 0),
     ]),
   );
 }

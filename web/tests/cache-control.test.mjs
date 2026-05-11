@@ -31,6 +31,17 @@ test("uses no-store when a date range includes today", () => {
   );
 });
 
+test("treats the current New York date as today for evening reports", () => {
+  assert.equal(
+    getDateRangeCacheControl({
+      endDate: "2026-05-10",
+      startDate: "2026-05-04",
+      today: new Date("2026-05-11T00:30:00.000Z"),
+    }),
+    NO_STORE_CACHE_CONTROL,
+  );
+});
+
 test("allows short private caching for completed historical ranges", () => {
   assert.equal(
     getDateRangeCacheControl({

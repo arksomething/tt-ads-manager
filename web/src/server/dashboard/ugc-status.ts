@@ -260,7 +260,7 @@ export async function getUgcStatusData(args: {
   );
   const ugcByDate = new Map(ugcDailyRows.map((row) => [row.date, row] as const));
   const proceedsByDate = getUgcStatusDailyProceedsMap({
-    dailyRows: revenueReport.dailyRows,
+    dailyRows: revenueReport.organicSourceDailyRows,
     dates: dateKeys,
   });
   const ugcSpendByDate = getUgcStatusSpendByDate({
@@ -315,7 +315,7 @@ export async function getUgcStatusData(args: {
     ugcViews,
     ...calculateUgcStatusMetrics({
       facelessViews,
-      proceeds: revenueReport.totals.organic,
+      proceeds: revenueReport.organicSourceTotal,
       spend: ugcSpend + facelessSpend,
       ugcViews,
       views: ugcViews + facelessViews,

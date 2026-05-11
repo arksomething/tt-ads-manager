@@ -58,6 +58,11 @@ export type RevenueAttributionDailyRow = {
   tiktokSpend: number | null;
 };
 
+export type RevenueOrganicSourceDailyRow = {
+  date: string;
+  proceeds: number;
+};
+
 export type RevenueProviderTimeZoneRow = {
   provider: string;
   source: string;
@@ -99,6 +104,8 @@ export type RevenueAttributionReport = {
   };
   sourceRows: RevenueAttributionSourceRow[];
   dailyRows: RevenueAttributionDailyRow[];
+  organicSourceDailyRows: RevenueOrganicSourceDailyRow[];
+  organicSourceTotal: number;
   providerTimeZones: RevenueProviderTimeZoneRow[];
   hasDailySourceBreakdown: boolean;
   appleAdsDashboardConfigured: boolean;
@@ -106,12 +113,12 @@ export type RevenueAttributionReport = {
   warnings: string[];
 };
 
-type NormalizedPoint = {
+export type NormalizedPoint = {
   date: string | null;
   value: number;
 };
 
-type NormalizedSeries = {
+export type NormalizedSeries = {
   label: string | null;
   value: number;
   points: NormalizedPoint[];
@@ -622,6 +629,7 @@ function buildSourceRows(args: {
   totalRevenue: number;
 }) {
   return args.sourceSeries
+    .filter((row) => !isTotalSeriesLabel(row.label))
     .filter((row) => row.value !== 0 || row.label)
     .map<RevenueAttributionSourceRow>((row) => {
       const kind = getRevenueSourceKind({
@@ -643,6 +651,37 @@ function buildSourceRows(args: {
       };
     })
     .sort((left, right) => right.revenue - left.revenue || left.label.localeCompare(right.label));
+}
+
+export function getOrganicSourceSeries(args: {
+  sourceSeries: NormalizedSeries[];
+  tiktokPatterns: string[];
+  applePatterns: string[];
+  creatorPatterns: string[];
+}) {
+  return args.sourceSeries.filter(
+    (row) =>
+      !isTotalSeriesLabel(row.label) &&
+      getRevenueSourceKind({
+        applePatterns: args.applePatterns,
+        creatorPatterns: args.creatorPatterns,
+        label: row.label,
+        tiktokPatterns: args.tiktokPatterns,
+      }) === "organic",
+  );
+}
+
+export function getOrganicSourceDailyRows(args: {
+  startDate: string;
+  endDate: string;
+  sourceSeries: NormalizedSeries[];
+}): RevenueOrganicSourceDailyRow[] {
+  const sourceMap = getMergedPointMap(args.sourceSeries);
+
+  return getInclusiveDateKeys(args.startDate, args.endDate).map((date) => ({
+    date,
+    proceeds: roundCurrency(Math.max(sourceMap.get(date) ?? 0, 0)),
+  }));
 }
 
 function buildSingularSourceRows(args: {
@@ -799,7 +838,9 @@ function buildDailyRows(args: {
   const renewalMap = getMergedPointMap(args.renewalSeries ?? []);
   const paidSpendMap = new Map<string, number>();
   const tiktokSpendMap = new Map<string, number>();
-  const fallbackSourceSeries = args.sourceSeries ?? [];
+  const fallbackSourceSeries = (args.sourceSeries ?? []).filter(
+    (row) => !isTotalSeriesLabel(row.label),
+  );
   const fallbackTikTokPatterns = args.tiktokPatterns ?? [];
   const fallbackApplePatterns = args.applePatterns ?? [];
   const fallbackCreatorPatterns = args.creatorPatterns ?? [];
@@ -1343,6 +1384,20 @@ export async function getRevenueAttributionReport(args: {
     });
     const nonOrganicRevenue = paidRevenue + renewalBucket.renewalBucket;
     const organicRevenue = sourceSplitPending ? 0 : renewalBucket.organic;
+    const organicSourceSeries = getOrganicSourceSeries({
+      applePatterns,
+      creatorPatterns,
+      sourceSeries: sourceMetric.series,
+      tiktokPatterns,
+    });
+    const organicSourceDailyRows = getOrganicSourceDailyRows({
+      endDate: args.endDate,
+      sourceSeries: organicSourceSeries,
+      startDate: args.startDate,
+    });
+    const organicSourceTotal = roundCurrency(
+      organicSourceSeries.reduce((total, row) => total + row.value, 0),
+    );
     if (sourceSplitPending) {
       sourceRows = sourceRows
         .map((row) =>
@@ -1501,6 +1556,8 @@ export async function getRevenueAttributionReport(args: {
       appleSourceProvider,
       appleAdsDashboardConfigured: appleAdsDashboardReport.configured,
       appleAdsDashboardRowCount: appleAdsDashboardReport.rowCount,
+      organicSourceDailyRows,
+      organicSourceTotal,
       sourceRows,
       startDate: args.startDate,
       timeZone: REVENUE_REPORT_TIME_ZONE,
@@ -1577,6 +1634,13 @@ export function getDefaultRevenueAttributionReport(args: {
       total: 0,
       organic: null,
     })),
+    organicSourceDailyRows: getInclusiveDateKeys(args.startDate, args.endDate).map(
+      (date) => ({
+        date,
+        proceeds: 0,
+      }),
+    ),
+    organicSourceTotal: 0,
     endDate: args.endDate,
     hasDailySourceBreakdown: false,
     providerTimeZones: getProviderTimeZoneRows({}),

@@ -77,17 +77,17 @@ test("allocates evenly when daily proceeds weights are unavailable", () => {
   assert.deepEqual([...allocations.values()], [33.33, 33.33, 33.34]);
 });
 
-test("uses Revenue daily organic rows directly for UGC status proceeds", () => {
+test("uses direct Adapty organic source rows for UGC status proceeds", () => {
   const proceeds = getUgcStatusDailyProceedsMap({
     dates: ["2026-05-04", "2026-05-05", "2026-05-06"],
     dailyRows: [
-      { date: "2026-05-04", organic: 625.85 },
-      { date: "2026-05-05", organic: null },
-      { date: "2026-05-06", organic: 599.78 },
+      { date: "2026-05-04", proceeds: 333.05 },
+      { date: "2026-05-05", proceeds: null },
+      { date: "2026-05-06", proceeds: 252.76 },
     ],
   });
 
-  assert.deepEqual([...proceeds.values()], [625.85, 0, 599.78]);
+  assert.deepEqual([...proceeds.values()], [333.05, 0, 252.76]);
 });
 
 test("reconciles daily UGC spend back to the UGC Pay summary total", () => {

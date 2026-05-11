@@ -8,6 +8,22 @@ function toUtcDateOnly(value = new Date()) {
   return value.toISOString().slice(0, 10);
 }
 
+function toNewYorkDateOnly(value = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "America/New_York",
+    year: "numeric",
+  }).formatToParts(value);
+  const partMap = new Map(parts.map((part) => [part.type, part.value]));
+
+  return `${partMap.get("year")}-${partMap.get("month")}-${partMap.get("day")}`;
+}
+
+function getCurrentDateKeys(value = new Date()) {
+  return [...new Set([toUtcDateOnly(value), toNewYorkDateOnly(value)])];
+}
+
 function isDateOnly(value: string | null | undefined): value is string {
   return typeof value === "string" && DATE_RE.test(value);
 }
@@ -22,8 +38,10 @@ export function dateRangeIncludesToday(args: {
     return args.missingDateIncludesToday ?? false;
   }
 
-  const today = toUtcDateOnly(args.today);
-  return args.startDate <= today && today <= args.endDate;
+  const { endDate, startDate } = args;
+  return getCurrentDateKeys(args.today).some(
+    (today) => startDate <= today && today <= endDate,
+  );
 }
 
 export function getDateRangeCacheControl(args: {

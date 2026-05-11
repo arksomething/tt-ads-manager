@@ -24,6 +24,19 @@ test("classifies Singular social custom as organic creator revenue", () => {
   assert.equal(isOrganicSingularLabel("social (Custom)", creatorPatterns), true);
 });
 
+test("classifies Adapty No Data as organic unattributed revenue", () => {
+  assert.equal(
+    getRevenueSourceKind({
+      applePatterns,
+      creatorPatterns,
+      label: "No Data",
+      tiktokPatterns,
+    }),
+    "organic",
+  );
+  assert.equal(isOrganicSingularLabel("No Data", creatorPatterns), true);
+});
+
 test("keeps true paid sources in the paid bucket", () => {
   assert.equal(
     getRevenueSourceKind({
