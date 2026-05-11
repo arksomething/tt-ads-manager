@@ -223,8 +223,9 @@ export async function getUgcStatusData(args: {
 
         return {
           date,
-          cpmSpend: dailyData.summary.videoPay,
-          fixedSpend: dailyData.summary.fixedPay,
+          cpmSpend: dailyData.summary.cpmPay,
+          fixedSpend:
+            dailyData.summary.fixedPay + dailyData.summary.videoFixedPay,
           spend: dailyData.summary.totalPay,
           views: dailyData.summary.payableViews,
         };
@@ -321,8 +322,9 @@ export async function getUgcStatusData(args: {
   const ugcSpendByDate = getUgcStatusSpendByDate({
     dailyRows: ugcDailyRows,
     dates: dateKeys,
-    totalCpmSpend: ugcPayData.summary.videoPay,
-    totalFixedSpend: ugcPayData.summary.fixedPay,
+    totalCpmSpend: ugcPayData.summary.cpmPay,
+    totalFixedSpend:
+      ugcPayData.summary.fixedPay + ugcPayData.summary.videoFixedPay,
   });
   const rows = dateKeys.map((date) => {
     const ugc = ugcByDate.get(date) ?? {
@@ -364,8 +366,9 @@ export async function getUgcStatusData(args: {
   const summary = {
     facelessSpend,
     facelessViews,
-    ugcCpmSpend: ugcPayData.summary.videoPay,
-    ugcFixedSpend: ugcPayData.summary.fixedPay,
+    ugcCpmSpend: ugcPayData.summary.cpmPay,
+    ugcFixedSpend:
+      ugcPayData.summary.fixedPay + ugcPayData.summary.videoFixedPay,
     ugcSpend,
     ugcViews,
     ...calculateUgcStatusMetrics({

@@ -501,10 +501,19 @@ export function getUgcPaySummaryFromCreators(args: {
     0,
   );
   const videoPay = videos.reduce((total, video) => total + video.videoPay, 0);
+  const videoFixedPay = normalizeMoney(
+    videos.reduce(
+      (total, video) =>
+        total + Math.min(Math.max(video.fixedFeePerVideo, 0), Math.max(video.videoPay, 0)),
+      0,
+    ),
+  );
 
   return {
     totalPay: normalizeMoney(fixedPay + videoPay),
     fixedPay: normalizeMoney(fixedPay),
+    videoFixedPay,
+    cpmPay: normalizeMoney(videoPay - videoFixedPay),
     videoPay: normalizeMoney(videoPay),
     grossViews: args.creators.reduce(
       (total, creator) => total + creator.grossViews,

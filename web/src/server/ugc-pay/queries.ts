@@ -238,6 +238,8 @@ export type OrganizationUgcPayData = {
   summary: {
     totalPay: number;
     fixedPay: number;
+    videoFixedPay: number;
+    cpmPay: number;
     videoPay: number;
     grossViews: number;
     paidViewsDeducted: number;
@@ -1606,6 +1608,16 @@ function buildCreatorRow(accumulator: CreatorAccumulator): UgcPayCreatorRow {
   };
 }
 
+function getVideoFixedPay(videos: UgcPayVideoRow[]) {
+  return normalizeMoney(
+    videos.reduce(
+      (total, video) =>
+        total + Math.min(Math.max(video.fixedFeePerVideo, 0), Math.max(video.videoPay, 0)),
+      0,
+    ),
+  );
+}
+
 function getEmptyData(args: {
   campaignOptions: OrganizationUgcPayData["campaignOptions"];
   selectedCampaignId: string | null;
@@ -1638,6 +1650,8 @@ function getEmptyData(args: {
     summary: {
       totalPay: 0,
       fixedPay: 0,
+      videoFixedPay: 0,
+      cpmPay: 0,
       videoPay: 0,
       grossViews: 0,
       paidViewsDeducted: 0,
@@ -2089,6 +2103,8 @@ export async function getOrganizationUgcPayData(args: {
     );
   const fixedPay = creators.reduce((total, creator) => total + creator.fixedPay, 0);
   const videoPay = videos.reduce((total, video) => total + video.videoPay, 0);
+  const videoFixedPay = getVideoFixedPay(videos);
+  const cpmPay = normalizeMoney(videoPay - videoFixedPay);
 
   return {
     campaignOptions,
@@ -2107,6 +2123,8 @@ export async function getOrganizationUgcPayData(args: {
     summary: {
       totalPay: normalizeMoney(fixedPay + videoPay),
       fixedPay: normalizeMoney(fixedPay),
+      videoFixedPay,
+      cpmPay,
       videoPay: normalizeMoney(videoPay),
       grossViews: creators.reduce((total, creator) => total + creator.grossViews, 0),
       paidViewsDeducted: creators.reduce(

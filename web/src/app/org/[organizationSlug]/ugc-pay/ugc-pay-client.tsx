@@ -29,6 +29,8 @@ import {
 type UgcPaySummary = {
   totalPay: number;
   fixedPay: number;
+  videoFixedPay: number;
+  cpmPay: number;
   videoPay: number;
   grossViews: number;
   paidViewsDeducted: number;

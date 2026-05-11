@@ -146,7 +146,7 @@ export function getUgcStatusDailyProceedsMap(args: {
       const paidSpend =
         (row?.paidSpend ?? 0) + (args.appleSpendByDate?.get(date) ?? 0);
 
-      return [date, Math.max(nonRenewalProceeds - paidSpend, 0)];
+      return [date, roundCurrency(nonRenewalProceeds - paidSpend)];
     }),
   );
 }
@@ -155,7 +155,7 @@ export function getUgcStatusSummaryProceeds(args: {
   newProceeds: number;
   paidSourceSpend: number;
 }) {
-  return Math.max(args.newProceeds - args.paidSourceSpend, 0);
+  return roundCurrency(args.newProceeds - args.paidSourceSpend);
 }
 
 export function selectTopUgcStatusVideos(

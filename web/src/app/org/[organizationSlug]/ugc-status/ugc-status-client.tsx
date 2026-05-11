@@ -653,7 +653,7 @@ function UgcStatusTable({
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
                 <LabelWithTip
                   label="UGC/F proceeds"
-                  tip="Revenue new/non-renewal proceeds minus known paid ad spend. Adapty proceeds, Singular paid spend, and Apple Ads spend can refresh on different upstream schedules."
+                  tip="Revenue new/non-renewal proceeds minus known paid ad spend. Negative values are shown when paid spend exceeds non-renewal proceeds for the day. Adapty proceeds, Singular paid spend, and Apple Ads spend can refresh on different upstream schedules."
                 />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
@@ -671,13 +671,13 @@ function UgcStatusTable({
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
                 <LabelWithTip
                   label="UGC fixed"
-                  tip="Fixed creator fees included when their fee date falls inside the selected report range."
+                  tip="Deal fixed fees plus per-video fixed fees from UGC Pay. Deal fixed fees appear on their configured fixed-fee date; per-video fixed fees appear on eligible posted videos."
                 />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
                 <LabelWithTip
-                  label="UGC CPM/video"
-                  tip="Variable creator pay from payable views. Payable views can change when View Tally or paid-view deduction data updates."
+                  label="UGC CPM"
+                  tip="CPM pay from payable views after paid-view deductions and caps. Payable views can change when View Tally or paid-view deduction data updates."
                 />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
@@ -828,19 +828,19 @@ function SpendBreakdownTable({ data }: { data: UgcStatusData }) {
         data.summary.ugcFixedSpend,
         data.summary.ugcViews,
       ),
-      tip: "Fixed creator fees from UGC Pay. They appear on the configured fixed-fee date, not necessarily the post date.",
+      tip: "Deal fixed fees plus per-video fixed fees from UGC Pay. Deal fixed fees appear on their configured fixed-fee date; per-video fixed fees appear on eligible posted videos.",
       views: data.summary.ugcViews,
     },
     {
       bucket: "UGC",
-      label: "UGC CPM/video pay",
+      label: "UGC CPM pay",
       share: data.summary.spend > 0 ? data.summary.ugcCpmSpend / data.summary.spend : null,
       spend: data.summary.ugcCpmSpend,
       spendPerThousandViews: getSpendPerThousandViews(
         data.summary.ugcCpmSpend,
         data.summary.ugcViews,
       ),
-      tip: "Variable UGC Pay from payable views. This can change when View Tally or paid-view deduction data refreshes.",
+      tip: "CPM UGC Pay from payable views. This can change when View Tally or paid-view deduction data refreshes.",
       views: data.summary.ugcViews,
     },
     {

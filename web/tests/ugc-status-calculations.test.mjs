@@ -110,7 +110,7 @@ test("calculates UGC status proceeds as non-renewal proceeds minus known ad spen
     ],
   });
 
-  assert.deepEqual([...proceeds.values()], [687.5, 642.75, 0]);
+  assert.deepEqual([...proceeds.values()], [687.5, 642.75, -25]);
   assert.equal(
     getUgcStatusSummaryProceeds({
       newProceeds: 1_900,
@@ -132,8 +132,8 @@ test("reconciles daily UGC spend back to the UGC Pay summary total", () => {
       "2026-05-10",
     ],
     dailyRows: [
-      { date: "2026-05-04", cpmSpend: 388.68, fixedSpend: 0 },
-      { date: "2026-05-05", cpmSpend: 216.08, fixedSpend: 0 },
+      { date: "2026-05-04", cpmSpend: 388.68, fixedSpend: 100 },
+      { date: "2026-05-05", cpmSpend: 216.08, fixedSpend: 50 },
       { date: "2026-05-06", cpmSpend: 184.91, fixedSpend: 0 },
       { date: "2026-05-07", cpmSpend: 146.81, fixedSpend: 0 },
       { date: "2026-05-08", cpmSpend: 288.53, fixedSpend: 0 },
@@ -141,12 +141,14 @@ test("reconciles daily UGC spend back to the UGC Pay summary total", () => {
       { date: "2026-05-10", cpmSpend: 123.09, fixedSpend: 0 },
     ],
     totalCpmSpend: 1_157.13,
-    totalFixedSpend: 0,
+    totalFixedSpend: 300,
   });
   const total = [...spend.values()].reduce((sum, row) => sum + row.spend, 0);
 
-  assert.equal(Number(total.toFixed(2)), 1_157.13);
-  assert.equal(spend.get("2026-05-04")?.spend, 288.31);
+  assert.equal(Number(total.toFixed(2)), 1_457.13);
+  assert.equal(spend.get("2026-05-04")?.fixedSpend, 200);
+  assert.equal(spend.get("2026-05-05")?.fixedSpend, 100);
+  assert.equal(spend.get("2026-05-04")?.spend, 488.31);
 });
 
 test("selects the requested top UGC status videos by views", () => {
