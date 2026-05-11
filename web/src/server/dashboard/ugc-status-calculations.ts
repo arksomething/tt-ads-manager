@@ -124,6 +124,23 @@ export function getUgcStatusSpendByDate(args: {
   return spendByDate;
 }
 
+export function getUgcStatusDailyProceedsMap(args: {
+  dates: string[];
+  dailyRows: Array<{
+    date: string;
+    organic: number | null;
+  }>;
+}) {
+  const dailyRowsByDate = new Map(args.dailyRows.map((row) => [row.date, row]));
+
+  return new Map(
+    args.dates.map((date) => [
+      date,
+      Math.max(dailyRowsByDate.get(date)?.organic ?? 0, 0),
+    ]),
+  );
+}
+
 export function selectTopUgcStatusVideos(
   videos: UgcStatusTopVideoRow[],
   limit = 5,
