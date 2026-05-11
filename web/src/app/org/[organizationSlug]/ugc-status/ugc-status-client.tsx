@@ -360,8 +360,8 @@ function HeaderAndControls({
               UGC and faceless proceeds against spend and views.
             </h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Proceeds are the same organic / UGC remainder used in Revenue after
-              paid channels, Apple Search Ads, and renewal proceeds are removed.
+              Proceeds are calculated from Revenue as non-renewal proceeds minus
+              known paid ad spend.
               Spend comes from exact UGC Pay and ViewsBase faceless costs.
             </p>
           </div>
@@ -612,7 +612,8 @@ function UgcStatusTable({
           </h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          Daily proceeds use exact Adapty organic / unattributed source rows.
+          Daily proceeds use Revenue non-renewal proceeds minus known paid ad
+          spend.
         </p>
       </div>
 
@@ -906,7 +907,7 @@ function UgcStatusContent({
         <StatCard
           icon="revenue"
           label="UGC/F proceeds"
-          meta="Exact Adapty organic / unattributed source proceeds"
+          meta="Non-renewal proceeds minus known paid ad spend"
           value={formatAmount(data.summary.proceeds, data.currency)}
         />
         <StatCard

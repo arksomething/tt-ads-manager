@@ -5,6 +5,7 @@ import {
   allocateTotalByDailyWeights,
   calculateUgcStatusMetrics,
   getUgcStatusDailyProceedsMap,
+  getUgcStatusSummaryProceeds,
   getUgcStatusSpendByDate,
   getUgcStatusTopVideoSearchParams,
   selectTopUgcStatusVideos,
@@ -77,17 +78,46 @@ test("allocates evenly when daily proceeds weights are unavailable", () => {
   assert.deepEqual([...allocations.values()], [33.33, 33.33, 33.34]);
 });
 
-test("uses direct Adapty organic source rows for UGC status proceeds", () => {
+test("calculates UGC status proceeds as non-renewal proceeds minus known ad spend", () => {
   const proceeds = getUgcStatusDailyProceedsMap({
     dates: ["2026-05-04", "2026-05-05", "2026-05-06"],
+    appleSpendByDate: new Map([
+      ["2026-05-04", 12.5],
+      ["2026-05-05", 7.25],
+    ]),
     dailyRows: [
-      { date: "2026-05-04", proceeds: 333.05 },
-      { date: "2026-05-05", proceeds: null },
-      { date: "2026-05-06", proceeds: 252.76 },
+      {
+        date: "2026-05-04",
+        newProceeds: 1_000,
+        paidSpend: 300,
+        renewal: 100,
+        total: 1_100,
+      },
+      {
+        date: "2026-05-05",
+        newProceeds: null,
+        paidSpend: 50,
+        renewal: 200,
+        total: 900,
+      },
+      {
+        date: "2026-05-06",
+        newProceeds: 100,
+        paidSpend: 125,
+        renewal: 0,
+        total: 100,
+      },
     ],
   });
 
-  assert.deepEqual([...proceeds.values()], [333.05, 0, 252.76]);
+  assert.deepEqual([...proceeds.values()], [687.5, 642.75, 0]);
+  assert.equal(
+    getUgcStatusSummaryProceeds({
+      newProceeds: 1_900,
+      paidSourceSpend: 494.75,
+    }),
+    1_405.25,
+  );
 });
 
 test("reconciles daily UGC spend back to the UGC Pay summary total", () => {

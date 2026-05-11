@@ -3,6 +3,7 @@ import {
   getDateKeys,
   getRevenueUgcPaySearchParams,
 } from "@/server/adapty/revenue-profitability-calculations";
+import { getAppleSearchAdsDashboardReport } from "@/server/adapty/dashboard-client";
 import { getRevenueAttributionReport } from "@/server/adapty/revenue";
 import {
   getOrganizationUgcPayData,
@@ -17,6 +18,7 @@ import {
 import {
   calculateUgcStatusMetrics,
   getUgcStatusDailyProceedsMap,
+  getUgcStatusSummaryProceeds,
   getUgcStatusSpendByDate,
   getUgcStatusTopVideoSearchParams,
   selectTopUgcStatusVideos,
@@ -30,6 +32,12 @@ type FacelessSpendReport = {
   configured: boolean;
   errorMessage: string | null;
   report: ViewsBaseFacelessReport | null;
+};
+
+type AppleDailySpendRow = {
+  date: string;
+  spend: number;
+  warnings: string[];
 };
 
 export type UgcStatusDailyRow = UgcStatusMetrics & {
@@ -192,7 +200,7 @@ export async function getUgcStatusData(args: {
 }): Promise<UgcStatusData> {
   const ugcPaySearchParams = getRevenueUgcPaySearchParams(args);
   const dateKeys = getDateKeys(args.startDate, args.endDate);
-  const [revenueReport, ugcPayData, ugcDailyRows, facelessSpendReport] =
+  const [revenueReport, ugcPayData, ugcDailyRows, appleDailySpendRows, facelessSpendReport] =
     await Promise.all([
       getRevenueAttributionReport({
         endDate: args.endDate,
@@ -221,6 +229,23 @@ export async function getUgcStatusData(args: {
           views: dailyData.summary.payableViews,
         };
       }),
+      mapWithConcurrency(
+        dateKeys,
+        UGC_STATUS_DAILY_QUERY_CONCURRENCY,
+        async (date): Promise<AppleDailySpendRow> => {
+          const report = await getAppleSearchAdsDashboardReport({
+            endDate: date,
+            organizationSlug: args.organizationSlug,
+            startDate: date,
+          });
+
+          return {
+            date,
+            spend: report.spend ?? 0,
+            warnings: report.warnings,
+          };
+        },
+      ),
       getViewsBaseFacelessReport({
         campaignSlug: "all",
         endDate: args.endDate,
@@ -246,6 +271,35 @@ export async function getUgcStatusData(args: {
   const facelessViews = facelessSpendReport.report?.totals.rangeViews ?? 0;
   const ugcSpend = ugcPayData.summary.totalPay;
   const ugcViews = ugcPayData.summary.payableViews;
+  const appleSpendByDate = new Map(
+    appleDailySpendRows.map((row) => [row.date, row.spend] as const),
+  );
+  const paidSourceSpend = revenueReport.sourceRows
+    .filter((row) => row.kind !== "organic" && row.kind !== "renewal")
+    .reduce(
+      (total, row) =>
+        typeof row.spend === "number" && Number.isFinite(row.spend)
+          ? total + row.spend
+          : total,
+      0,
+    );
+  const unknownPaidSpendLabels = revenueReport.sourceRows
+    .filter(
+      (row) =>
+        row.kind !== "organic" &&
+        row.kind !== "renewal" &&
+        row.spend === null,
+    )
+    .map((row) => row.label);
+  const proceedsWarnings = [
+    ...revenueReport.warnings,
+    ...appleDailySpendRows.flatMap((row) => row.warnings),
+    ...(unknownPaidSpendLabels.length > 0
+      ? [
+          `Paid ad spend is unavailable for ${unknownPaidSpendLabels.join(", ")}, so UGC/F proceeds only subtract known paid spend.`,
+        ]
+      : []),
+  ];
   const facelessSpendByDate = new Map(
     (facelessSpendReport.report?.dailyRows ?? []).map(
       (row) =>
@@ -260,7 +314,8 @@ export async function getUgcStatusData(args: {
   );
   const ugcByDate = new Map(ugcDailyRows.map((row) => [row.date, row] as const));
   const proceedsByDate = getUgcStatusDailyProceedsMap({
-    dailyRows: revenueReport.organicSourceDailyRows,
+    appleSpendByDate,
+    dailyRows: revenueReport.dailyRows,
     dates: dateKeys,
   });
   const ugcSpendByDate = getUgcStatusSpendByDate({
@@ -315,7 +370,10 @@ export async function getUgcStatusData(args: {
     ugcViews,
     ...calculateUgcStatusMetrics({
       facelessViews,
-      proceeds: revenueReport.organicSourceTotal,
+      proceeds: getUgcStatusSummaryProceeds({
+        newProceeds: revenueReport.totals.newProceeds,
+        paidSourceSpend,
+      }),
       spend: ugcSpend + facelessSpend,
       ugcViews,
       views: ugcViews + facelessViews,
@@ -330,7 +388,7 @@ export async function getUgcStatusData(args: {
     facelessSpend,
     facelessViews,
     proceedsConfigured: revenueReport.configured,
-    proceedsWarnings: revenueReport.warnings,
+    proceedsWarnings,
     rows,
     startDate: args.startDate,
     summary,
