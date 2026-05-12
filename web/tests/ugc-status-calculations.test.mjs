@@ -78,13 +78,14 @@ test("allocates evenly when daily proceeds weights are unavailable", () => {
   assert.deepEqual([...allocations.values()], [33.33, 33.33, 33.34]);
 });
 
-test("calculates UGC status proceeds as non-renewal proceeds minus paid-source proceeds", () => {
+test("calculates UGC status proceeds from Revenue organic proceeds", () => {
   const proceeds = getUgcStatusDailyProceedsMap({
     dates: ["2026-05-04", "2026-05-05", "2026-05-06"],
     dailyRows: [
       {
         date: "2026-05-04",
         newProceeds: 1_000,
+        organic: 475,
         paid: 300,
         paidSpend: 300,
         renewal: 100,
@@ -93,6 +94,7 @@ test("calculates UGC status proceeds as non-renewal proceeds minus paid-source p
       {
         date: "2026-05-05",
         newProceeds: null,
+        organic: null,
         paid: 50,
         paidSpend: 50,
         renewal: 200,
@@ -101,6 +103,7 @@ test("calculates UGC status proceeds as non-renewal proceeds minus paid-source p
       {
         date: "2026-05-06",
         newProceeds: 100,
+        organic: 0,
         paid: 125,
         paidSpend: 125,
         renewal: 0,
@@ -109,11 +112,10 @@ test("calculates UGC status proceeds as non-renewal proceeds minus paid-source p
     ],
   });
 
-  assert.deepEqual([...proceeds.values()], [700, 650, 0]);
+  assert.deepEqual([...proceeds.values()], [475, 650, 0]);
   assert.equal(
     getUgcStatusSummaryProceeds({
-      newProceeds: 1_900,
-      paidSourceProceeds: 475,
+      organicProceeds: 1_425,
     }),
     1_425,
   );

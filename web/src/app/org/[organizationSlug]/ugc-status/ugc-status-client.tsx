@@ -385,8 +385,8 @@ function HeaderAndControls({
               UGC and faceless proceeds against spend and views.
             </h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Proceeds are calculated from Revenue as non-renewal proceeds minus
-              paid-source proceeds.
+              Proceeds use Revenue organic / unattributed proceeds after
+              renewals and paid-source attribution.
               Spend comes from exact UGC Pay and ViewsBase faceless costs.
             </p>
           </div>
@@ -637,8 +637,7 @@ function UgcStatusTable({
           </h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          Daily proceeds use Revenue non-renewal proceeds minus paid-source
-          proceeds.
+          Daily proceeds use Revenue organic / unattributed proceeds.
         </p>
       </div>
 
@@ -653,7 +652,7 @@ function UgcStatusTable({
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
                 <LabelWithTip
                   label="UGC/F proceeds"
-                  tip="Revenue new/non-renewal proceeds minus paid-source proceeds, floored at zero when source timing differs by day. Adapty proceeds and Singular paid-source proceeds can refresh on different upstream schedules."
+                  tip="Revenue organic / unattributed proceeds after renewals and paid-source attribution. Adapty proceeds and Singular paid-source proceeds can refresh on different upstream schedules."
                 />
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
@@ -972,8 +971,8 @@ function UgcStatusContent({
         <StatCard
           icon="revenue"
           label="UGC/F proceeds"
-          meta="Non-renewal proceeds minus paid-source proceeds"
-          tip="Uses Revenue new/non-renewal proceeds and subtracts proceeds attributed to paid sources, floored at zero when source timing differs by day. Adapty and Singular can each update at different times."
+          meta="Revenue organic / unattributed proceeds"
+          tip="Uses the same organic / unattributed proceeds bucket from Revenue after renewals and paid-source attribution. Adapty and Singular can each update at different times."
           value={formatAmount(data.summary.proceeds, data.currency)}
         />
         <StatCard

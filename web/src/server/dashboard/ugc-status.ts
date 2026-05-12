@@ -272,9 +272,6 @@ export async function getUgcStatusData(args: {
   const facelessViews = facelessSpendReport.report?.totals.rangeViews ?? 0;
   const ugcSpend = ugcPayData.summary.totalPay;
   const ugcViews = ugcPayData.summary.payableViews;
-  const paidSourceProceeds = revenueReport.sourceRows
-    .filter((row) => row.kind !== "organic" && row.kind !== "renewal")
-    .reduce((total, row) => total + row.revenue, 0);
   const proceedsWarnings = [
     ...revenueReport.warnings,
     ...appleDailySpendRows.flatMap((row) => row.warnings),
@@ -351,8 +348,7 @@ export async function getUgcStatusData(args: {
     ...calculateUgcStatusMetrics({
       facelessViews,
       proceeds: getUgcStatusSummaryProceeds({
-        newProceeds: revenueReport.totals.newProceeds,
-        paidSourceProceeds,
+        organicProceeds: revenueReport.totals.organic,
       }),
       spend: ugcSpend + facelessSpend,
       ugcViews,
