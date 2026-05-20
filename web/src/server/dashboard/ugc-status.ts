@@ -1,19 +1,24 @@
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
+import { summarizeUgcStatusWarnings } from "@/lib/report-warnings";
 import {
   getDateKeys,
   getRevenueUgcPaySearchParams,
-} from "@/server/adapty/revenue-profitability-calculations";
-import { getAppleSearchAdsDashboardReport } from "@/server/adapty/dashboard-client";
-import { getRevenueAttributionReport } from "@/server/adapty/revenue";
+} from "@/server/revenue/revenue-profitability-calculations";
+import { getRevenueAttributionReport } from "@/server/revenue/revenue";
 import {
   getOrganizationUgcPayData,
   type UgcPayVideoRow,
 } from "@/server/ugc-pay/queries";
-import { getFacelessCostAmount } from "@/server/viewsbase/faceless-calculations";
 import {
   getViewsBaseFacelessReport,
   type ViewsBaseFacelessReport,
 } from "@/server/viewsbase/report";
+import {
+  getFacelessCostBreakdown,
+  getFacelessDailyCostBreakdown,
+  getUgcManagementCostForDates,
+  getUgcManagementDailyCost,
+} from "@/server/revenue/creator-costs";
 
 import {
   calculateUgcStatusMetrics,
@@ -34,19 +39,17 @@ type FacelessSpendReport = {
   report: ViewsBaseFacelessReport | null;
 };
 
-type AppleDailySpendRow = {
-  date: string;
-  spend: number;
-  warnings: string[];
-};
-
 export type UgcStatusDailyRow = UgcStatusMetrics & {
   date: string;
+  facelessBaseSpend: number;
+  facelessManagementSpend: number;
   facelessSpend: number;
   facelessViews: number;
   proceeds: number;
   ugcCpmSpend: number;
   ugcFixedSpend: number;
+  ugcManagementSpend: number;
+  ugcPaySpend: number;
   ugcSpend: number;
   ugcViews: number;
 };
@@ -62,10 +65,14 @@ export type UgcStatusData = {
   proceedsWarnings: string[];
   startDate: string;
   summary: UgcStatusMetrics & {
+    facelessBaseSpend: number;
+    facelessManagementSpend: number;
     facelessSpend: number;
     facelessViews: number;
     ugcCpmSpend: number;
     ugcFixedSpend: number;
+    ugcManagementSpend: number;
+    ugcPaySpend: number;
     ugcSpend: number;
     ugcViews: number;
   };
@@ -109,26 +116,6 @@ async function mapWithConcurrency<T, R>(
   );
 
   return results;
-}
-
-function getFacelessReportCost(report: ViewsBaseFacelessReport | null) {
-  if (!report) {
-    return 0;
-  }
-
-  return getFacelessCostAmount({
-    projectedSpend: report.totals.projectedSpend,
-    totalSpend: report.totals.totalSpend,
-  });
-}
-
-function getFacelessDailyCost(
-  row: ViewsBaseFacelessReport["dailyRows"][number],
-) {
-  return getFacelessCostAmount({
-    projectedSpend: row.projectedSpend,
-    totalSpend: row.totalSpend,
-  });
 }
 
 function getUgcVideoTitle(video: UgcPayVideoRow) {
@@ -185,10 +172,10 @@ export async function getUgcStatusTopVideosData(args: {
     lookbackDays,
     ugc: getTopUgcStatusVideos(ugcPayData.videos, limit),
     viewWindowDays,
-    warnings: [
+    warnings: summarizeUgcStatusWarnings([
       ...ugcPayData.warnings,
       ...(ugcPayData.errorMessage ? [ugcPayData.errorMessage] : []),
-    ],
+    ]),
   };
 }
 
@@ -200,7 +187,7 @@ export async function getUgcStatusData(args: {
 }): Promise<UgcStatusData> {
   const ugcPaySearchParams = getRevenueUgcPaySearchParams(args);
   const dateKeys = getDateKeys(args.startDate, args.endDate);
-  const [revenueReport, ugcPayData, ugcDailyRows, appleDailySpendRows, facelessSpendReport] =
+  const [revenueReport, ugcPayData, ugcDailyRows, facelessSpendReport] =
     await Promise.all([
       getRevenueAttributionReport({
         endDate: args.endDate,
@@ -230,23 +217,6 @@ export async function getUgcStatusData(args: {
           views: dailyData.summary.payableViews,
         };
       }),
-      mapWithConcurrency(
-        dateKeys,
-        UGC_STATUS_DAILY_QUERY_CONCURRENCY,
-        async (date): Promise<AppleDailySpendRow> => {
-          const report = await getAppleSearchAdsDashboardReport({
-            endDate: date,
-            organizationSlug: args.organizationSlug,
-            startDate: date,
-          });
-
-          return {
-            date,
-            spend: report.spend ?? 0,
-            warnings: report.warnings,
-          };
-        },
-      ),
       getViewsBaseFacelessReport({
         campaignSlug: "all",
         endDate: args.endDate,
@@ -268,21 +238,29 @@ export async function getUgcStatusData(args: {
           report: null,
         })),
     ]);
-  const facelessSpend = getFacelessReportCost(facelessSpendReport.report);
+  const facelessCostBreakdown = getFacelessCostBreakdown(
+    facelessSpendReport.report,
+  );
+  const facelessSpend = facelessCostBreakdown.totalSpend;
   const facelessViews = facelessSpendReport.report?.totals.rangeViews ?? 0;
-  const ugcSpend = ugcPayData.summary.totalPay;
+  const ugcPaySpend = ugcPayData.summary.totalPay;
+  const ugcManagementSpend = getUgcManagementCostForDates(dateKeys);
+  const ugcSpend = ugcPaySpend + ugcManagementSpend;
   const ugcViews = ugcPayData.summary.payableViews;
-  const proceedsWarnings = [
+  const proceedsWarnings = summarizeUgcStatusWarnings([
     ...revenueReport.warnings,
-    ...appleDailySpendRows.flatMap((row) => row.warnings),
-  ];
+    ...ugcPayData.warnings,
+    ...(ugcPayData.errorMessage
+      ? [`UGC Pay could not be fully loaded: ${ugcPayData.errorMessage}`]
+      : []),
+  ]);
   const facelessSpendByDate = new Map(
     (facelessSpendReport.report?.dailyRows ?? []).map(
       (row) =>
         [
           row.date,
           {
-            spend: getFacelessDailyCost(row),
+            ...getFacelessDailyCostBreakdown(row),
             views: row.views,
           },
         ] as const,
@@ -308,7 +286,9 @@ export async function getUgcStatusData(args: {
       views: 0,
     };
     const faceless = facelessSpendByDate.get(date) ?? {
-      spend: 0,
+      baseSpend: 0,
+      managementSpend: 0,
+      totalSpend: 0,
       views: 0,
     };
     const reconciledUgcSpend = ugcSpendByDate.get(date) ?? {
@@ -317,16 +297,22 @@ export async function getUgcStatusData(args: {
       spend: ugc.spend,
     };
     const proceeds = proceedsByDate.get(date) ?? 0;
-    const spend = reconciledUgcSpend.spend + faceless.spend;
+    const ugcManagementDailySpend = getUgcManagementDailyCost(date);
+    const ugcDailySpend = reconciledUgcSpend.spend + ugcManagementDailySpend;
+    const spend = ugcDailySpend + faceless.totalSpend;
     const views = ugc.views + faceless.views;
 
     return {
       date,
-      facelessSpend: faceless.spend,
+      facelessBaseSpend: faceless.baseSpend,
+      facelessManagementSpend: faceless.managementSpend,
+      facelessSpend: faceless.totalSpend,
       facelessViews: faceless.views,
       ugcCpmSpend: reconciledUgcSpend.cpmSpend,
       ugcFixedSpend: reconciledUgcSpend.fixedSpend,
-      ugcSpend: reconciledUgcSpend.spend,
+      ugcManagementSpend: ugcManagementDailySpend,
+      ugcPaySpend: reconciledUgcSpend.spend,
+      ugcSpend: ugcDailySpend,
       ugcViews: ugc.views,
       ...calculateUgcStatusMetrics({
         facelessViews: faceless.views,
@@ -338,11 +324,15 @@ export async function getUgcStatusData(args: {
     };
   });
   const summary = {
+    facelessBaseSpend: facelessCostBreakdown.baseSpend,
+    facelessManagementSpend: facelessCostBreakdown.managementSpend,
     facelessSpend,
     facelessViews,
     ugcCpmSpend: ugcPayData.summary.cpmPay,
     ugcFixedSpend:
       ugcPayData.summary.fixedPay + ugcPayData.summary.videoFixedPay,
+    ugcManagementSpend,
+    ugcPaySpend,
     ugcSpend,
     ugcViews,
     ...calculateUgcStatusMetrics({

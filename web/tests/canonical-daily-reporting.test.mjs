@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  adaptOperatingCostDailyRowsToCanonicalDays,
   adaptRevenueAttributionReportToCanonicalDays,
   adaptUgcPayDailyRowsToCanonicalDays,
   adaptViewsBaseFacelessReportToCanonicalDays,
@@ -321,5 +322,39 @@ test("converts ViewsBase faceless daily rows into spend, fee, and view facts", (
   assert.equal(
     day.facts.find((fact) => fact.metricKey === "views.faceless")?.value,
     25_000,
+  );
+});
+
+test("converts operating costs into parent and child spend facts", () => {
+  const [day] = adaptOperatingCostDailyRowsToCanonicalDays(context, [
+    {
+      date: "2026-05-04",
+      total: 123.45,
+      costs: [
+        {
+          amount: 50,
+          key: "office",
+          label: "Office",
+        },
+        {
+          amount: 73.45,
+          key: "misc",
+          label: "Bullshit",
+        },
+      ],
+    },
+  ]);
+
+  assert.equal(
+    day.facts.find((fact) => fact.metricKey === "spend.operating.total")?.value,
+    123.45,
+  );
+  assert.equal(
+    day.facts.find((fact) => fact.metricKey === "spend.operating.office")?.value,
+    50,
+  );
+  assert.equal(
+    day.facts.find((fact) => fact.metricKey === "spend.operating.other")?.value,
+    73.45,
   );
 });

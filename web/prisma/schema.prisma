@@ -11,6 +11,7 @@ enum OrganizationRole {
   OWNER
   ADMIN
   MEMBER
+  BLAZIE
 }
 
 enum CampaignRole {

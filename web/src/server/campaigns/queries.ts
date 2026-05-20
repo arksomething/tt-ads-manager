@@ -7,7 +7,11 @@ import {
 
 import { prisma } from "@/lib/db";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
-import { canManageCampaign, canManageOrganization } from "@/server/auth/roles";
+import {
+  canManageCampaign,
+  canManageOrganization,
+  canReadOrganizationCampaignData,
+} from "@/server/auth/roles";
 import {
   getTikTokCampaignVideoViewsForOrganization,
   type TikTokCampaignVideoMatchSource,
@@ -77,7 +81,7 @@ export type CampaignTikTokReconciliationCampaignTotal = {
 export function getAccessibleCampaignWhere(
   membership: ViewerOrganizationMembership,
 ) {
-  if (canManageOrganization(membership.role)) {
+  if (canReadOrganizationCampaignData(membership.role)) {
     return {
       organizationId: membership.organizationId,
     };

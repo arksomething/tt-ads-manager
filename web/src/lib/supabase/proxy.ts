@@ -17,8 +17,13 @@ function setResponseCookie(
 }
 
 export async function updateSession(request: NextRequest) {
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-current-pathname", request.nextUrl.pathname);
+
   let response = NextResponse.next({
-    request,
+    request: {
+      headers: requestHeaders,
+    },
   });
 
   const env = getSupabaseAuthEnv();
@@ -36,7 +41,9 @@ export async function updateSession(request: NextRequest) {
           }
 
           response = NextResponse.next({
-            request,
+            request: {
+              headers: requestHeaders,
+            },
           });
 
           for (const cookie of cookiesToSet) {

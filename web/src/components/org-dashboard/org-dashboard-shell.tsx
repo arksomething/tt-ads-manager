@@ -5,6 +5,7 @@ import { OrgSidebar } from "./org-sidebar";
 type OrgDashboardShellProps = {
   organizationSlug: string;
   organizationName: string;
+  viewerRole: string;
   organizations: Array<{
     id: string;
     name: string;
@@ -19,6 +20,7 @@ type OrgDashboardShellProps = {
 export function OrgDashboardShell({
   organizationSlug,
   organizationName,
+  viewerRole,
   organizations,
   userName,
   userEmail,
@@ -66,6 +68,7 @@ export function OrgDashboardShell({
           signOutAction={handleSignOut}
           userEmail={userEmail}
           userName={userName}
+          viewerRole={viewerRole}
         />
 
         <section className="min-w-0 flex-1 rounded-[1.85rem] border border-white/[0.08] bg-[linear-gradient(180deg,rgba(11,11,14,0.9),rgba(6,6,8,0.96))] shadow-[0_24px_96px_rgba(0,0,0,0.32)] backdrop-blur-xl">

@@ -1,6 +1,7 @@
-import { CampaignRole, OrganizationRole } from "@/lib/prisma-shim";
+import type { CampaignRole, OrganizationRole } from "@/lib/prisma-shim";
 
 const organizationRoleWeight: Record<OrganizationRole, number> = {
+  BLAZIE: -1,
   MEMBER: 0,
   ADMIN: 1,
   OWNER: 2,
@@ -13,15 +14,24 @@ const campaignRoleWeight: Record<CampaignRole, number> = {
 };
 
 const organizationRolesInPriorityOrder = [
-  OrganizationRole.OWNER,
-  OrganizationRole.ADMIN,
-  OrganizationRole.MEMBER,
-];
+  "OWNER",
+  "ADMIN",
+  "MEMBER",
+  "BLAZIE",
+] as OrganizationRole[];
 
-const campaignAssignableRoles = [CampaignRole.MANAGER, CampaignRole.MEMBER];
+const campaignAssignableRoles = ["MANAGER", "MEMBER"] as CampaignRole[];
 
 export function canManageOrganization(role: OrganizationRole) {
-  return role === OrganizationRole.OWNER || role === OrganizationRole.ADMIN;
+  return role === "OWNER" || role === "ADMIN";
+}
+
+export function isBlazieOnlyOrganizationRole(role: OrganizationRole | string) {
+  return role === "BLAZIE";
+}
+
+export function canReadOrganizationCampaignData(role: OrganizationRole) {
+  return canManageOrganization(role) || isBlazieOnlyOrganizationRole(role);
 }
 
 export function canManageOrganizationRole(
@@ -32,8 +42,8 @@ export function canManageOrganizationRole(
     return false;
   }
 
-  if (targetRole === OrganizationRole.OWNER) {
-    return viewerRole === OrganizationRole.OWNER;
+  if (targetRole === "OWNER") {
+    return viewerRole === "OWNER";
   }
 
   return true;
@@ -47,8 +57,8 @@ export function canAssignOrganizationRole(
     return false;
   }
 
-  if (nextRole === OrganizationRole.OWNER) {
-    return viewerRole === OrganizationRole.OWNER;
+  if (nextRole === "OWNER") {
+    return viewerRole === "OWNER";
   }
 
   return true;
@@ -77,7 +87,7 @@ export function mergeOrganizationRoles(
 }
 
 export function canManageCampaign(role: CampaignRole) {
-  return role === CampaignRole.OWNER || role === CampaignRole.MANAGER;
+  return role === "OWNER" || role === "MANAGER";
 }
 
 export function getAssignableCampaignRoles() {

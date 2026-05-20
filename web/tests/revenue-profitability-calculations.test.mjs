@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   getDateKeys,
   getRevenueUgcPaySearchParams,
-} from "../src/server/adapty/revenue-profitability-calculations.ts";
+} from "../src/server/revenue/revenue-profitability-calculations.ts";
 
 test("builds exact UGC Pay query params for revenue profitability", () => {
   assert.deepEqual(

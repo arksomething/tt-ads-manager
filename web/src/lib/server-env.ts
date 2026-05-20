@@ -80,41 +80,23 @@ const singularEnvSchema = z.object({
   SINGULAR_COHORT_PERIOD: z.string().min(1).default("7d"),
 });
 
-const adaptyRevenueSegmentationValues = [
-  "attribution_source",
-  "attribution_channel",
-  "attribution_campaign",
-  "attribution_adgroup",
-  "attribution_adset",
-  "attribution_creative",
-] as const;
-
-const adaptyEnvSchema = z.object({
-  ADAPTY_API_BASE_URL: z.url().default("https://api-admin.adapty.io"),
-  ADAPTY_API_KEY: z.string().min(1),
-  ADAPTY_TIKTOK_SOURCE_PATTERNS: z.string().min(1).default("tiktok,tik tok"),
-  ADAPTY_APPLE_SOURCE_PATTERNS: z
+const superwallEnvSchema = z.object({
+  SUPERWALL_API_BASE_URL: z.url().default("https://api.superwall.com"),
+  SUPERWALL_API_KEY: z.string().min(1),
+  SUPERWALL_ORGANIZATION_ID: z.coerce.number().int().positive().nullable(),
+  SUPERWALL_APPLICATION_IDS: z.array(z.number().int().positive()).default([]),
+  SUPERWALL_PROJECT_NAME: z.string().min(1).default("GoTall"),
+  SUPERWALL_TIKTOK_SOURCE_PATTERNS: z.string().min(1).default("tiktok,tik tok"),
+  SUPERWALL_APPLE_SOURCE_PATTERNS: z
     .string()
     .min(1)
     .default(
       "apple_search_ads,apple search ads,apple ads,apple search,apple searchads,search ads,searchads,asa",
     ),
-  ADAPTY_CREATOR_SOURCE_PATTERNS: z
+  SUPERWALL_CREATOR_SOURCE_PATTERNS: z
     .string()
     .min(1)
     .default("social custom"),
-  ADAPTY_TIKTOK_SEGMENTATION: z
-    .enum(adaptyRevenueSegmentationValues)
-    .default("attribution_source"),
-});
-
-const adaptyDashboardEnvSchema = z.object({
-  ADAPTY_DASHBOARD_BASE_URL: z
-    .url()
-    .default("https://api-asa-admin.adapty.io/api/v1"),
-  ADAPTY_DASHBOARD_TOKEN: z.string().min(1),
-  ADAPTY_DASHBOARD_COMPANY_ID: z.string().min(1),
-  ADAPTY_DASHBOARD_APP_ID: z.string().min(1),
 });
 
 const viewsBaseEnvSchema = z.object({
@@ -136,8 +118,7 @@ type TwilioEnv = z.infer<typeof twilioEnvSchema>;
 type TikTokBusinessEnv = z.infer<typeof tikTokBusinessEnvSchema>;
 type TikTokBusinessOauthEnv = z.infer<typeof tikTokBusinessOauthEnvSchema>;
 type SingularEnv = z.infer<typeof singularEnvSchema>;
-type AdaptyEnv = z.infer<typeof adaptyEnvSchema>;
-type AdaptyDashboardEnv = z.infer<typeof adaptyDashboardEnvSchema>;
+type SuperwallEnv = z.infer<typeof superwallEnvSchema>;
 type ViewsBaseEnv = z.infer<typeof viewsBaseEnvSchema>;
 
 let cachedAuthEnv: AuthEnv | undefined;
@@ -149,9 +130,20 @@ let cachedTwilioEnv: TwilioEnv | undefined;
 let cachedTikTokBusinessEnv: TikTokBusinessEnv | undefined;
 let cachedTikTokBusinessOauthEnv: TikTokBusinessOauthEnv | undefined;
 let cachedSingularEnv: SingularEnv | undefined;
-let cachedAdaptyEnv: AdaptyEnv | undefined;
-let cachedAdaptyDashboardEnv: AdaptyDashboardEnv | undefined;
+let cachedSuperwallEnv: SuperwallEnv | undefined;
 let cachedViewsBaseEnv: ViewsBaseEnv | undefined;
+
+function parseNumericCsv(value: string | undefined) {
+  return (value ?? "")
+    .split(",")
+    .map((entry) => Number(entry.trim()))
+    .filter((entry) => Number.isInteger(entry) && entry > 0);
+}
+
+function parseNullablePositiveInteger(value: string | undefined) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
 
 function getSupabaseUrlEnv() {
   return process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
@@ -334,52 +326,36 @@ export function getSingularEnv() {
   return cachedSingularEnv;
 }
 
-export function hasAdaptyEnv() {
-  return Boolean(process.env.ADAPTY_API_KEY);
+export function hasSuperwallEnv() {
+  return Boolean(process.env.SUPERWALL_API_KEY);
 }
 
-export function getAdaptyEnv() {
-  if (!cachedAdaptyEnv) {
-    cachedAdaptyEnv = adaptyEnvSchema.parse({
-      ADAPTY_API_BASE_URL:
-        process.env.ADAPTY_API_BASE_URL || "https://api-admin.adapty.io",
-      ADAPTY_API_KEY: process.env.ADAPTY_API_KEY,
-      ADAPTY_TIKTOK_SOURCE_PATTERNS:
-        process.env.ADAPTY_TIKTOK_SOURCE_PATTERNS || "tiktok,tik tok",
-      ADAPTY_APPLE_SOURCE_PATTERNS:
-        process.env.ADAPTY_APPLE_SOURCE_PATTERNS ||
+export function getSuperwallEnv() {
+  if (!cachedSuperwallEnv) {
+    cachedSuperwallEnv = superwallEnvSchema.parse({
+      SUPERWALL_API_BASE_URL:
+        process.env.SUPERWALL_API_BASE_URL || "https://api.superwall.com",
+      SUPERWALL_API_KEY: process.env.SUPERWALL_API_KEY,
+      SUPERWALL_ORGANIZATION_ID: parseNullablePositiveInteger(
+        process.env.SUPERWALL_ORGANIZATION_ID,
+      ),
+      SUPERWALL_APPLICATION_IDS: parseNumericCsv(
+        process.env.SUPERWALL_APPLICATION_IDS,
+      ),
+      SUPERWALL_PROJECT_NAME: process.env.SUPERWALL_PROJECT_NAME || "GoTall",
+      SUPERWALL_TIKTOK_SOURCE_PATTERNS:
+        process.env.SUPERWALL_TIKTOK_SOURCE_PATTERNS ||
+        "tiktok,tik tok",
+      SUPERWALL_APPLE_SOURCE_PATTERNS:
+        process.env.SUPERWALL_APPLE_SOURCE_PATTERNS ||
         "apple_search_ads,apple search ads,apple ads,apple search,apple searchads,search ads,searchads,asa",
-      ADAPTY_CREATOR_SOURCE_PATTERNS:
-        process.env.ADAPTY_CREATOR_SOURCE_PATTERNS || "social custom",
-      ADAPTY_TIKTOK_SEGMENTATION:
-        process.env.ADAPTY_TIKTOK_SEGMENTATION || "attribution_source",
+      SUPERWALL_CREATOR_SOURCE_PATTERNS:
+        process.env.SUPERWALL_CREATOR_SOURCE_PATTERNS ||
+        "social custom",
     });
   }
 
-  return cachedAdaptyEnv;
-}
-
-export function hasAdaptyDashboardEnv() {
-  return Boolean(
-    process.env.ADAPTY_DASHBOARD_TOKEN &&
-      process.env.ADAPTY_DASHBOARD_COMPANY_ID &&
-      process.env.ADAPTY_DASHBOARD_APP_ID,
-  );
-}
-
-export function getAdaptyDashboardEnv() {
-  if (!cachedAdaptyDashboardEnv) {
-    cachedAdaptyDashboardEnv = adaptyDashboardEnvSchema.parse({
-      ADAPTY_DASHBOARD_BASE_URL:
-        process.env.ADAPTY_DASHBOARD_BASE_URL ||
-        "https://api-asa-admin.adapty.io/api/v1",
-      ADAPTY_DASHBOARD_TOKEN: process.env.ADAPTY_DASHBOARD_TOKEN,
-      ADAPTY_DASHBOARD_COMPANY_ID: process.env.ADAPTY_DASHBOARD_COMPANY_ID,
-      ADAPTY_DASHBOARD_APP_ID: process.env.ADAPTY_DASHBOARD_APP_ID,
-    });
-  }
-
-  return cachedAdaptyDashboardEnv;
+  return cachedSuperwallEnv;
 }
 
 export function hasViewsBaseEnv() {

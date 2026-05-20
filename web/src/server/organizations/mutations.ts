@@ -10,6 +10,7 @@ import {
   canAssignOrganizationRole,
   canManageOrganization,
   canManageOrganizationRole,
+  isBlazieOnlyOrganizationRole,
   mergeOrganizationRoles,
 } from "@/server/auth/roles";
 
@@ -216,6 +217,7 @@ export async function inviteOrganizationMember(args: {
   const values = inviteMemberSchema.parse(input);
   const email = normalizeInviteEmail(values.email);
   const grantsOrgWideCampaignAccess = canManageOrganization(values.role);
+  const grantsBlazieOnlyAccess = isBlazieOnlyOrganizationRole(values.role);
   const requestedCampaignIds = Array.from(new Set(values.campaignIds));
 
   if (
@@ -225,7 +227,7 @@ export async function inviteOrganizationMember(args: {
     throw new Error("Only organization owners can invite another owner.");
   }
 
-  const selectedCampaignIds = grantsOrgWideCampaignAccess
+  const selectedCampaignIds = grantsOrgWideCampaignAccess || grantsBlazieOnlyAccess
     ? []
     : values.campaignAccessScope === "all"
       ? (
@@ -368,6 +370,27 @@ export async function inviteOrganizationMember(args: {
       });
     }
 
+    if (invitedUser && grantsBlazieOnlyAccess) {
+      await tx.campaign.updateMany({
+        where: {
+          organizationId: membership.organizationId,
+          ownerUserId: invitedUser.id,
+        },
+        data: {
+          ownerUserId: null,
+        },
+      });
+
+      await tx.campaignMembership.deleteMany({
+        where: {
+          userId: invitedUser.id,
+          campaign: {
+            organizationId: membership.organizationId,
+          },
+        },
+      });
+    }
+
     for (const campaignId of selectedCampaignIds) {
       await tx.campaignInvitation.upsert({
         where: {
@@ -486,7 +509,7 @@ export async function updateOrganizationMemberRole(args: {
       }
     }
 
-    return tx.organizationMembership.update({
+    const updated = await tx.organizationMembership.update({
       where: {
         id: targetMembership.id,
       },
@@ -494,6 +517,29 @@ export async function updateOrganizationMemberRole(args: {
         role: values.role,
       },
     });
+
+    if (isBlazieOnlyOrganizationRole(values.role)) {
+      await tx.campaign.updateMany({
+        where: {
+          organizationId: membership.organizationId,
+          ownerUserId: targetMembership.userId,
+        },
+        data: {
+          ownerUserId: null,
+        },
+      });
+
+      await tx.campaignMembership.deleteMany({
+        where: {
+          userId: targetMembership.userId,
+          campaign: {
+            organizationId: membership.organizationId,
+          },
+        },
+      });
+    }
+
+    return updated;
   });
 
   revalidateOrganizationWorkspace(organizationSlug);

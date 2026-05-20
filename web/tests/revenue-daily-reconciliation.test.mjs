@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 const mockModules = new Map([
   [
     "@/server/settings/managed-secrets",
-    "export async function getAdaptyCredentials() { throw new Error('not used'); }",
+    "export async function getSuperwallCredentials() { throw new Error('not used'); }",
   ],
   [
     "@/server/singular/reporting",
@@ -31,35 +31,6 @@ registerHooks({
       };
     }
 
-    if (
-      specifier === "./client" &&
-      context.parentURL?.endsWith("/src/server/adapty/revenue.ts")
-    ) {
-      return {
-        shortCircuit: true,
-        url: `data:text/javascript,${encodeURIComponent(
-          [
-            "export class AdaptyApiError extends Error {}",
-            "export const adaptyClient = {",
-            "  retrieveAnalyticsData() { throw new Error('not used'); },",
-            "};",
-          ].join("\n"),
-        )}`,
-      };
-    }
-
-    if (
-      specifier === "./dashboard-client" &&
-      context.parentURL?.endsWith("/src/server/adapty/revenue.ts")
-    ) {
-      return {
-        shortCircuit: true,
-        url: `data:text/javascript,${encodeURIComponent(
-          "export async function getAppleSearchAdsDashboardReport() { throw new Error('not used'); }",
-        )}`,
-      };
-    }
-
     if (specifier.startsWith("@/")) {
       return nextResolve(localTsUrl(resolvePath("src", specifier.slice(2))), context);
     }
@@ -77,7 +48,7 @@ registerHooks({
 
 test("reconciles inflated provider daily proceeds to range totals", async () => {
   const { reconcileRevenueDailyRowsToTotals } = await import(
-    "../src/server/adapty/revenue.ts"
+    "../src/server/revenue/revenue.ts"
   );
   const rows = [
     {
@@ -173,8 +144,10 @@ test("reconciles inflated provider daily proceeds to range totals", async () => 
       newProceeds: 9_681.08,
       organic: 2_142.81,
       paid: 7_538.27,
+      paidSpend: null,
       renewal: 2_623.49,
       tiktok: 5_015.48,
+      tiktokSpend: null,
       total: 12_030.57,
     },
   });
@@ -195,9 +168,116 @@ test("reconciles inflated provider daily proceeds to range totals", async () => 
   assert.ok(reconciled[0].total < rows[0].total);
 });
 
-test("uses Adapty total series instead of summing total plus period components", async () => {
+test("reconciles paid spend to source-row spend total", async () => {
+  const { reconcileRevenueDailyRowsToTotals } = await import(
+    "../src/server/revenue/revenue.ts"
+  );
+  const rows = [
+    {
+      apple: 10,
+      date: "2026-05-04",
+      newProceeds: 100,
+      organic: 20,
+      paid: 80,
+      paidSpend: 50,
+      renewal: 0,
+      tiktok: 70,
+      tiktokSpend: 40,
+      total: 100,
+    },
+    {
+      apple: 20,
+      date: "2026-05-05",
+      newProceeds: 200,
+      organic: 40,
+      paid: 160,
+      paidSpend: 100,
+      renewal: 0,
+      tiktok: 140,
+      tiktokSpend: 80,
+      total: 200,
+    },
+  ];
+  const reconciled = reconcileRevenueDailyRowsToTotals({
+    includeSourceBreakdown: true,
+    rows,
+    totals: {
+      apple: 30,
+      newProceeds: 300,
+      organic: 60,
+      paid: 240,
+      paidSpend: 180,
+      renewal: 0,
+      tiktok: 210,
+      tiktokSpend: 120,
+      total: 300,
+    },
+  });
+  const sum = (key) =>
+    Number(
+      reconciled
+        .reduce((total, row) => total + (row[key] ?? 0), 0)
+        .toFixed(2),
+    );
+
+  assert.equal(sum("paidSpend"), 180);
+  assert.equal(sum("tiktokSpend"), 120);
+});
+
+test("does not allocate partial source spend into days with missing spend", async () => {
+  const { reconcileRevenueDailyRowsToTotals } = await import(
+    "../src/server/revenue/revenue.ts"
+  );
+  const reconciled = reconcileRevenueDailyRowsToTotals({
+    includeSourceBreakdown: true,
+    rows: [
+      {
+        apple: 0,
+        date: "2026-05-10",
+        newProceeds: 100,
+        organic: 0,
+        paid: 100,
+        paidSpend: 60,
+        renewal: 0,
+        tiktok: 100,
+        tiktokSpend: 60,
+        total: 100,
+      },
+      {
+        apple: 0,
+        date: "2026-05-11",
+        newProceeds: 100,
+        organic: 0,
+        paid: 100,
+        paidSpend: null,
+        renewal: 0,
+        tiktok: 100,
+        tiktokSpend: null,
+        total: 100,
+      },
+    ],
+    totals: {
+      apple: 0,
+      newProceeds: 200,
+      organic: 0,
+      paid: 200,
+      paidSpend: 60,
+      renewal: 0,
+      tiktok: 200,
+      tiktokSpend: 60,
+      total: 200,
+    },
+  });
+
+  assert.equal(reconciled[0].paidSpend, 60);
+  assert.equal(reconciled[0].tiktokSpend, 60);
+  assert.equal(reconciled[1].paidSpend, null);
+  assert.equal(reconciled[1].tiktokSpend, null);
+});
+
+test("uses provider total series instead of summing total plus period components", async () => {
   const { getRevenueTotalPointMap, normalizeMetricSeries } = await import(
-    "../src/server/adapty/revenue.ts"
+    "../src/server/revenue/revenue.ts"
   );
   const series = [
     {

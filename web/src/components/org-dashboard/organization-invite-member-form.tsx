@@ -2,7 +2,7 @@
 
 import { useId, useMemo, useState } from "react";
 
-type OrganizationRoleValue = "OWNER" | "ADMIN" | "MEMBER";
+type OrganizationRoleValue = "OWNER" | "ADMIN" | "MEMBER" | "BLAZIE";
 
 type CampaignOption = {
   id: string;
@@ -34,8 +34,12 @@ function getSummaryLabel(args: {
     campaignAccessMode,
     hasOrgWideCampaignAccess,
     role,
-    selectedCampaigns,
-  } = args;
+  selectedCampaigns,
+} = args;
+
+  if (role === "BLAZIE") {
+    return "Blazie tab only";
+  }
 
   if (hasOrgWideCampaignAccess) {
     return `${formatRoleLabel(role)} includes all campaigns`;
@@ -70,7 +74,8 @@ export function OrganizationInviteMemberForm({
   const [isCampaignPickerOpen, setIsCampaignPickerOpen] = useState(false);
   const [selectedCampaignIds, setSelectedCampaignIds] = useState<string[]>([]);
   const campaignPickerId = useId();
-  const hasOrgWideCampaignAccess = role !== "MEMBER";
+  const hasOrgWideCampaignAccess = role === "OWNER" || role === "ADMIN";
+  const hasBlazieOnlyAccess = role === "BLAZIE";
   const selectedCampaigns = useMemo(() => {
     const selectedCampaignIdSet = new Set(selectedCampaignIds);
 
@@ -150,9 +155,17 @@ export function OrganizationInviteMemberForm({
         <input
           name="campaignAccessScope"
           type="hidden"
-          value={hasOrgWideCampaignAccess ? "all" : campaignAccessMode}
+          value={
+            hasBlazieOnlyAccess
+              ? "selected"
+              : hasOrgWideCampaignAccess
+                ? "all"
+                : campaignAccessMode
+          }
         />
-        {!hasOrgWideCampaignAccess && campaignAccessMode === "selected"
+        {!hasBlazieOnlyAccess &&
+        !hasOrgWideCampaignAccess &&
+        campaignAccessMode === "selected"
           ? selectedCampaignIds.map((campaignId) => (
               <input
                 key={campaignId}
@@ -175,9 +188,11 @@ export function OrganizationInviteMemberForm({
               {campaignSummaryLabel}
             </span>
             <span className="mt-1 block text-xs text-muted-foreground">
-              {hasOrgWideCampaignAccess
-                ? "Admins and owners automatically get access to every campaign."
-                : "Choose all campaigns or narrow access before sending the invite."}
+              {hasBlazieOnlyAccess
+                ? "This profile only sees the Blazie tab."
+                : hasOrgWideCampaignAccess
+                  ? "Admins and owners automatically get access to every campaign."
+                  : "Choose all campaigns or narrow access before sending the invite."}
             </span>
           </span>
           <svg
@@ -203,7 +218,12 @@ export function OrganizationInviteMemberForm({
             className="mt-3 rounded-[1rem] border border-white/[0.08] bg-black/[0.18] p-3.5"
             id={campaignPickerId}
           >
-            {hasOrgWideCampaignAccess ? (
+            {hasBlazieOnlyAccess ? (
+              <p className="text-sm leading-6 text-muted-foreground">
+                This profile only gets the Blazie tab, so no campaign selection
+                is needed.
+              </p>
+            ) : hasOrgWideCampaignAccess ? (
               <p className="text-sm leading-6 text-muted-foreground">
                 {formatRoleLabel(role)} access already includes every campaign in
                 this organization, so no separate campaign selection is needed.

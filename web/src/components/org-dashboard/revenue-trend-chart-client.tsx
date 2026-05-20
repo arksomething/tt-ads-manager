@@ -42,7 +42,8 @@ const compactFormatter = new Intl.NumberFormat("en-US", {
 const currencyFormatterCache = new Map<string, Intl.NumberFormat>();
 
 const SERIES = [
-  { color: "#90FF4D", key: "total", label: "Total" },
+  { color: "#90FF4D", key: "total", label: "All proceeds" },
+  { color: "#4DE1FF", key: "newProceeds", label: "New" },
   { color: "#79A8FF", key: "paid", label: "Paid" },
   { color: "#B9A7FF", key: "tiktok", label: "TikTok" },
   { color: "#FF8FB3", key: "apple", label: "Apple Ads" },

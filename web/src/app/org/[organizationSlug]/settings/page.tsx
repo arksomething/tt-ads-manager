@@ -166,7 +166,7 @@ export default async function OrganizationSettingsPage({
             </h1>
             <p className="mt-3 text-sm leading-6 text-muted-foreground">
               These controls update encrypted organization credentials in the
-              database for ViewsBase and Adapty. Saved values are never shown
+              database for ViewsBase and Superwall. Saved values are never shown
               back in the dashboard.
             </p>
           </div>

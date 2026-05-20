@@ -46,9 +46,17 @@ export function isUnattributedLabel(label: string | null) {
   const normalized = normalizeMatchText(label);
   return (
     normalized.length === 0 ||
-    ["unknown", "not set", "none", "null", "n a", "no data", "organic"].includes(
-      normalized,
-    )
+    [
+      "unknown",
+      "not set",
+      "none",
+      "null",
+      "n a",
+      "no data",
+      "organic",
+      "organic unattributed",
+      "unattributed",
+    ].includes(normalized)
   );
 }
 

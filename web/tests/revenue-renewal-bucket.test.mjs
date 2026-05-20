@@ -6,9 +6,9 @@ import {
   isActivationPeriodLabel,
   isRenewalPeriodLabel,
   isTrialPeriodLabel,
-} from "../src/server/adapty/revenue-renewals.ts";
+} from "../src/server/revenue/revenue-renewals.ts";
 
-test("classifies Adapty period labels", () => {
+test("classifies provider period labels", () => {
   assert.equal(isActivationPeriodLabel("Activation"), true);
   assert.equal(isActivationPeriodLabel("Renewals 1"), false);
   assert.equal(isRenewalPeriodLabel("Renewals 6+"), true);

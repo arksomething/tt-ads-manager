@@ -38,26 +38,15 @@ export type ViewsBaseCredentialValue = {
   defaultOrgSlug: string | null;
 };
 
-export type AdaptyCredentialValue = {
+export type SuperwallCredentialValue = {
   apiBaseUrl: string;
   apiKey: string;
+  applicationIds: number[];
   appleSourcePatterns: string;
   creatorSourcePatterns: string;
-  tiktokSegmentation:
-    | "attribution_source"
-    | "attribution_channel"
-    | "attribution_campaign"
-    | "attribution_adgroup"
-    | "attribution_adset"
-    | "attribution_creative";
+  organizationId: number | null;
+  projectName: string;
   tiktokSourcePatterns: string;
-};
-
-export type AdaptyDashboardCredentialValue = {
-  appId: string;
-  baseUrl: string;
-  companyId: string;
-  token: string;
 };
 
 const managedSecretInputSchema = z.object({
@@ -75,37 +64,36 @@ function getViewsBaseStaticConfig() {
   };
 }
 
-function getAdaptyStaticConfig() {
-  const segmentation = process.env.ADAPTY_TIKTOK_SEGMENTATION;
-
-  return {
-    apiBaseUrl: process.env.ADAPTY_API_BASE_URL || "https://api-admin.adapty.io",
-    appleSourcePatterns:
-      process.env.ADAPTY_APPLE_SOURCE_PATTERNS ||
-      "apple_search_ads,apple search ads,apple ads,apple search,apple searchads,search ads,searchads,asa",
-    creatorSourcePatterns:
-      process.env.ADAPTY_CREATOR_SOURCE_PATTERNS || "social custom",
-    tiktokSegmentation:
-      segmentation === "attribution_channel" ||
-      segmentation === "attribution_campaign" ||
-      segmentation === "attribution_adgroup" ||
-      segmentation === "attribution_adset" ||
-      segmentation === "attribution_creative"
-        ? segmentation
-        : "attribution_source",
-    tiktokSourcePatterns:
-      process.env.ADAPTY_TIKTOK_SOURCE_PATTERNS || "tiktok,tik tok",
-  } satisfies Omit<AdaptyCredentialValue, "apiKey">;
+function parseNumericCsv(value: string | undefined) {
+  return (value ?? "")
+    .split(",")
+    .map((entry) => Number(entry.trim()))
+    .filter((entry) => Number.isInteger(entry) && entry > 0);
 }
 
-function getAdaptyDashboardStaticConfig() {
+function parseNullablePositiveInteger(value: string | undefined) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function getSuperwallStaticConfig() {
   return {
-    appId: process.env.ADAPTY_DASHBOARD_APP_ID || null,
-    baseUrl:
-      process.env.ADAPTY_DASHBOARD_BASE_URL ||
-      "https://api-asa-admin.adapty.io/api/v1",
-    companyId: process.env.ADAPTY_DASHBOARD_COMPANY_ID || null,
-  };
+    apiBaseUrl: process.env.SUPERWALL_API_BASE_URL || "https://api.superwall.com",
+    applicationIds: parseNumericCsv(process.env.SUPERWALL_APPLICATION_IDS),
+    appleSourcePatterns:
+      process.env.SUPERWALL_APPLE_SOURCE_PATTERNS ||
+      "apple_search_ads,apple search ads,apple ads,apple search,apple searchads,search ads,searchads,asa",
+    creatorSourcePatterns:
+      process.env.SUPERWALL_CREATOR_SOURCE_PATTERNS ||
+      "social custom",
+    organizationId: parseNullablePositiveInteger(
+      process.env.SUPERWALL_ORGANIZATION_ID,
+    ),
+    projectName: process.env.SUPERWALL_PROJECT_NAME || "GoTall",
+    tiktokSourcePatterns:
+      process.env.SUPERWALL_TIKTOK_SOURCE_PATTERNS ||
+      "tiktok,tik tok",
+  } satisfies Omit<SuperwallCredentialValue, "apiKey">;
 }
 
 function getPreview(value: string) {
@@ -122,10 +110,8 @@ function getEnvCredentialValue(key: ManagedSecretKey) {
   switch (key) {
     case "VIEWSBASE_SESSION_COOKIE_VALUE":
       return process.env.VIEWSBASE_SESSION_COOKIE_VALUE || null;
-    case "ADAPTY_API_KEY":
-      return process.env.ADAPTY_API_KEY || null;
-    case "ADAPTY_DASHBOARD_TOKEN":
-      return process.env.ADAPTY_DASHBOARD_TOKEN || null;
+    case "SUPERWALL_API_KEY":
+      return process.env.SUPERWALL_API_KEY || null;
   }
 }
 
@@ -211,19 +197,19 @@ export async function getViewsBaseCredentials(
   };
 }
 
-export async function getAdaptyCredentials(
+export async function getSuperwallCredentials(
   organizationSlug: string,
-): Promise<EffectiveCredential<AdaptyCredentialValue>> {
+): Promise<EffectiveCredential<SuperwallCredentialValue>> {
   const credential = await getEffectiveCredentialValue({
     organizationSlug,
-    key: "ADAPTY_API_KEY",
+    key: "SUPERWALL_API_KEY",
   });
 
   if (!credential.configured) {
     return credential;
   }
 
-  const staticConfig = getAdaptyStaticConfig();
+  const staticConfig = getSuperwallStaticConfig();
 
   return {
     configured: true,
@@ -231,40 +217,12 @@ export async function getAdaptyCredentials(
     value: {
       apiBaseUrl: staticConfig.apiBaseUrl,
       apiKey: credential.value,
+      applicationIds: staticConfig.applicationIds,
       appleSourcePatterns: staticConfig.appleSourcePatterns,
       creatorSourcePatterns: staticConfig.creatorSourcePatterns,
-      tiktokSegmentation: staticConfig.tiktokSegmentation,
+      organizationId: staticConfig.organizationId,
+      projectName: staticConfig.projectName,
       tiktokSourcePatterns: staticConfig.tiktokSourcePatterns,
-    },
-  };
-}
-
-export async function getAdaptyDashboardCredentials(
-  organizationSlug: string,
-): Promise<EffectiveCredential<AdaptyDashboardCredentialValue>> {
-  const credential = await getEffectiveCredentialValue({
-    organizationSlug,
-    key: "ADAPTY_DASHBOARD_TOKEN",
-  });
-
-  const staticConfig = getAdaptyDashboardStaticConfig();
-
-  if (!credential.configured || !staticConfig.appId || !staticConfig.companyId) {
-    return {
-      configured: false,
-      source: "missing",
-      value: null,
-    };
-  }
-
-  return {
-    configured: true,
-    source: credential.source,
-    value: {
-      appId: staticConfig.appId,
-      baseUrl: staticConfig.baseUrl,
-      companyId: staticConfig.companyId,
-      token: credential.value,
     },
   };
 }

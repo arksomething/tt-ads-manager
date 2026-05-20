@@ -1,15 +1,25 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { AdProfitAutoRefresh } from "@/components/org-dashboard/ad-profit-auto-refresh";
+import {
+  canAccessDashboardSection,
+  getDefaultDashboardHrefForRole,
+} from "@/components/org-dashboard/mock-data";
 import { DashboardIcon } from "@/components/org-dashboard/org-icons";
 import { RevenueProfitabilityClient } from "@/components/org-dashboard/revenue-profitability-client";
 import { RevenueTrendChartClient } from "@/components/org-dashboard/revenue-trend-chart-client";
+import { requireOrganizationMembership } from "@/server/auth/organizations";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
 import {
+  getRevenueProceedsModelConfig,
   getRevenueAttributionReport,
+  normalizeRevenueProceedsModel,
+  REVENUE_PROCEEDS_MODELS,
   type RevenueAttributionReport,
   type RevenueAttributionSourceRow,
-} from "@/server/adapty/revenue";
+  type RevenueProceedsModel,
+} from "@/server/revenue/revenue";
 
 export const dynamic = "force-dynamic";
 
@@ -88,6 +98,32 @@ function normalizeDateRange(searchParams: DashboardSearchParams) {
     endDate,
     startDate,
   };
+}
+
+function buildRevenueModelHref(args: {
+  organizationSlug: string;
+  searchParams: DashboardSearchParams;
+  startDate: string;
+  endDate: string;
+  proceedsModel: RevenueProceedsModel;
+}) {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(args.searchParams)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        params.append(key, item);
+      }
+    } else if (typeof value === "string") {
+      params.set(key, value);
+    }
+  }
+
+  params.set("startDate", args.startDate);
+  params.set("endDate", args.endDate);
+  params.set("revenueModel", args.proceedsModel);
+
+  return `/org/${args.organizationSlug}/revenue?${params.toString()}`;
 }
 
 function getCurrencyFormatter(currency: string) {
@@ -171,11 +207,13 @@ function SummaryPill(args: {
 }
 
 function RevenueShareBar({ report }: { report: RevenueAttributionReport }) {
+  const modelConfig = getRevenueProceedsModelConfig(report.proceedsModel);
+  const separatesRenewals = modelConfig.excludesRenewalsFromOrganic;
   const paidPercent = Math.max(0, Math.min(report.totals.paidShare ?? 0, 1));
   const renewalPercent = Math.max(
     0,
     Math.min(
-      report.totals.total > 0
+      separatesRenewals && report.totals.total > 0
         ? report.totals.renewalBucket / report.totals.total
         : 0,
       1,
@@ -194,12 +232,20 @@ function RevenueShareBar({ report }: { report: RevenueAttributionReport }) {
             Attribution split
           </p>
           <h2 className="mt-2 text-xl font-medium tracking-[-0.04em] text-foreground">
-            Paid, renewals, and organic proceeds
+            {separatesRenewals
+              ? "Paid, renewals, and organic proceeds"
+              : "Paid and organic cohorted proceeds"}
           </h2>
         </div>
         <p className="text-sm text-muted-foreground">
           {formatPercent(report.totals.paidShare)} paid ·{" "}
-          {formatPercent(report.totals.renewalShare)} renewal ·{" "}
+          {separatesRenewals
+            ? `${formatPercent(
+                report.totals.total > 0
+                  ? report.totals.renewalBucket / report.totals.total
+                  : null,
+              )} renewal · `
+            : ""}
           {formatPercent(report.totals.organicShare)} organic
         </p>
       </div>
@@ -241,7 +287,10 @@ function RevenueShareBar({ report }: { report: RevenueAttributionReport }) {
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
             {formatAmount(report.totals.renewal, report.currency)} renewal
-            proceeds identified by Adapty renewal status.
+            proceeds{" "}
+            {separatesRenewals
+              ? "identified by Superwall subscription events."
+              : "included inside the cohorted source and organic buckets."}
           </p>
         </div>
         <div className="rounded-[1.05rem] border border-white/[0.08] bg-black/[0.18] p-3.5">
@@ -251,7 +300,9 @@ function RevenueShareBar({ report }: { report: RevenueAttributionReport }) {
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
             {formatAmount(report.totals.organic, report.currency)} calculated as
-            Adapty total proceeds minus paid-source and renewal proceeds.
+            {separatesRenewals
+              ? " Superwall total proceeds minus paid-source and renewal proceeds."
+              : " Superwall cohorted proceeds minus paid-source proceeds."}
           </p>
         </div>
       </div>
@@ -343,15 +394,15 @@ function SourceBreakdownTable({ report }: { report: RevenueAttributionReport }) 
         <p className="text-sm text-muted-foreground">
           {report.sourceProvider === "singular"
             ? `Singular ${report.singularCohortPeriod ?? ""} source split${
-                report.appleSourceProvider === "adapty_dashboard"
-                  ? " plus Adapty Ads Manager Apple Search Ads"
-                  : report.appleSourceProvider === "adapty"
-                    ? " plus Adapty Apple Ads channel"
+                report.appleSourceProvider === "superwall"
+                  ? " plus Superwall Apple Search Ads"
+                  : report.appleSourceProvider === "singular"
+                    ? " plus Singular Apple Search Ads"
                   : ""
               }`
-            : report.appleSourceProvider === "adapty_dashboard"
-              ? `Adapty ${report.attributionDimension.replace(/_/g, " ")} split plus Ads Manager Apple Search Ads`
-              : `Adapty ${report.attributionDimension.replace(/_/g, " ")} split`}
+            : report.appleSourceProvider === "superwall"
+              ? "Superwall source split plus Apple Search Ads"
+              : "Superwall source split"}
         </p>
       </div>
 
@@ -424,11 +475,22 @@ export default async function RevenuePage({
   searchParams,
 }: RevenuePageProps) {
   const { organizationSlug } = await params;
+  const membership = await requireOrganizationMembership(organizationSlug);
+
+  if (!canAccessDashboardSection(membership.role, "revenue")) {
+    redirect(getDefaultDashboardHrefForRole(organizationSlug, membership.role));
+  }
+
   const resolvedSearchParams = await searchParams;
   const { startDate, endDate } = normalizeDateRange(resolvedSearchParams);
+  const proceedsModel = normalizeRevenueProceedsModel(
+    getSearchParamValue(resolvedSearchParams, "revenueModel"),
+  );
+  const proceedsModelConfig = getRevenueProceedsModelConfig(proceedsModel);
   const report = await getRevenueAttributionReport({
     endDate,
     organizationSlug,
+    proceedsModel,
     startDate,
   });
 
@@ -444,14 +506,15 @@ export default async function RevenuePage({
               Proceeds by paid source and organic lift.
             </h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Total proceeds come from Adapty. Apple Ads proceeds use Adapty
-              Ads Manager when dashboard auth is configured, then fall back to
-              Adapty attribution channel. Renewal proceeds use the Adapty
-              period split: Activation is new proceeds, renewal periods are old-source proceeds.
+              Total proceeds use {proceedsModelConfig.description} Apple Ads
+              proceeds use Superwall Apple Search Ads attribution when present.
+              Renewal proceeds use Superwall renewal-type events: new purchases
+              and trial conversions are new proceeds, renewals are
+              existing-subscriber proceeds.
             </p>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Apple Search Ads cost, profit, and ROAS come from Adapty Ads
-              Manager when the bearer token, app id, and company id are present.
+              Apple Search Ads spend is filled from Singular when its source
+              report includes Apple Ads rows.
             </p>
           </div>
 
@@ -464,12 +527,13 @@ export default async function RevenuePage({
         </div>
 
         <div className="mt-5 flex flex-wrap gap-2">
-          <SummaryPill label={`Adapty ${report.configured ? "connected" : "missing"}`} />
+          <SummaryPill label={`Superwall ${report.configured ? "connected" : "missing"}`} />
           <SummaryPill
             label={`Singular ${report.singularConfigured ? (report.singularPending ? "preparing" : "connected") : "missing"}`}
           />
           <SummaryPill label={`${formatDate(startDate)} to ${formatDate(endDate)}`} />
           <SummaryPill label={`Timezone ${report.timeZone}`} />
+          <SummaryPill label={`Model ${proceedsModelConfig.shortLabel}`} />
           <SummaryPill
             label={
               report.sourceProvider === "singular"
@@ -479,10 +543,10 @@ export default async function RevenuePage({
           />
           <SummaryPill
             label={`Apple Ads ${
-              report.appleSourceProvider === "adapty_dashboard"
-                ? `Ads Manager ${report.appleAdsDashboardRowCount} rows`
-                : report.appleSourceProvider === "adapty"
-                  ? "Adapty channel"
+              report.appleSourceProvider === "superwall"
+                ? `Superwall ${report.appleAdsDashboardRowCount} rows`
+                : report.appleSourceProvider === "singular"
+                  ? "Singular"
                 : "not found"
             }`}
           />
@@ -498,6 +562,7 @@ export default async function RevenuePage({
           className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
           method="get"
         >
+          <input name="revenueModel" type="hidden" value={proceedsModel} />
           <label className="block">
             <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
               Start date
@@ -531,12 +596,48 @@ export default async function RevenuePage({
             </button>
           </div>
         </form>
+
+        <div className="mt-5">
+          <p className="mb-2 text-xs uppercase tracking-[0.2em] text-muted-foreground">
+            Revenue model
+          </p>
+          <div className="grid gap-2 lg:grid-cols-2">
+            {REVENUE_PROCEEDS_MODELS.map((model) => {
+              const active = model.id === proceedsModel;
+
+              return (
+                <Link
+                  className={`rounded-[0.95rem] border px-3.5 py-3 text-left transition ${
+                    active
+                      ? "border-[#90FF4D]/35 bg-[#90FF4D]/10 text-foreground"
+                      : "border-white/[0.08] bg-black/[0.18] text-muted-foreground hover:border-white/[0.16] hover:text-foreground"
+                  }`}
+                  href={buildRevenueModelHref({
+                    endDate,
+                    organizationSlug,
+                    proceedsModel: model.id,
+                    searchParams: resolvedSearchParams,
+                    startDate,
+                  })}
+                  key={model.id}
+                >
+                  <span className="block text-sm font-medium">
+                    {model.label}
+                  </span>
+                  <span className="mt-1 block text-xs leading-5">
+                    {model.description}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
       </section>
 
       {!report.configured ? (
         <section className="rounded-[1.35rem] border border-[#FFD24D]/20 bg-[#FFD24D]/[0.08] p-4 text-sm leading-6 text-[#FFEAB1]">
-          Add ADAPTY_API_KEY to the server environment to load mobile app proceeds
-          from Adapty.
+          Add SUPERWALL_API_KEY to the server environment to load mobile app
+          proceeds from Superwall.
         </section>
       ) : null}
 
@@ -589,7 +690,7 @@ export default async function RevenuePage({
         <StatCard
           icon="payouts"
           label="Total proceeds"
-          meta="Adapty proceeds for the selected purchase-date window"
+          meta={`Net attributed Superwall proceeds for the selected ${proceedsModelConfig.dateBasisLabel} window`}
           value={formatAmount(report.totals.total, report.currency)}
         />
         <StatCard
@@ -622,9 +723,9 @@ export default async function RevenuePage({
           meta={
             report.appleSourceProvider === "none"
               ? "No Apple Search Ads revenue found"
-              : report.appleSourceProvider === "adapty_dashboard"
-                ? `${formatPercent(report.totals.appleShare)} of total proceeds from Ads Manager`
-                : `${formatPercent(report.totals.appleShare)} of total proceeds from Adapty attribution_channel`
+              : report.appleSourceProvider === "superwall"
+                ? `${formatPercent(report.totals.appleShare)} of total proceeds from Superwall Apple Search Ads`
+                : `${formatPercent(report.totals.appleShare)} of total proceeds from Singular Apple Search Ads`
           }
           value={
             report.appleSourceProvider === "none"
@@ -637,7 +738,7 @@ export default async function RevenuePage({
           label="Apple Ads cost"
           meta={
             report.totals.appleSpend === null
-              ? "Adapty Ads Manager spend unavailable"
+              ? "Apple Search Ads spend unavailable"
               : `${formatSignedAmount(report.totals.appleProfit, report.currency)} profit · ${formatPercent(report.totals.appleRoas)} ROAS`
           }
           value={
@@ -649,7 +750,11 @@ export default async function RevenuePage({
         <StatCard
           icon="creators"
           label="Organic / UGC proceeds"
-          meta={`${formatPercent(report.totals.organicShare)} remains after paid + renewals`}
+          meta={
+            proceedsModelConfig.excludesRenewalsFromOrganic
+              ? `${formatPercent(report.totals.organicShare)} remains after paid + renewals`
+              : `${formatPercent(report.totals.organicShare)} remains after paid; renewals included`
+          }
           value={formatAmount(report.totals.organic, report.currency)}
         />
       </section>
@@ -659,6 +764,7 @@ export default async function RevenuePage({
       <RevenueProfitabilityClient
         endDate={endDate}
         organizationSlug={organizationSlug}
+        revenueModel={proceedsModel}
         searchParams={resolvedSearchParams}
         startDate={startDate}
       />

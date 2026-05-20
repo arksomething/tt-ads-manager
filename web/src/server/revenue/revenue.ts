@@ -1,17 +1,13 @@
 import {
-  AdaptyApiError,
-  adaptyClient,
-  type AdaptyRevenueSegmentation,
-} from "./client";
+  SuperwallApiError,
+  superwallClient,
+  type SuperwallQueryScope,
+} from "@/server/superwall/client";
 import {
   getSingularSourceRevenueReport,
   type SingularSourceRevenueReport,
   type SingularSourceRevenueRow,
 } from "@/server/singular/reporting";
-import {
-  getAppleSearchAdsDashboardReport,
-  type AppleSearchAdsDashboardReport,
-} from "./dashboard-client";
 import {
   getRevenueSourceKind,
   isAppleAdsLabel,
@@ -20,7 +16,10 @@ import {
   isUnattributedLabel,
   splitCommaSeparatedList,
 } from "./source-classification";
-import { getAdaptyCredentials } from "@/server/settings/managed-secrets";
+import {
+  getSuperwallCredentials,
+  type SuperwallCredentialValue,
+} from "@/server/settings/managed-secrets";
 import {
   getSingularSourceTimeZone,
   getUtcDateForProviderDate,
@@ -34,6 +33,65 @@ import {
   type RenewalBucketAmounts,
 } from "./revenue-renewals";
 
+export type RevenueProceedsModel = "new_proceeds" | "cohorted_all";
+
+export type RevenueProceedsModelConfig = {
+  id: RevenueProceedsModel;
+  label: string;
+  shortLabel: string;
+  description: string;
+  dateBasisLabel: string;
+  dateColumn: "purchasedAt" | "attributionTs";
+  excludesRenewalsFromOrganic: boolean;
+};
+
+export const DEFAULT_REVENUE_PROCEEDS_MODEL: RevenueProceedsModel =
+  "new_proceeds";
+
+export const REVENUE_PROCEEDS_MODELS: RevenueProceedsModelConfig[] = [
+  {
+    id: "new_proceeds",
+    label: "New proceeds",
+    shortLabel: "New",
+    description:
+      "Purchase-date Superwall proceeds with renewal proceeds separated out before organic / creator allocation.",
+    dateBasisLabel: "purchase date",
+    dateColumn: "purchasedAt",
+    excludesRenewalsFromOrganic: true,
+  },
+  {
+    id: "cohorted_all",
+    label: "Cohorted all proceeds",
+    shortLabel: "Cohorted all",
+    description:
+      "Superwall proceeds bucketed by attribution cohort date, with renewal proceeds included in the attributed source / organic allocation.",
+    dateBasisLabel: "attribution cohort date",
+    dateColumn: "attributionTs",
+    excludesRenewalsFromOrganic: false,
+  },
+];
+
+const REVENUE_PROCEEDS_MODEL_BY_ID = new Map(
+  REVENUE_PROCEEDS_MODELS.map((model) => [model.id, model]),
+);
+
+export function normalizeRevenueProceedsModel(
+  value: string | null | undefined,
+): RevenueProceedsModel {
+  return value === "cohorted_all" || value === "new_proceeds"
+    ? value
+    : DEFAULT_REVENUE_PROCEEDS_MODEL;
+}
+
+export function getRevenueProceedsModelConfig(
+  model: RevenueProceedsModel,
+): RevenueProceedsModelConfig {
+  return (
+    REVENUE_PROCEEDS_MODEL_BY_ID.get(model) ??
+    REVENUE_PROCEEDS_MODEL_BY_ID.get(DEFAULT_REVENUE_PROCEEDS_MODEL)!
+  );
+}
+
 export type RevenueAttributionSourceRow = {
   label: string;
   rawLabel: string | null;
@@ -41,6 +99,7 @@ export type RevenueAttributionSourceRow = {
   revenue: number;
   share: number | null;
   spend: number | null;
+  spendStatus?: "complete" | "partial" | "unavailable";
   installs: number | null;
   conversions: number | null;
 };
@@ -70,13 +129,14 @@ export type RevenueAttributionReport = {
   singularConfigured: boolean;
   singularPending: boolean;
   singularCohortPeriod: string | null;
+  proceedsModel: RevenueProceedsModel;
   startDate: string;
   endDate: string;
   timeZone: string;
-  attributionDimension: AdaptyRevenueSegmentation;
+  attributionDimension: "superwall_source";
   tiktokPatterns: string[];
-  sourceProvider: "singular" | "adapty" | "none";
-  appleSourceProvider: "adapty_dashboard" | "adapty" | "singular" | "none";
+  sourceProvider: "singular" | "superwall" | "none";
+  appleSourceProvider: "superwall" | "singular" | "none";
   currency: string | null;
   totals: {
     total: number;
@@ -106,6 +166,17 @@ export type RevenueAttributionReport = {
   warnings: string[];
 };
 
+export type AppleSearchAdsRevenueReport = {
+  configured: boolean;
+  conversions: number | null;
+  installs: number | null;
+  revenue: number | null;
+  revenueBasis: "proceeds" | null;
+  rowCount: number;
+  spend: number | null;
+  warnings: string[];
+};
+
 export type NormalizedPoint = {
   date: string | null;
   value: number;
@@ -123,6 +194,17 @@ type MetricContainer = {
   key: string;
 };
 
+type SuperwallMetricRow = {
+  date: string;
+  label: string;
+  value: number | string;
+};
+
+type SuperwallAppleRow = {
+  conversions: number | string | null;
+  revenue: number | string | null;
+  rowCount: number | string;
+};
 
 const REVENUE_NUMBER_KEYS = [
   "value",
@@ -156,6 +238,78 @@ const POINT_DATE_KEYS = [
   "x",
 ] as const;
 const CHILD_DATA_KEYS = ["data", "values", "points", "series", "items", "rows"] as const;
+const SUPERWALL_REVENUE_TABLE = "open_revenue.attributed_events_by_ts_rep";
+
+function escapeClickHouseString(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+function toSqlString(value: string) {
+  return `'${escapeClickHouseString(value)}'`;
+}
+
+function getExclusiveEndDate(endDate: string) {
+  const parsed = new Date(`${endDate}T00:00:00.000Z`);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return endDate;
+  }
+
+  parsed.setUTCDate(parsed.getUTCDate() + 1);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function getSuperwallScopeWhere(scope: SuperwallQueryScope) {
+  return `applicationId IN (${scope.applicationIds.join(",")})`;
+}
+
+function getSuperwallDateWhere(args: {
+  startDate: string;
+  endDate: string;
+  dateColumn: RevenueProceedsModelConfig["dateColumn"];
+}) {
+  const start = `${args.startDate} 00:00:00`;
+  const end = `${getExclusiveEndDate(args.endDate)} 00:00:00`;
+
+  return [
+    `${args.dateColumn} >= toDateTime64(${toSqlString(start)}, 6, 'UTC')`,
+    `${args.dateColumn} < toDateTime64(${toSqlString(end)}, 6, 'UTC')`,
+  ].join(" AND ");
+}
+
+function getSuperwallChartAttributionWhere() {
+  return "attributionEventId != ''";
+}
+
+function getSuperwallProductionWhere(scope: SuperwallQueryScope) {
+  return [
+    getSuperwallScopeWhere(scope),
+    "isSandbox = 0",
+    "environment = 'PRODUCTION'",
+  ].join(" AND ");
+}
+
+function getSuperwallAppleSearchAdsCondition() {
+  return [
+    "lower(ifNull(appleSearchAdsAttribution, '')) IN ('true', '1')",
+    "ifNull(appleSearchAdsCampaignId, '') != ''",
+    "ifNull(appleSearchAdsCampaignName, '') != ''",
+    "ifNull(appleSearchAdsOrgId, '') != ''",
+  ].join(" OR ");
+}
+
+function toFiniteNumber(value: unknown) {
+  const numberValue =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value.replace(/,/g, ""))
+        : null;
+
+  return typeof numberValue === "number" && Number.isFinite(numberValue)
+    ? numberValue
+    : null;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -406,6 +560,134 @@ export function normalizeMetricSeries(payload: unknown) {
     series: aggregateSeriesByLabel(series),
     total,
     unit,
+  };
+}
+
+function buildMetricPayloadFromSuperwallRows(rows: SuperwallMetricRow[]) {
+  const grouped = new Map<
+    string,
+    {
+      points: Array<{ date: string; value: number }>;
+      value: number;
+    }
+  >();
+  const totalByDate = new Map<string, number>();
+
+  for (const row of rows) {
+    const value = toFiniteNumber(row.value) ?? 0;
+    const label = row.label.trim() || "Unattributed";
+    const existing = grouped.get(label) ?? {
+      points: [],
+      value: 0,
+    };
+
+    existing.points.push({
+      date: row.date,
+      value,
+    });
+    existing.value += value;
+    grouped.set(label, existing);
+    totalByDate.set(row.date, (totalByDate.get(row.date) ?? 0) + value);
+  }
+
+  const data = [...grouped.entries()].map(([name, series]) => ({
+    data: aggregatePoints(series.points),
+    name,
+    unit: "USD",
+    value: roundCurrency(series.value),
+  }));
+  const totalPoints = [...totalByDate.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([date, value]) => ({
+      date,
+      value: roundCurrency(value),
+    }));
+  const total = roundCurrency(
+    totalPoints.reduce((sum, point) => sum + point.value, 0),
+  );
+
+  return {
+    data: {
+      proceeds: {
+        data: [
+          ...data,
+          {
+            data: totalPoints,
+            name: "Total",
+            unit: "USD",
+            value: total,
+          },
+        ],
+        unit: "USD",
+        value: total,
+      },
+    },
+  };
+}
+
+async function getSuperwallMetricPayloads(args: {
+  credentials: SuperwallCredentialValue;
+  endDate: string;
+  proceedsModel: RevenueProceedsModel;
+  scope: SuperwallQueryScope;
+  startDate: string;
+}) {
+  const modelConfig = getRevenueProceedsModelConfig(args.proceedsModel);
+  const where = [
+    getSuperwallProductionWhere(args.scope),
+    getSuperwallDateWhere({
+      dateColumn: modelConfig.dateColumn,
+      endDate: args.endDate,
+      startDate: args.startDate,
+    }),
+    getSuperwallChartAttributionWhere(),
+    `ifNull(${SUPERWALL_REVENUE_TABLE}.proceeds, 0) != 0`,
+  ].join(" AND ");
+  const appleCondition = getSuperwallAppleSearchAdsCondition();
+  const periodRows = await superwallClient.queryJsonEachRow<SuperwallMetricRow>({
+    credentials: args.credentials,
+    organizationId: args.scope.organizationId,
+    sql: `
+      SELECT
+        toString(toDate(${modelConfig.dateColumn}, 'UTC')) AS date,
+        multiIf(
+          ifNull(${SUPERWALL_REVENUE_TABLE}.proceeds, 0) < 0,
+          'Renewal',
+          name = 'renewal' AND isTrialConversion = 1,
+          'Activation',
+          name = 'initial_purchase' OR name = 'non_renewing_purchase',
+          'Activation',
+          name = 'renewal',
+          'Renewal',
+          'Other'
+        ) AS label,
+        round(sum(toFloat64(ifNull(${SUPERWALL_REVENUE_TABLE}.proceeds, 0))), 2) AS value
+      FROM ${SUPERWALL_REVENUE_TABLE}
+      WHERE ${where}
+      GROUP BY date, label
+      ORDER BY date, label
+      FORMAT JSONEachRow
+    `,
+  });
+  const sourceRows = await superwallClient.queryJsonEachRow<SuperwallMetricRow>({
+    credentials: args.credentials,
+    organizationId: args.scope.organizationId,
+    sql: `
+      SELECT
+        toString(toDate(${modelConfig.dateColumn}, 'UTC')) AS date,
+        if(${appleCondition}, 'Apple Search Ads', 'Organic / unattributed') AS label,
+        round(sum(toFloat64(ifNull(${SUPERWALL_REVENUE_TABLE}.proceeds, 0))), 2) AS value
+      FROM ${SUPERWALL_REVENUE_TABLE}
+      WHERE ${where}
+      GROUP BY date, label
+      ORDER BY date, label
+      FORMAT JSONEachRow
+    `,
+  });
+
+  return {
+    periodPayload: buildMetricPayloadFromSuperwallRows(periodRows),
+    sourcePayload: buildMetricPayloadFromSuperwallRows(sourceRows),
   };
 }
 
@@ -661,6 +943,12 @@ function buildSingularSourceRows(args: {
         : isAppleAdsLabel(row.label, args.applePatterns)
         ? "apple"
         : "paid";
+      const hasSpend = row.points.some(
+        (point) => point.spendAvailable !== false,
+      );
+      const hasMissingSpend = row.points.some(
+        (point) => point.spendAvailable === false,
+      );
 
       return {
         kind,
@@ -668,7 +956,12 @@ function buildSingularSourceRows(args: {
         rawLabel: row.source,
         revenue: row.revenue,
         share: args.totalRevenue > 0 ? row.revenue / args.totalRevenue : null,
-        spend: row.spend,
+        spend: hasSpend ? row.spend : null,
+        spendStatus: hasMissingSpend
+          ? hasSpend
+            ? "partial"
+            : "unavailable"
+          : "complete",
         installs: row.installs,
         conversions: row.conversions,
       } satisfies RevenueAttributionSourceRow;
@@ -716,7 +1009,7 @@ function rebuildOrganicSourceRow(args: {
           {
             kind: "renewal",
             label: "Renewals / existing subscribers",
-            rawLabel: "adapty_old_source_profile_install_date",
+            rawLabel: "superwall_renewal_events",
             revenue: renewalBucket.renewalBucket,
             share:
               args.totalRevenue > 0
@@ -750,12 +1043,12 @@ function rebuildOrganicSourceRow(args: {
   );
 }
 
-function buildDashboardAppleRow(args: {
-  dashboardReport: AppleSearchAdsDashboardReport;
+function buildAppleSearchAdsRow(args: {
+  appleReport: AppleSearchAdsRevenueReport;
   fallbackRows: RevenueAttributionSourceRow[];
   totalRevenue: number;
 }) {
-  if (!args.dashboardReport.configured || args.dashboardReport.rowCount === 0) {
+  if (!args.appleReport.configured || args.appleReport.rowCount === 0) {
     return null;
   }
 
@@ -763,18 +1056,119 @@ function buildDashboardAppleRow(args: {
     (total, row) => total + row.revenue,
     0,
   );
-  const revenue = args.dashboardReport.revenue ?? fallbackRevenue;
+  const fallbackSpend = args.fallbackRows.reduce(
+    (total, row) =>
+      typeof row.spend === "number" && Number.isFinite(row.spend)
+        ? total + row.spend
+        : total,
+    0,
+  );
+  const hasFallbackSpend = args.fallbackRows.some(
+    (row) => typeof row.spend === "number" && Number.isFinite(row.spend),
+  );
+  const fallbackInstalls = args.fallbackRows.reduce(
+    (total, row) =>
+      typeof row.installs === "number" && Number.isFinite(row.installs)
+        ? total + row.installs
+        : total,
+    0,
+  );
+  const hasFallbackInstalls = args.fallbackRows.some(
+    (row) => typeof row.installs === "number" && Number.isFinite(row.installs),
+  );
+  const fallbackConversions = args.fallbackRows.reduce(
+    (total, row) =>
+      typeof row.conversions === "number" && Number.isFinite(row.conversions)
+        ? total + row.conversions
+        : total,
+    0,
+  );
+  const hasFallbackConversions = args.fallbackRows.some(
+    (row) =>
+      typeof row.conversions === "number" && Number.isFinite(row.conversions),
+  );
+  const revenue = args.appleReport.revenue ?? fallbackRevenue;
 
   return {
-    conversions: args.dashboardReport.conversions,
-    installs: args.dashboardReport.installs,
+    conversions:
+      args.appleReport.conversions ??
+      (hasFallbackConversions ? fallbackConversions : null),
+    installs:
+      args.appleReport.installs ??
+      (hasFallbackInstalls ? fallbackInstalls : null),
     kind: "apple",
     label: "Apple Search Ads",
-    rawLabel: "adapty_dashboard_asa",
+    rawLabel: "superwall_apple_search_ads",
     revenue,
     share: args.totalRevenue > 0 ? revenue / args.totalRevenue : null,
-    spend: args.dashboardReport.spend,
+    spend:
+      args.appleReport.spend ?? (hasFallbackSpend ? fallbackSpend : null),
   } satisfies RevenueAttributionSourceRow;
+}
+
+export async function getAppleSearchAdsRevenueReport(args: {
+  credentials: SuperwallCredentialValue;
+  endDate: string;
+  proceedsModel: RevenueProceedsModel;
+  scope: SuperwallQueryScope;
+  startDate: string;
+}): Promise<AppleSearchAdsRevenueReport> {
+  const modelConfig = getRevenueProceedsModelConfig(args.proceedsModel);
+  const where = [
+    getSuperwallProductionWhere(args.scope),
+    getSuperwallDateWhere({
+      dateColumn: modelConfig.dateColumn,
+      endDate: args.endDate,
+      startDate: args.startDate,
+    }),
+    getSuperwallChartAttributionWhere(),
+    `(${getSuperwallAppleSearchAdsCondition()})`,
+    `ifNull(${SUPERWALL_REVENUE_TABLE}.proceeds, 0) != 0`,
+  ].join(" AND ");
+
+  try {
+    const [row] = await superwallClient.queryJsonEachRow<SuperwallAppleRow>({
+      credentials: args.credentials,
+      organizationId: args.scope.organizationId,
+      sql: `
+        SELECT
+          count() AS rowCount,
+          countIf(name IN ('initial_purchase', 'renewal', 'non_renewing_purchase') AND ifNull(${SUPERWALL_REVENUE_TABLE}.proceeds, 0) > 0) AS conversions,
+          round(sum(toFloat64(ifNull(${SUPERWALL_REVENUE_TABLE}.proceeds, 0))), 2) AS revenue
+        FROM ${SUPERWALL_REVENUE_TABLE}
+        WHERE ${where}
+        FORMAT JSONEachRow
+      `,
+    });
+    const rowCount = toFiniteNumber(row?.rowCount) ?? 0;
+    const revenue = toFiniteNumber(row?.revenue);
+
+    return {
+      configured: true,
+      conversions: toFiniteNumber(row?.conversions),
+      installs: null,
+      revenue,
+      revenueBasis: revenue === null ? null : "proceeds",
+      rowCount,
+      spend: null,
+      warnings: [],
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      conversions: null,
+      installs: null,
+      revenue: null,
+      revenueBasis: null,
+      rowCount: 0,
+      spend: null,
+      warnings: [
+        error instanceof Error
+          ? error.message
+          : "Could not load Superwall Apple Search Ads data.",
+      ],
+    };
+  }
 }
 
 function buildDailyRows(args: {
@@ -784,6 +1178,7 @@ function buildDailyRows(args: {
   activationSeries?: NormalizedSeries[];
   renewalSeries?: NormalizedSeries[];
   appleChannelSeries?: NormalizedSeries[];
+  separateRenewalsFromOrganic?: boolean;
   singularRows?: SingularSourceRevenueRow[];
   sourceSeries?: NormalizedSeries[];
   tiktokPatterns?: string[];
@@ -800,6 +1195,8 @@ function buildDailyRows(args: {
   const renewalMap = getMergedPointMap(args.renewalSeries ?? []);
   const paidSpendMap = new Map<string, number>();
   const tiktokSpendMap = new Map<string, number>();
+  const missingPaidSpendDates = new Set<string>();
+  const missingTiktokSpendDates = new Set<string>();
   const fallbackSourceSeries = (args.sourceSeries ?? []).filter(
     (row) => !isTotalSeriesLabel(row.label),
   );
@@ -835,20 +1232,30 @@ function buildDailyRows(args: {
         });
 
         paidMap.set(utcDate, (paidMap.get(utcDate) ?? 0) + point.revenue);
-        paidSpendMap.set(
-          utcDate,
-          (paidSpendMap.get(utcDate) ?? 0) + point.spend,
-        );
+
+        if (point.spendAvailable !== false) {
+          paidSpendMap.set(
+            utcDate,
+            (paidSpendMap.get(utcDate) ?? 0) + point.spend,
+          );
+        } else {
+          missingPaidSpendDates.add(utcDate);
+        }
 
         if (isTikTokLabel(row.label, fallbackTikTokPatterns)) {
           tiktokMap.set(
             utcDate,
             (tiktokMap.get(utcDate) ?? 0) + point.revenue,
           );
-          tiktokSpendMap.set(
-            utcDate,
-            (tiktokSpendMap.get(utcDate) ?? 0) + point.spend,
-          );
+
+          if (point.spendAvailable !== false) {
+            tiktokSpendMap.set(
+              utcDate,
+              (tiktokSpendMap.get(utcDate) ?? 0) + point.spend,
+            );
+          } else {
+            missingTiktokSpendDates.add(utcDate);
+          }
         }
 
         if (isAppleAdsLabel(row.label, fallbackApplePatterns)) {
@@ -938,19 +1345,26 @@ function buildDailyRows(args: {
             ? null
             : Math.max(total - newProceeds, 0);
       const tiktok = hasSourceDailyBreakdown ? tiktokMap.get(date) ?? 0 : null;
-      const paidSpend = hasDailySpendBreakdown
-        ? paidSpendMap.get(date) ?? 0
-        : null;
-      const tiktokSpend = hasDailySpendBreakdown
-        ? tiktokSpendMap.get(date) ?? 0
-        : null;
+      const paidSpend =
+        hasDailySpendBreakdown && !missingPaidSpendDates.has(date)
+          ? paidSpendMap.get(date) ?? 0
+          : null;
+      const tiktokSpend =
+        hasDailySpendBreakdown && !missingTiktokSpendDates.has(date)
+          ? tiktokSpendMap.get(date) ?? 0
+          : null;
       const apple =
         hasSourceDailyBreakdown && appleMap.size > 0
           ? appleMap.get(date) ?? 0
           : null;
       const organic =
         hasSourceDailyBreakdown && paid !== null
-          ? Math.max(total - paid - (renewal ?? 0), 0)
+          ? Math.max(
+              total -
+                paid -
+                (args.separateRenewalsFromOrganic ? renewal ?? 0 : 0),
+              0,
+            )
           : null;
 
       return {
@@ -1000,7 +1414,9 @@ export function reconcileRevenueDailyRowsToTotals(args: {
     newProceeds: number;
     renewal: number;
     paid: number;
+    paidSpend: number | null;
     tiktok: number;
+    tiktokSpend: number | null;
     apple: number;
     organic: number;
   };
@@ -1032,11 +1448,41 @@ export function reconcileRevenueDailyRowsToTotals(args: {
     total: args.totals.paid,
     weights: getDailyWeightMap(args.rows, (row) => row.paid, totalWeights),
   });
+  const paidSpendByDate =
+    typeof args.totals.paidSpend === "number"
+      ? allocateTotalByDailyWeights({
+          dates,
+          total: args.totals.paidSpend,
+          weights: getDailyWeightMap(
+            args.rows,
+            (row) => row.paidSpend,
+            args.rows.some((row) => row.paidSpend !== null)
+              ? undefined
+              : paidByDate,
+          ),
+        })
+      : null;
   const tiktokByDate = allocateTotalByDailyWeights({
     dates,
     total: args.totals.tiktok,
     weights: getDailyWeightMap(args.rows, (row) => row.tiktok, totalWeights),
   });
+  const tiktokSpendByDate =
+    typeof args.totals.tiktokSpend === "number"
+      ? allocateTotalByDailyWeights({
+          dates,
+          total: args.totals.tiktokSpend,
+          weights: getDailyWeightMap(
+            args.rows,
+            (row) => row.tiktokSpend,
+            args.rows.some((row) => row.tiktokSpend !== null)
+              ? undefined
+              : tiktokByDate,
+          ),
+        })
+      : null;
+  const hasRawPaidSpendBreakdown = args.rows.some((row) => row.paidSpend !== null);
+  const hasRawTiktokSpendBreakdown = args.rows.some((row) => row.tiktokSpend !== null);
   const appleByDate = allocateTotalByDailyWeights({
     dates,
     total: args.totals.apple,
@@ -1082,8 +1528,24 @@ export function reconcileRevenueDailyRowsToTotals(args: {
     newProceeds: newProceedsByDate.get(row.date) ?? 0,
     organic: publishOrganic ? organicByDate.get(row.date) ?? 0 : null,
     paid: publishPaid ? paidByDate.get(row.date) ?? 0 : null,
+    paidSpend:
+      paidSpendByDate &&
+      (args.includeSourceBreakdown ||
+        args.rows.some((dailyRow) => dailyRow.paidSpend !== null))
+        ? row.paidSpend === null && hasRawPaidSpendBreakdown
+          ? null
+          : paidSpendByDate.get(row.date) ?? 0
+        : row.paidSpend,
     renewal: renewalByDate.get(row.date) ?? 0,
     tiktok: publishTiktok ? tiktokByDate.get(row.date) ?? 0 : null,
+    tiktokSpend:
+      tiktokSpendByDate &&
+      (args.includeSourceBreakdown ||
+        args.rows.some((dailyRow) => dailyRow.tiktokSpend !== null))
+        ? row.tiktokSpend === null && hasRawTiktokSpendBreakdown
+          ? null
+          : tiktokSpendByDate.get(row.date) ?? 0
+        : row.tiktokSpend,
     total: totalByDate.get(row.date) ?? 0,
   }));
 }
@@ -1093,15 +1555,19 @@ function getDailyRowsTotal(rows: RevenueAttributionDailyRow[]) {
 }
 
 function getProviderTimeZoneRows(args: {
+  proceedsModel?: RevenueProceedsModel;
   singularRows?: SingularSourceRevenueRow[];
 }): RevenueProviderTimeZoneRow[] {
   const rows = new Map<string, RevenueProviderTimeZoneRow>();
+  const modelConfig = getRevenueProceedsModelConfig(
+    args.proceedsModel ?? DEFAULT_REVENUE_PROCEEDS_MODEL,
+  );
 
-  rows.set("adapty", {
-    provider: "Adapty",
+  rows.set("superwall", {
+    provider: "Superwall",
     source: "Proceeds analytics",
     timeZone: REVENUE_REPORT_TIME_ZONE,
-    reconciliation: "Queried and bucketed by UTC report dates.",
+    reconciliation: `Queried from Superwall ${modelConfig.dateBasisLabel} timestamps and bucketed by UTC report dates.`,
   });
   rows.set("singular-default", {
     provider: "Singular",
@@ -1111,10 +1577,10 @@ function getProviderTimeZoneRows(args: {
       "Rows are treated as UTC unless a known source has a different provider calendar.",
   });
   rows.set("apple-search-ads", {
-    provider: "Adapty Ads Manager",
+    provider: "Superwall",
     source: "Apple Search Ads",
     timeZone: REVENUE_REPORT_TIME_ZONE,
-    reconciliation: "Queried by UTC report dates.",
+    reconciliation: "Apple Search Ads proceeds are attributed from Superwall revenue events.",
   });
   rows.set("viewsbase", {
     provider: "ViewsBase",
@@ -1170,100 +1636,82 @@ export async function getRevenueAttributionReport(args: {
   organizationSlug: string;
   startDate: string;
   endDate: string;
+  proceedsModel?: RevenueProceedsModel;
 }): Promise<RevenueAttributionReport> {
-  const adaptyCredentials = await getAdaptyCredentials(args.organizationSlug);
+  const proceedsModel =
+    args.proceedsModel ?? DEFAULT_REVENUE_PROCEEDS_MODEL;
+  const modelConfig = getRevenueProceedsModelConfig(proceedsModel);
+  const superwallCredentials = await getSuperwallCredentials(args.organizationSlug);
 
-  if (!adaptyCredentials.configured) {
+  if (!superwallCredentials.configured) {
     return getDefaultRevenueAttributionReport({
       startDate: args.startDate,
       endDate: args.endDate,
+      proceedsModel,
     });
   }
 
-  const credentials = adaptyCredentials.value;
+  const credentials = superwallCredentials.value;
   const tiktokPatterns = splitCommaSeparatedList(credentials.tiktokSourcePatterns);
   const applePatterns = splitCommaSeparatedList(credentials.appleSourcePatterns);
   const creatorPatterns = splitCommaSeparatedList(credentials.creatorSourcePatterns);
-  const attributionDimension = credentials.tiktokSegmentation;
-  const filters = {
-    date: [args.startDate, args.endDate] as [string, string],
-  };
+  const attributionDimension = "superwall_source" as const;
 
   try {
+    const scope = await superwallClient.resolveQueryScope(credentials);
     const [
-      periodPayload,
+      superwallMetricPayloads,
       singularSourceReport,
-      sourcePayload,
-      channelPayload,
-      appleAdsDashboardReport,
+      appleSearchAdsReport,
     ] = await Promise.all([
-      adaptyClient.retrieveAnalyticsData({
-        chartId: "revenue",
+      getSuperwallMetricPayloads({
         credentials,
-        filters,
-        periodUnit: "day",
-        segmentation: "period",
+        endDate: args.endDate,
+        proceedsModel,
+        scope,
+        startDate: args.startDate,
       }),
       getSingularSourceRevenueReport({
         endDate: args.endDate,
         startDate: args.startDate,
       }),
-      adaptyClient.retrieveAnalyticsData({
-        chartId: "revenue",
+      getAppleSearchAdsRevenueReport({
         credentials,
-        filters,
-        periodUnit: "day",
-        segmentation: attributionDimension,
-      }),
-      adaptyClient.retrieveAnalyticsData({
-        chartId: "revenue",
-        credentials,
-        filters,
-        periodUnit: "day",
-        segmentation: "attribution_channel",
-      }),
-      getAppleSearchAdsDashboardReport({
         endDate: args.endDate,
-        organizationSlug: args.organizationSlug,
+        proceedsModel,
+        scope,
         startDate: args.startDate,
       }),
     ]);
+    const { periodPayload, sourcePayload } = superwallMetricPayloads;
     const periodMetric = normalizeMetricSeries(periodPayload);
     const sourceMetric = normalizeMetricSeries(sourcePayload);
-    const channelMetric = normalizeMetricSeries(channelPayload);
     const periodRevenueSplit = getPeriodRevenueSplit(periodMetric.series);
-    const adaptySourceRows = buildSourceRows({
+    const superwallSourceRows = buildSourceRows({
       applePatterns,
       creatorPatterns,
       sourceSeries: sourceMetric.series,
       tiktokPatterns,
       totalRevenue: periodMetric.total,
     });
-    const adaptyAppleChannelRows = buildSourceRows({
-      applePatterns,
-      creatorPatterns: [],
-      sourceSeries: channelMetric.series,
-      tiktokPatterns,
-      totalRevenue: periodMetric.total,
-    }).filter((row) => row.kind === "apple" && row.revenue > 0);
-    const appleChannelSeries = channelMetric.series.filter((row) =>
+    const superwallAppleRows = superwallSourceRows.filter(
+      (row) => row.kind === "apple" && row.revenue > 0,
+    );
+    const appleChannelSeries = sourceMetric.series.filter((row) =>
       isAppleAdsLabel(row.label, applePatterns),
     );
-    const dashboardAppleRow = buildDashboardAppleRow({
-      dashboardReport: appleAdsDashboardReport,
-      fallbackRows: adaptyAppleChannelRows,
+    let singularAppleRows: RevenueAttributionSourceRow[] = [];
+    let appleSearchAdsRow = buildAppleSearchAdsRow({
+      appleReport: appleSearchAdsReport,
+      fallbackRows: superwallAppleRows,
       totalRevenue: periodMetric.total,
     });
-    const appleRows = dashboardAppleRow
-      ? [dashboardAppleRow]
-      : adaptyAppleChannelRows;
+    let appleRows = appleSearchAdsRow
+      ? [appleSearchAdsRow]
+      : superwallAppleRows;
     let sourceProvider: RevenueAttributionReport["sourceProvider"] = "none";
-    const appleSourceProvider: RevenueAttributionReport["appleSourceProvider"] =
-      dashboardAppleRow
-        ? "adapty_dashboard"
-        : adaptyAppleChannelRows.length > 0
-          ? "adapty"
-          : "none";
+    let appleSourceProvider: RevenueAttributionReport["appleSourceProvider"] =
+      appleRows.length > 0 ? "superwall" : "none";
     let sourceRows: RevenueAttributionSourceRow[] = [];
     const totalRevenue = periodMetric.total;
     const newProceedsRevenue = Math.min(
@@ -1274,6 +1722,9 @@ export async function getRevenueAttributionReport(args: {
       periodRevenueSplit.renewalRevenue,
       Math.max(totalRevenue - newProceedsRevenue, 0),
     );
+    const renewalRevenueForAllocation = modelConfig.excludesRenewalsFromOrganic
+      ? oldSourceRevenue
+      : 0;
     const sourceSplitPending =
       singularSourceReport.configured && singularSourceReport.isPending;
 
@@ -1286,6 +1737,23 @@ export async function getRevenueAttributionReport(args: {
         tiktokPatterns,
         totalRevenue,
       });
+      singularAppleRows = singularRows.filter((row) => row.kind === "apple");
+      appleSearchAdsRow = buildAppleSearchAdsRow({
+        appleReport: appleSearchAdsReport,
+        fallbackRows: [...superwallAppleRows, ...singularAppleRows],
+        totalRevenue: periodMetric.total,
+      });
+      appleRows = appleSearchAdsRow
+        ? [appleSearchAdsRow]
+        : superwallAppleRows.length > 0
+          ? superwallAppleRows
+          : singularAppleRows;
+      appleSourceProvider =
+        appleSearchAdsRow || superwallAppleRows.length > 0
+          ? "superwall"
+          : singularAppleRows.length > 0
+            ? "singular"
+            : "none";
       sourceRows = rebuildOrganicSourceRow({
         rows: [
           ...singularRows.filter(
@@ -1295,19 +1763,19 @@ export async function getRevenueAttributionReport(args: {
           ),
           ...appleRows,
         ],
-        renewalRevenue: oldSourceRevenue,
+        renewalRevenue: renewalRevenueForAllocation,
         totalRevenue,
       });
     } else {
-      sourceProvider = "adapty";
+      sourceProvider = "superwall";
       sourceRows = rebuildOrganicSourceRow({
         rows: [
-          ...adaptySourceRows.filter(
+          ...superwallSourceRows.filter(
             (row) => row.kind !== "organic" && row.kind !== "apple",
           ),
           ...appleRows,
         ],
-        renewalRevenue: oldSourceRevenue,
+        renewalRevenue: renewalRevenueForAllocation,
         totalRevenue,
       });
     }
@@ -1315,9 +1783,40 @@ export async function getRevenueAttributionReport(args: {
     const paidRevenue = sourceRows
       .filter((row) => row.kind !== "organic" && row.kind !== "renewal")
       .reduce((total, row) => total + row.revenue, 0);
+    const paidSpend = sourceRows
+      .filter((row) => row.kind !== "organic" && row.kind !== "renewal")
+      .reduce(
+        (total, row) =>
+          typeof row.spend === "number" && Number.isFinite(row.spend)
+            ? total + row.spend
+            : total,
+        0,
+      );
+    const hasPaidSpend = sourceRows.some(
+      (row) =>
+        row.kind !== "organic" &&
+        row.kind !== "renewal" &&
+        typeof row.spend === "number" &&
+        Number.isFinite(row.spend),
+    );
     const tiktokRevenue = sourceRows
       .filter((row) => row.kind === "tiktok")
       .reduce((total, row) => total + row.revenue, 0);
+    const tiktokSpend = sourceRows
+      .filter((row) => row.kind === "tiktok")
+      .reduce(
+        (total, row) =>
+          typeof row.spend === "number" && Number.isFinite(row.spend)
+            ? total + row.spend
+            : total,
+        0,
+      );
+    const hasTiktokSpend = sourceRows.some(
+      (row) =>
+        row.kind === "tiktok" &&
+        typeof row.spend === "number" &&
+        Number.isFinite(row.spend),
+    );
     const appleRevenue = sourceRows
       .filter((row) => row.kind === "apple")
       .reduce((total, row) => total + row.revenue, 0);
@@ -1341,7 +1840,7 @@ export async function getRevenueAttributionReport(args: {
       hasAppleSpend && appleSpend > 0 ? appleRevenue / appleSpend : null;
     const renewalBucket = getRenewalBucketAmounts({
       paidRevenue,
-      renewalRevenue: oldSourceRevenue,
+      renewalRevenue: renewalRevenueForAllocation,
       totalRevenue,
     });
     const nonOrganicRevenue = paidRevenue + renewalBucket.renewalBucket;
@@ -1368,10 +1867,11 @@ export async function getRevenueAttributionReport(args: {
       appleChannelSeries,
       excludeAppleRows: true,
       renewalSeries: periodRevenueSplit.renewalSeries,
+      separateRenewalsFromOrganic: modelConfig.excludesRenewalsFromOrganic,
       singularRows: singularSourceReport.configured
         ? singularSourceReport.rows
         : undefined,
-      sourceSeries: sourceMetric?.series,
+      sourceSeries: sourceMetric.series,
       startDate: args.startDate,
       applePatterns,
       creatorPatterns,
@@ -1396,15 +1896,18 @@ export async function getRevenueAttributionReport(args: {
       rows: rawDailyRows,
       totals: {
         apple: appleRevenue,
-        newProceeds: renewalBucket.newProceeds,
+        newProceeds: newProceedsRevenue,
         organic: organicRevenue,
         paid: paidRevenue,
+        paidSpend: hasPaidSpend ? paidSpend : null,
         renewal: oldSourceRevenue,
         tiktok: tiktokRevenue,
+        tiktokSpend: hasTiktokSpend ? tiktokSpend : null,
         total: totalRevenue,
       },
     });
     const providerTimeZones = getProviderTimeZoneRows({
+      proceedsModel,
       singularRows: singularSourceReport.configured
         ? singularSourceReport.rows
         : undefined,
@@ -1412,24 +1915,24 @@ export async function getRevenueAttributionReport(args: {
     const currency = getCurrency({
       periodSeries: periodMetric.series,
       periodUnit: periodMetric.unit,
-      sourceSeries: [...(sourceMetric?.series ?? []), ...channelMetric.series],
-      sourceUnit: sourceMetric?.unit ?? channelMetric.unit ?? null,
+      sourceSeries: sourceMetric.series,
+      sourceUnit: sourceMetric.unit,
     });
     const warnings = normalizeWarnings([
       ...(periodMetric.metricKey && periodMetric.metricKey !== "proceeds"
         ? [
-            `Adapty did not return a proceeds metric container for this date window, so ${periodMetric.metricKey} is being used instead.`,
+            `Superwall did not return a proceeds metric container for this date window, so ${periodMetric.metricKey} is being used instead.`,
           ]
         : []),
       ...singularSourceReport.warnings,
       ...(currency.currencies.length > 1
         ? [
-            `Adapty returned multiple proceeds units (${currency.currencies.join(", ")}), so amounts are shown as plain numbers.`,
+            `Superwall returned multiple proceeds units (${currency.currencies.join(", ")}), so amounts are shown as plain numbers.`,
           ]
         : []),
-      ...(sourceProvider === "adapty" && totalRevenue > 0 && tiktokRevenue === 0
+      ...(sourceProvider === "superwall" && totalRevenue > 0 && tiktokRevenue === 0
         ? [
-            `No ${attributionDimension.replace(/_/g, " ")} segment matched ${tiktokPatterns.join(", ")}. If TikTok lives in another Adapty attribution field, set ADAPTY_TIKTOK_SEGMENTATION.`,
+            "Superwall does not expose a TikTok paid-source split for this report, so TikTok proceeds require Singular source revenue.",
           ]
         : []),
       ...(singularSourceReport.configured && singularSourceReport.isPending
@@ -1437,40 +1940,49 @@ export async function getRevenueAttributionReport(args: {
             "Singular is still preparing the source proceeds report, so organic / UGC proceeds are hidden until the paid-source split is ready.",
           ]
         : []),
-      ...appleAdsDashboardReport.warnings,
+      ...appleSearchAdsReport.warnings,
       ...getTimezoneWarnings({
         singularRows: singularSourceReport.configured
           ? singularSourceReport.rows
           : undefined,
       }),
-      ...(appleSourceProvider === "adapty_dashboard" &&
-      appleAdsDashboardReport.revenueBasis &&
-      appleAdsDashboardReport.revenueBasis !== "proceeds"
+      ...(appleSourceProvider === "superwall" &&
+      appleSearchAdsReport.revenueBasis &&
+      appleSearchAdsReport.revenueBasis !== "proceeds"
         ? [
-            `Adapty Ads Manager did not return Apple Search Ads proceeds, so ${appleAdsDashboardReport.revenueBasis} revenue is being used for Apple Search Ads.`,
+            `Superwall did not return Apple Search Ads proceeds, so ${appleSearchAdsReport.revenueBasis} revenue is being used for Apple Search Ads.`,
           ]
         : []),
-      ...(appleSourceProvider === "adapty_dashboard" && !hasAppleSpend
+      ...(appleSourceProvider === "superwall" && !hasAppleSpend
         ? [
-            "Adapty Ads Manager returned Apple Search Ads revenue without spend, so Apple Search Ads profit is unavailable.",
+            "Superwall returned Apple Search Ads revenue without spend; Singular Apple Ads spend is used when available.",
           ]
         : []),
+      ...sourceRows
+        .filter((row) => row.spendStatus === "partial")
+        .map(
+          (row) =>
+            `Singular spend is incomplete for ${row.label}; available spend is shown and profit may change when delayed cost rows arrive.`,
+        ),
       ...(sourceProvider === "singular" && nonOrganicRevenue > totalRevenue
         ? [
-            "Paid-source plus renewal proceeds are greater than Adapty total proceeds for this date window, so organic proceeds were clamped to zero.",
+            modelConfig.excludesRenewalsFromOrganic
+              ? "Paid-source plus renewal proceeds are greater than Superwall total proceeds for this date window, so organic proceeds were clamped to zero."
+              : "Paid-source proceeds are greater than Superwall total proceeds for this date window, so organic proceeds were clamped to zero.",
           ]
         : []),
       ...(totalRevenue > 0 && periodRevenueSplit.activationSeries.length === 0
         ? [
-            "Adapty did not return an Activation period row, so new proceeds could not be split out from renewal proceeds.",
+            "Superwall did not return activation proceeds for this date window, so new proceeds could not be split out from renewal proceeds.",
           ]
         : []),
       ...(totalRevenue > 0 && periodRevenueSplit.renewalSeries.length === 0
         ? [
-            "Adapty did not return Renewal period rows, so renewal proceeds could not be split out.",
+            "Superwall did not return renewal proceeds for this date window, so renewal proceeds could not be split out.",
           ]
         : []),
-      ...(oldSourceRevenue > renewalBucket.renewalBucket
+      ...(oldSourceRevenue > renewalBucket.renewalBucket &&
+      modelConfig.excludesRenewalsFromOrganic
         ? [
             "Old-source proceeds exceeded the organic/unattributed remainder after paid rows, so only the organic remainder was moved into the renewal bucket.",
           ]
@@ -1494,6 +2006,7 @@ export async function getRevenueAttributionReport(args: {
       dailyRows,
       endDate: args.endDate,
       hasDailySourceBreakdown,
+      proceedsModel,
       providerTimeZones,
       singularCohortPeriod: singularSourceReport.configured
         ? singularSourceReport.cohortPeriod
@@ -1502,8 +2015,8 @@ export async function getRevenueAttributionReport(args: {
       singularPending: singularSourceReport.isPending,
       sourceProvider,
       appleSourceProvider,
-      appleAdsDashboardConfigured: appleAdsDashboardReport.configured,
-      appleAdsDashboardRowCount: appleAdsDashboardReport.rowCount,
+      appleAdsDashboardConfigured: appleSearchAdsReport.configured,
+      appleAdsDashboardRowCount: appleSearchAdsReport.rowCount,
       sourceRows,
       startDate: args.startDate,
       timeZone: REVENUE_REPORT_TIME_ZONE,
@@ -1517,9 +2030,9 @@ export async function getRevenueAttributionReport(args: {
             ? appleRevenue / totalRevenue
             : null,
         appleSpend: hasAppleSpend ? appleSpend : null,
-        newProceeds: renewalBucket.newProceeds,
+        newProceeds: newProceedsRevenue,
         newShare:
-          totalRevenue > 0 ? renewalBucket.newProceeds / totalRevenue : null,
+          totalRevenue > 0 ? newProceedsRevenue / totalRevenue : null,
         organic: organicRevenue,
         organicShare: totalRevenue > 0 ? organicRevenue / totalRevenue : null,
         paid: paidRevenue,
@@ -1539,6 +2052,7 @@ export async function getRevenueAttributionReport(args: {
       ...getDefaultRevenueAttributionReport({
         startDate: args.startDate,
         endDate: args.endDate,
+        proceedsModel,
       }),
       attributionDimension,
       configured: true,
@@ -1552,9 +2066,9 @@ export async function getRevenueAttributionReport(args: {
       tiktokPatterns,
       timeZone: REVENUE_REPORT_TIME_ZONE,
       warnings: [
-        error instanceof AdaptyApiError || error instanceof Error
+        error instanceof SuperwallApiError || error instanceof Error
           ? error.message
-          : "Could not load Adapty proceeds analytics.",
+          : "Could not load Superwall proceeds analytics.",
       ],
     };
   }
@@ -1563,9 +2077,13 @@ export async function getRevenueAttributionReport(args: {
 export function getDefaultRevenueAttributionReport(args: {
   startDate: string;
   endDate: string;
+  proceedsModel?: RevenueProceedsModel;
 }): RevenueAttributionReport {
+  const proceedsModel =
+    args.proceedsModel ?? DEFAULT_REVENUE_PROCEEDS_MODEL;
+
   return {
-    attributionDimension: "attribution_source",
+    attributionDimension: "superwall_source",
     configured: false,
     currency: null,
     dailyRows: getInclusiveDateKeys(args.startDate, args.endDate).map((date) => ({
@@ -1582,7 +2100,8 @@ export function getDefaultRevenueAttributionReport(args: {
     })),
     endDate: args.endDate,
     hasDailySourceBreakdown: false,
-    providerTimeZones: getProviderTimeZoneRows({}),
+    proceedsModel,
+    providerTimeZones: getProviderTimeZoneRows({ proceedsModel }),
     appleSourceProvider: "none",
     appleAdsDashboardConfigured: false,
     appleAdsDashboardRowCount: 0,

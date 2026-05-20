@@ -6,7 +6,7 @@ import {
   getUtcDateForProviderDate,
   REVENUE_REPORT_TIME_ZONE,
   SNAPCHAT_REVENUE_TIME_ZONE,
-} from "../src/server/adapty/revenue-timezone.ts";
+} from "../src/server/revenue/revenue-timezone.ts";
 
 test("keeps UTC provider dates on the same UTC report date", () => {
   assert.equal(

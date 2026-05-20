@@ -9,6 +9,7 @@ const organizationRoleSortWeight: Record<OrganizationRole, number> = {
   [OrganizationRole.OWNER]: 0,
   [OrganizationRole.ADMIN]: 1,
   [OrganizationRole.MEMBER]: 2,
+  [OrganizationRole.BLAZIE]: 3,
 };
 
 type OrganizationMemberCampaignAccess = {

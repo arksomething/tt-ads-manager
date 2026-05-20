@@ -5,6 +5,7 @@ export enum OrganizationRole {
   OWNER = "OWNER",
   ADMIN = "ADMIN",
   MEMBER = "MEMBER",
+  BLAZIE = "BLAZIE",
 }
 
 export enum CampaignRole {

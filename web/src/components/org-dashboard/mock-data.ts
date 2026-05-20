@@ -16,6 +16,7 @@ export type DashboardSectionKey =
   | "faceless"
   | "ugc-pay"
   | "ugc-status"
+  | "blazie"
   | "tiktok-paid-views"
   | "revenue"
   | "campaigns"
@@ -218,6 +219,12 @@ export const dashboardNavGroups: DashboardNavGroup[] = [
         icon: "compare",
       },
       {
+        key: "blazie",
+        label: "Blazie",
+        segment: "blazie",
+        icon: "creators",
+      },
+      {
         key: "tiktok-paid-views",
         label: "Ad Profit",
         segment: "tiktok-paid-views",
@@ -330,6 +337,13 @@ export const dashboardRouteMeta: Record<DashboardSectionKey, DashboardRouteMeta>
     description:
       "This route reconciles Revenue's organic / UGC proceeds with exact UGC Pay and ViewsBase faceless costs so the combined creator bucket can be monitored by day.",
   },
+  blazie: {
+    groupLabel: "Analytics",
+    navLabel: "Blazie",
+    title: "Tell Blazie what to do, then show profit/loss and simple UGC + faceless metrics.",
+    description:
+      "This route gives a plain recommendation, bottom-line profit/loss, and UGC + faceless ROAS without fixed costs mixed into ROAS.",
+  },
   "tiktok-paid-views": {
     groupLabel: "Analytics",
     navLabel: "Ad Profit",
@@ -342,7 +356,7 @@ export const dashboardRouteMeta: Record<DashboardSectionKey, DashboardRouteMeta>
     navLabel: "Revenue",
     title: "Break mobile app revenue into TikTok-attributed and UGC buckets.",
     description:
-      "This route reads Adapty revenue analytics, classifies TikTok attribution segments, and derives UGC as total revenue minus TikTok revenue.",
+      "This route reads Superwall proceeds, combines Singular paid-source attribution, and derives UGC as total revenue minus paid and renewal proceeds.",
   },
   "tracking-options": {
     groupLabel: "Analytics",
@@ -442,6 +456,35 @@ export function resolveDashboardSectionFromPathname(
   const match = flatItems.find((item) => item.segment === sectionSegment);
 
   return match?.key ?? "overview";
+}
+
+export function canAccessDashboardSection(
+  role: string | null | undefined,
+  section: DashboardSectionKey,
+) {
+  return role === "BLAZIE" ? section === "blazie" : true;
+}
+
+export function getDefaultDashboardHrefForRole(
+  organizationSlug: string,
+  role: string | null | undefined,
+) {
+  return role === "BLAZIE"
+    ? getDashboardHref(organizationSlug, "blazie")
+    : getDashboardHref(organizationSlug, "");
+}
+
+export function getDashboardNavGroupsForRole(role: string | null | undefined) {
+  if (role !== "BLAZIE") {
+    return dashboardNavGroups;
+  }
+
+  return dashboardNavGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => item.key === "blazie"),
+    }))
+    .filter((group) => group.items.length > 0);
 }
 
 export function createOverviewMockData({
@@ -880,7 +923,7 @@ export const placeholderSectionData: Record<
       "The live route compares the Revenue tab's organic / UGC proceeds with exact UGC Pay and ViewsBase faceless spend, views, profit, and ratios.",
     highlights: ["UGC/F revenue", "Spend", "Profit ratios"],
     statCards: [
-      { label: "Revenue source", value: "Adapty remainder" },
+      { label: "Revenue source", value: "Superwall remainder" },
       { label: "UGC spend", value: "UGC Pay" },
       { label: "Faceless spend", value: "ViewsBase" },
     ],
@@ -888,6 +931,23 @@ export const placeholderSectionData: Record<
       { label: "Revenue split", value: "After paid + renewals", status: "Ready" },
       { label: "Daily UGC spend", value: "Exact UGC Pay", status: "Ready" },
       { label: "Faceless views", value: "ViewsBase", status: "Ready" },
+    ],
+  },
+  blazie: {
+    eyebrow: "Blazie",
+    spotlightTitle: "Blazie's tab says what to do first.",
+    spotlightDescription:
+      "The live route gives a plain recommendation, then shows profit/loss, UGC + faceless ROAS, spend, and revenue.",
+    highlights: ["Recommendation", "Profit/loss", "UGC + faceless ROAS"],
+    statCards: [
+      { label: "ROAS formula", value: "Revenue / spend" },
+      { label: "Fixed cost", value: "Profit only" },
+      { label: "Spend source", value: "UGC + faceless" },
+    ],
+    rows: [
+      { label: "Recommendation", value: "Plain text", status: "Ready" },
+      { label: "Profit/loss", value: "After fixed costs", status: "Ready" },
+      { label: "ROAS", value: "No fixed costs", status: "Ready" },
     ],
   },
   "tiktok-paid-views": {
@@ -911,15 +971,15 @@ export const placeholderSectionData: Record<
     eyebrow: "Revenue attribution",
     spotlightTitle: "Revenue splits into TikTok and UGC buckets here.",
     spotlightDescription:
-      "The live route reads Adapty analytics, classifies matching TikTok attribution segments, and calculates UGC revenue from the remaining total.",
-    highlights: ["Adapty revenue", "TikTok share", "UGC remainder"],
+      "The live route reads Superwall proceeds, overlays Singular paid-source rows, and calculates UGC revenue from the remaining total.",
+    highlights: ["Superwall revenue", "TikTok share", "UGC remainder"],
     statCards: [
-      { label: "Source", value: "Adapty" },
+      { label: "Source", value: "Superwall" },
       { label: "Default range", value: "Last 7 days" },
       { label: "Formula", value: "Total - TikTok" },
     ],
     rows: [
-      { label: "Total revenue", value: "Adapty revenue chart", status: "Ready" },
+      { label: "Total revenue", value: "Superwall proceeds", status: "Ready" },
       { label: "TikTok match", value: "Configurable attribution segment", status: "Ready" },
       { label: "UGC bucket", value: "Derived from total", status: "Ready" },
     ],

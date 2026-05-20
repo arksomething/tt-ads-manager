@@ -1,9 +1,10 @@
 import type {
   RevenueAttributionDailyRow,
   RevenueAttributionReport,
-} from "../adapty/revenue";
+} from "../revenue/revenue";
 import type { OrganizationUgcPayData } from "../ugc-pay/queries";
 import type { ViewsBaseFacelessReport } from "../viewsbase/report";
+import type { OperatingCostDailyRow } from "./operating-costs";
 import type {
   CanonicalDailyFact,
   CanonicalDayVersion,
@@ -204,21 +205,21 @@ export function adaptRevenueAttributionReportToCanonicalDays(
         {
           currency: report.currency,
           metricKey: "proceeds.total",
-          source: "adapty",
+          source: "superwall",
           unit: "currency",
           value: row.total,
         },
         {
           currency: report.currency,
           metricKey: "proceeds.new",
-          source: "adapty",
+          source: "superwall",
           unit: "currency",
           value: row.newProceeds,
         },
         {
           currency: report.currency,
           metricKey: "proceeds.renewal",
-          source: "adapty",
+          source: "superwall",
           unit: "currency",
           value: row.renewal,
         },
@@ -549,6 +550,60 @@ export function adaptViewsBaseFacelessReportToCanonicalDays(
       reportDate: row.date,
       sourceState: [source],
       warnings,
+    });
+  });
+}
+
+export function adaptOperatingCostDailyRowsToCanonicalDays(
+  context: CanonicalBuildContext,
+  rows: readonly OperatingCostDailyRow[],
+) {
+  const createdAt = context.createdAt ?? DEFAULT_CREATED_AT;
+  const version = context.version ?? DEFAULT_VERSION;
+
+  return rows.map((row) => {
+    const source = buildSource({
+      endDate: row.date,
+      provider: "Operating Costs",
+      rowCount: row.costs.length,
+      startDate: row.date,
+      status: "ready",
+    });
+    const facts = makeFacts({
+      createdAt,
+      facts: [
+        {
+          currency: "USD",
+          metricKey: "spend.operating.total",
+          source: "operating",
+          unit: "currency",
+          value: row.total,
+        },
+        ...row.costs.map((cost) => ({
+          bucket: cost.key,
+          currency: "USD",
+          metricKey:
+            cost.key === "misc"
+              ? ("spend.operating.other" as const)
+              : (`spend.operating.${cost.key}` as const),
+          source: "operating",
+          unit: "currency" as const,
+          value: cost.amount,
+        })),
+      ],
+      organizationId: context.organizationId,
+      provenance: [source],
+      reportDate: row.date,
+      version,
+    });
+
+    return buildDayVersion({
+      context,
+      facts,
+      freshness: "fresh",
+      reportDate: row.date,
+      sourceState: [source],
+      warnings: [],
     });
   });
 }

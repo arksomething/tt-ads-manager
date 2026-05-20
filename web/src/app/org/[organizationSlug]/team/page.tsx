@@ -111,6 +111,8 @@ function getOrganizationRoleBadgeClass(role: OrganizationRole) {
       return "border-white/[0.12] bg-white/[0.08] text-foreground";
     case OrganizationRole.ADMIN:
       return "border-[#90FF4D]/25 bg-[#90FF4D]/10 text-[#B8FF86]";
+    case OrganizationRole.BLAZIE:
+      return "border-[#79A8FF]/25 bg-[#79A8FF]/10 text-[#B8CBFF]";
     case OrganizationRole.MEMBER:
     default:
       return "border-white/[0.08] bg-black/[0.22] text-muted-foreground";
@@ -144,8 +146,9 @@ export default async function OrganizationTeamPage({
           OrganizationRole.OWNER,
           OrganizationRole.ADMIN,
           OrganizationRole.MEMBER,
+          OrganizationRole.BLAZIE,
         ]
-      : [OrganizationRole.ADMIN, OrganizationRole.MEMBER];
+      : [OrganizationRole.ADMIN, OrganizationRole.MEMBER, OrganizationRole.BLAZIE];
   const memberRows = workspace.canManageMembers
     ? await getOrganizationMemberAccessRows(organizationSlug)
     : [];
@@ -347,7 +350,11 @@ export default async function OrganizationTeamPage({
                           </span>
                         </td>
                         <td className="px-6 py-4">
-                          {member.hasOrgWideCampaignAccess ? (
+                          {member.role === OrganizationRole.BLAZIE ? (
+                            <span className="text-sm text-muted-foreground">
+                              Blazie tab only
+                            </span>
+                          ) : member.hasOrgWideCampaignAccess ? (
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="inline-flex rounded-full border border-[#90FF4D]/25 bg-[#90FF4D]/10 px-3 py-1.5 text-[0.68rem] font-medium uppercase tracking-[0.18em] text-[#B8FF86]">
                                 All campaigns
@@ -514,7 +521,11 @@ export default async function OrganizationTeamPage({
                             </span>
                           </td>
                           <td className="px-6 py-4">
-                            {invitation.role === OrganizationRole.OWNER ||
+                            {invitation.role === OrganizationRole.BLAZIE ? (
+                              <span className="text-sm text-muted-foreground">
+                                Blazie tab only
+                              </span>
+                            ) : invitation.role === OrganizationRole.OWNER ||
                             invitation.role === OrganizationRole.ADMIN ? (
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="inline-flex rounded-full border border-[#90FF4D]/25 bg-[#90FF4D]/10 px-3 py-1.5 text-[0.68rem] font-medium uppercase tracking-[0.18em] text-[#B8FF86]">

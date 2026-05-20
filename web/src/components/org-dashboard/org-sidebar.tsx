@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 
 import {
-  dashboardNavGroups,
+  getDashboardNavGroupsForRole,
   getDashboardHref,
   resolveDashboardSectionFromPathname,
 } from "./mock-data";
@@ -24,6 +24,7 @@ type OrgSidebarProps = {
   }>;
   userName?: string | null;
   userEmail?: string | null;
+  viewerRole: string;
   signOutAction: () => Promise<void>;
 };
 
@@ -47,6 +48,7 @@ export function OrgSidebar({
   organizations,
   userName,
   userEmail,
+  viewerRole,
   signOutAction,
 }: OrgSidebarProps) {
   const pathname = usePathname();
@@ -56,6 +58,7 @@ export function OrgSidebar({
   const accountMenuRef = useRef<HTMLDivElement>(null);
   const accountMenuId = useId();
   const viewerLabel = userName ?? userEmail ?? "Operator";
+  const navGroups = getDashboardNavGroupsForRole(viewerRole);
   const persistedQueryString = useMemo(() => {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("notice");
@@ -105,7 +108,7 @@ export function OrgSidebar({
 
         <nav className="mt-5 flex-1">
           <div className="space-y-5">
-            {dashboardNavGroups.map((group) => (
+            {navGroups.map((group) => (
               <div key={group.label}>
                 <div className="mb-2 flex items-center gap-2 px-1">
                   <p className="text-[0.62rem] uppercase tracking-[0.24em] text-muted-foreground">

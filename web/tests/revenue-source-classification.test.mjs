@@ -5,7 +5,7 @@ import {
   getRevenueSourceKind,
   isOrganicSingularLabel,
   splitCommaSeparatedList,
-} from "../src/server/adapty/source-classification.ts";
+} from "../src/server/revenue/source-classification.ts";
 
 const tiktokPatterns = ["tiktok", "tik tok"];
 const applePatterns = ["apple search ads", "asa"];
@@ -24,7 +24,7 @@ test("classifies Singular social custom as organic creator revenue", () => {
   assert.equal(isOrganicSingularLabel("social (Custom)", creatorPatterns), true);
 });
 
-test("classifies Adapty No Data as organic unattributed revenue", () => {
+test("classifies provider No Data as organic unattributed revenue", () => {
   assert.equal(
     getRevenueSourceKind({
       applePatterns,
@@ -35,6 +35,18 @@ test("classifies Adapty No Data as organic unattributed revenue", () => {
     "organic",
   );
   assert.equal(isOrganicSingularLabel("No Data", creatorPatterns), true);
+});
+
+test("classifies Superwall organic fallback as unattributed revenue", () => {
+  assert.equal(
+    getRevenueSourceKind({
+      applePatterns,
+      creatorPatterns,
+      label: "Organic / unattributed",
+      tiktokPatterns,
+    }),
+    "organic",
+  );
 });
 
 test("keeps true paid sources in the paid bucket", () => {

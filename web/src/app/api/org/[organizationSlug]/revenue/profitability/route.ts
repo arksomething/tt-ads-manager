@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { canAccessDashboardSection } from "@/components/org-dashboard/mock-data";
 import { getDateRangeCacheHeaders } from "@/lib/cache-control";
-import { getRevenueProfitabilityData } from "@/server/adapty/revenue-profitability";
+import { requireOrganizationMembership } from "@/server/auth/organizations";
+import { getRevenueProfitabilityData } from "@/server/revenue/revenue-profitability";
 
 type RouteContext = {
   params: Promise<{
@@ -34,6 +36,17 @@ function getDateParam(searchParams: URLSearchParams, key: string) {
 
 export async function GET(request: NextRequest, context: RouteContext) {
   const { organizationSlug } = await context.params;
+  const membership = await requireOrganizationMembership(organizationSlug);
+
+  if (!canAccessDashboardSection(membership.role, "revenue")) {
+    return NextResponse.json(
+      {
+        error: "You do not have access to this revenue report.",
+      },
+      { status: 403 },
+    );
+  }
+
   const startDate = getDateParam(request.nextUrl.searchParams, "startDate");
   const endDate = getDateParam(request.nextUrl.searchParams, "endDate");
 

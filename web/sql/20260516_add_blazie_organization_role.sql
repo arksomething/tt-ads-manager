@@ -1,0 +1,1 @@
+ALTER TYPE "OrganizationRole" ADD VALUE IF NOT EXISTS 'BLAZIE';

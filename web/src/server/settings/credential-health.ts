@@ -1,8 +1,6 @@
-import { AdaptyApiError, adaptyClient } from "@/server/adapty/client";
-import { adaptyDashboardClient } from "@/server/adapty/dashboard-client";
+import { SuperwallApiError, superwallClient } from "@/server/superwall/client";
 import {
-  getAdaptyCredentials,
-  getAdaptyDashboardCredentials,
+  getSuperwallCredentials,
   getViewsBaseCredentials,
   type ManagedSecretKey,
 } from "@/server/settings/managed-secrets";
@@ -29,9 +27,9 @@ function getErrorMessage(error: unknown) {
       : error.message;
   }
 
-  if (error instanceof AdaptyApiError) {
+  if (error instanceof SuperwallApiError) {
     return error.status === 401 || error.status === 403
-      ? "Unauthorized. Regenerate the Adapty key and save it again."
+      ? "Unauthorized. Regenerate the Superwall key and save it again."
       : error.message;
   }
 
@@ -93,73 +91,34 @@ export async function checkManagedCredential(args: {
           status: "ok",
         };
       }
-      case "ADAPTY_API_KEY": {
-        const credentials = await getAdaptyCredentials(args.organizationSlug);
+      case "SUPERWALL_API_KEY": {
+        const credentials = await getSuperwallCredentials(args.organizationSlug);
 
         if (!credentials.configured) {
           return {
             checkedAt,
             key: args.key,
-            message: "No Adapty API key is configured.",
+            message: "No Superwall API key is configured.",
             source: "missing",
             status: "missing",
           };
         }
 
-        const date = todayDateKey();
+        const scope = await withTimeout(
+          superwallClient.resolveQueryScope(credentials.value),
+        );
         await withTimeout(
-          adaptyClient.retrieveAnalyticsData({
-            chartId: "revenue",
+          superwallClient.queryRaw({
             credentials: credentials.value,
-            filters: {
-              date: [date, date],
-            },
-            periodUnit: "day",
-            segmentation: "period",
+            organizationId: scope.organizationId,
+            sql: `SELECT count() FROM open_revenue.attributed_events_by_ts_rep WHERE applicationId IN (${scope.applicationIds.join(",")}) LIMIT 1`,
           }),
         );
 
         return {
           checkedAt,
           key: args.key,
-          message: "Adapty API accepted the key.",
-          source: credentials.source,
-          status: "ok",
-        };
-      }
-      case "ADAPTY_DASHBOARD_TOKEN": {
-        const credentials = await getAdaptyDashboardCredentials(
-          args.organizationSlug,
-        );
-
-        if (!credentials.configured) {
-          return {
-            checkedAt,
-            key: args.key,
-            message:
-              "No Adapty dashboard token is configured, or app/company IDs are missing.",
-            source: "missing",
-            status: "missing",
-          };
-        }
-
-        const date = todayDateKey();
-        await withTimeout(
-          adaptyDashboardClient.request<unknown>({
-            body: {
-              filters: {
-                date: [date, date],
-              },
-            },
-            credentials: credentials.value,
-            path: "/asa-metadata/campaigns/",
-          }),
-        );
-
-        return {
-          checkedAt,
-          key: args.key,
-          message: "Adapty Ads Manager accepted the bearer token.",
+          message: "Superwall API accepted the key.",
           source: credentials.source,
           status: "ok",
         };
@@ -184,11 +143,7 @@ export async function getManagedCredentialHealthChecks(organizationSlug: string)
     }),
     checkManagedCredential({
       organizationSlug,
-      key: "ADAPTY_API_KEY",
-    }),
-    checkManagedCredential({
-      organizationSlug,
-      key: "ADAPTY_DASHBOARD_TOKEN",
+      key: "SUPERWALL_API_KEY",
     }),
   ]);
 }

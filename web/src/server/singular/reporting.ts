@@ -11,6 +11,7 @@ import {
 const MAX_SINGULAR_REPORT_RANGE_DAYS = 30;
 const SINGULAR_SOURCE_CACHE_TTL_MS = 60 * 60 * 1_000;
 const SINGULAR_REPORT_CACHE_TTL_MS = 15 * 60 * 1_000;
+const SINGULAR_LIVE_REPORT_CACHE_TTL_MS = 2 * 60 * 1_000;
 const SINGULAR_PENDING_REPORT_TTL_MS = 30 * 60 * 1_000;
 const SINGULAR_STATUS_POLL_INTERVAL_MS = 3_000;
 const SINGULAR_INITIAL_REPORT_WAIT_MS = 6_000;
@@ -64,6 +65,7 @@ export type SingularSourceRevenuePoint = {
   date: string | null;
   revenue: number;
   spend: number;
+  spendAvailable: boolean;
 };
 
 export type SingularSourceRevenueRow = {
@@ -71,6 +73,7 @@ export type SingularSourceRevenueRow = {
   label: string;
   currency: string | null;
   spend: number;
+  spendAvailable: boolean;
   revenue: number;
   revenueAvailable: boolean;
   installs: number;
@@ -630,6 +633,21 @@ function readReportCache(key: string) {
   return cached;
 }
 
+function readSourceRevenueReportCache(key: string) {
+  const cached = singularSourceRevenueReportCache.get(key);
+
+  if (!cached) {
+    return null;
+  }
+
+  if (cached.expiresAt <= Date.now()) {
+    singularSourceRevenueReportCache.delete(key);
+    return null;
+  }
+
+  return cached;
+}
+
 function buildReportCacheKey(args: {
   startDate: string;
   endDate: string;
@@ -806,12 +824,14 @@ function normalizeSourceRevenueReportRow(
 ): SingularSourceRevenueRow {
   const source = getFirstMeaningfulString(record, ["source"]);
   const revenue = getCohortMetricValue(record, cohortMetric, cohortPeriod);
+  const spend = getFirstOptionalNumber(record, ["adn_cost"]);
 
   return {
     source,
     label: normalizeSourceRevenueLabel(source),
     currency: getFirstString(record, ["adn_original_currency"]),
-    spend: getFirstNumber(record, ["adn_cost"]),
+    spend: spend ?? 0,
+    spendAvailable: spend !== null,
     revenue: revenue.value,
     revenueAvailable: revenue.available,
     installs: getFirstNumber(record, [
@@ -824,7 +844,8 @@ function normalizeSourceRevenueReportRow(
       {
         date: getReportRowDate(record),
         revenue: revenue.value,
-        spend: getFirstNumber(record, ["adn_cost"]),
+        spend: spend ?? 0,
+        spendAvailable: spend !== null,
       },
     ],
   };
@@ -843,6 +864,7 @@ function aggregateSingularSourceRevenueRows(rows: SingularSourceRevenueRow[]) {
 
     if (existing) {
       existing.spend += row.spend;
+      existing.spendAvailable &&= row.spendAvailable !== false;
       existing.revenue += row.revenue;
       existing.revenueAvailable ||= row.revenueAvailable;
       existing.installs += row.installs;
@@ -867,7 +889,10 @@ function aggregateSingularSourceRevenueRows(rows: SingularSourceRevenueRow[]) {
 }
 
 function aggregateSourceRevenuePoints(points: SingularSourceRevenuePoint[]) {
-  const grouped = new Map<string, { revenue: number; spend: number }>();
+  const grouped = new Map<
+    string,
+    { revenue: number; spend: number; spendAvailable: boolean }
+  >();
   const undatedPoints: SingularSourceRevenuePoint[] = [];
 
   for (const point of points) {
@@ -876,9 +901,14 @@ function aggregateSourceRevenuePoints(points: SingularSourceRevenuePoint[]) {
       continue;
     }
 
-    const existing = grouped.get(point.date) ?? { revenue: 0, spend: 0 };
+    const existing = grouped.get(point.date) ?? {
+      revenue: 0,
+      spend: 0,
+      spendAvailable: true,
+    };
     existing.revenue += point.revenue;
     existing.spend += point.spend;
+    existing.spendAvailable &&= point.spendAvailable !== false;
     grouped.set(point.date, existing);
   }
 
@@ -889,6 +919,7 @@ function aggregateSourceRevenuePoints(points: SingularSourceRevenuePoint[]) {
         date,
         revenue: value.revenue,
         spend: value.spend,
+        spendAvailable: value.spendAvailable,
       })),
     ...undatedPoints,
   ];
@@ -937,7 +968,7 @@ async function getTikTokSingularOverlayForRange(args: {
     endDate: args.endDate,
     startDate: args.startDate,
   });
-  const cached = cacheable ? readReportCache(cacheKey) : null;
+  const cached = readReportCache(cacheKey);
 
   if (cached?.kind === "ready") {
     return cached.value;
@@ -974,9 +1005,7 @@ async function getTikTokSingularOverlayForRange(args: {
         lastPolledAt: Date.now(),
       };
 
-      if (cacheable) {
-        singularReportCache.set(cacheKey, pendingEntry);
-      }
+      singularReportCache.set(cacheKey, pendingEntry);
 
       await sleep(SINGULAR_INITIAL_REPORT_WAIT_MS);
 
@@ -1100,13 +1129,15 @@ async function pollPendingReport(
       warnings: [],
     };
 
-    if (entry.cacheable !== false) {
-      singularReportCache.set(cacheKey, {
-        kind: "ready",
-        expiresAt: Date.now() + SINGULAR_REPORT_CACHE_TTL_MS,
-        value: overlay,
-      });
-    }
+    singularReportCache.set(cacheKey, {
+      kind: "ready",
+      expiresAt:
+        Date.now() +
+        (entry.cacheable === false
+          ? SINGULAR_LIVE_REPORT_CACHE_TTL_MS
+          : SINGULAR_REPORT_CACHE_TTL_MS),
+      value: overlay,
+    });
 
     return overlay;
   }
@@ -1127,12 +1158,10 @@ async function pollPendingReport(
     });
   }
 
-  if (entry.cacheable !== false) {
-    singularReportCache.set(cacheKey, {
-      ...entry,
-      lastPolledAt: Date.now(),
-    });
-  }
+  singularReportCache.set(cacheKey, {
+    ...entry,
+    lastPolledAt: Date.now(),
+  });
 
   return getEmptyTikTokSingularOverlay({
     configured: true,
@@ -1163,7 +1192,7 @@ async function getSingularSourceRevenueReportForRange(args: {
     endDate: args.endDate,
     startDate: args.startDate,
   });
-  const cached = cacheable ? singularSourceRevenueReportCache.get(cacheKey) : null;
+  const cached = readSourceRevenueReportCache(cacheKey);
 
   if (cached?.kind === "ready" && cached.expiresAt > Date.now()) {
     return cached.value;
@@ -1195,9 +1224,7 @@ async function getSingularSourceRevenueReportForRange(args: {
       lastPolledAt: Date.now(),
     };
 
-    if (cacheable) {
-      singularSourceRevenueReportCache.set(cacheKey, pendingEntry);
-    }
+    singularSourceRevenueReportCache.set(cacheKey, pendingEntry);
 
     await sleep(SINGULAR_INITIAL_REPORT_WAIT_MS);
 
@@ -1293,13 +1320,15 @@ async function pollPendingSourceRevenueReport(
           ],
     };
 
-    if (entry.cacheable !== false) {
-      singularSourceRevenueReportCache.set(cacheKey, {
-        kind: "ready",
-        expiresAt: Date.now() + SINGULAR_REPORT_CACHE_TTL_MS,
-        value: report,
-      });
-    }
+    singularSourceRevenueReportCache.set(cacheKey, {
+      kind: "ready",
+      expiresAt:
+        Date.now() +
+        (entry.cacheable === false
+          ? SINGULAR_LIVE_REPORT_CACHE_TTL_MS
+          : SINGULAR_REPORT_CACHE_TTL_MS),
+      value: report,
+    });
 
     return report;
   }
@@ -1320,12 +1349,10 @@ async function pollPendingSourceRevenueReport(
     });
   }
 
-  if (entry.cacheable !== false) {
-    singularSourceRevenueReportCache.set(cacheKey, {
-      ...entry,
-      lastPolledAt: Date.now(),
-    });
-  }
+  singularSourceRevenueReportCache.set(cacheKey, {
+    ...entry,
+    lastPolledAt: Date.now(),
+  });
 
   return getEmptySingularSourceRevenueReport({
     configured: true,

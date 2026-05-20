@@ -4,12 +4,12 @@ import {
   ReportingFreshness,
   type ReportingDayVersion,
 } from "@/lib/prisma-shim";
-import { getRevenueAttributionReport } from "@/server/adapty/revenue";
+import { getRevenueAttributionReport } from "@/server/revenue/revenue";
 import {
   getDateKeys,
   getRevenueUgcPaySearchParams,
   type DashboardSearchParamsLike,
-} from "@/server/adapty/revenue-profitability-calculations";
+} from "@/server/revenue/revenue-profitability-calculations";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
 import { getOrganizationUgcPayData } from "@/server/ugc-pay/queries";
 import { getViewsBaseFacelessReport } from "@/server/viewsbase/report";
@@ -19,12 +19,14 @@ import {
   normalizeCanonicalWarnings,
 } from "./aggregation.ts";
 import {
+  adaptOperatingCostDailyRowsToCanonicalDays,
   adaptRevenueAttributionReportToCanonicalDays,
   adaptUgcPayDailyRowsToCanonicalDays,
   adaptViewsBaseFacelessReportToCanonicalDays,
   type CanonicalBuildContext,
   type CanonicalUgcPayDailyRow,
 } from "./adapters.ts";
+import { getOperatingCostDailyBreakdown } from "./operating-costs.ts";
 import type {
   CanonicalDailyFact,
   CanonicalDayVersion,
@@ -368,6 +370,17 @@ export async function refreshCanonicalReporting(args: {
       ? adaptViewsBaseFacelessReportToCanonicalDays(baseContext, viewsBaseReport)
       : [],
   );
+  const operatingDaysByDate = getDayVersionMap(
+    adaptOperatingCostDailyRowsToCanonicalDays(
+      baseContext,
+      revenueReport.dailyRows.map((row) =>
+        getOperatingCostDailyBreakdown({
+          date: row.date,
+          proceeds: row.total,
+        }),
+      ),
+    ),
+  );
   const persistedDays: CanonicalDayVersion[] = [];
 
   for (const reportDate of dateKeys) {
@@ -380,6 +393,7 @@ export async function refreshCanonicalReporting(args: {
       revenueDaysByDate.get(reportDate),
       ugcPayDaysByDate.get(reportDate),
       viewsBaseDaysByDate.get(reportDate),
+      operatingDaysByDate.get(reportDate),
     ].filter((dayVersion): dayVersion is CanonicalDayVersion =>
       Boolean(dayVersion),
     );

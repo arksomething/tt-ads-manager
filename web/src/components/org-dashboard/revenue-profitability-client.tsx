@@ -3,6 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { DashboardIcon } from "@/components/org-dashboard/org-icons";
+import {
+  getRevenueProfitabilityRoasCopy,
+  type RevenueProfitabilityProceedsModel,
+} from "@/lib/revenue-profitability-view";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
 
 type RevenueProfitabilityRow = {
@@ -21,14 +25,21 @@ type RevenueProfitabilityRow = {
   profit: number | null;
   roas: number | null;
   margin: number | null;
+  spendStatus?: "complete" | "partial" | "unavailable";
 };
 
 type RevenueProfitabilityDailyRow = {
   date: string;
+  facelessBaseSpend: number;
+  facelessManagementSpend: number;
   facelessSpend: number;
+  newProceeds: number | null;
   operatingSpend: number;
   proceeds: number;
   paidSpend: number | null;
+  renewalProceeds: number | null;
+  ugcManagementSpend: number;
+  ugcPaySpend: number;
   ugcSpend: number;
   totalSpend: number | null;
   profit: number | null;
@@ -40,20 +51,33 @@ type RevenueProfitabilityData = {
   currency: string | null;
   dailyRows: RevenueProfitabilityDailyRow[];
   facelessConfigured: boolean;
+  facelessBaseSpend: number;
   facelessErrorMessage: string | null;
+  facelessManagementSpend: number;
   facelessSpend: number;
   knownSpend: number;
   netProfit: number;
+  newProceeds: number;
+  newProceedsRoas: number | null;
   operatingSpend: number;
+  partialSpendLabels: string[];
   paidSourceSpend: number;
+  proceedsModel: RevenueProfitabilityProceedsModel;
+  renewalProceeds: number;
   rows: RevenueProfitabilityRow[];
+  singularPending: boolean;
+  totalProceeds: number;
+  ugcManagementSpend: number;
+  ugcPaySpend: number;
   ugcSpend: number;
   unknownSpendLabels: string[];
+  warnings: string[];
 };
 
 type RevenueProfitabilityClientProps = {
   endDate: string;
   organizationSlug: string;
+  revenueModel: string;
   searchParams: DashboardSearchParams;
   startDate: string;
 };
@@ -112,6 +136,12 @@ function formatAmount(value: number, currency: string | null) {
 function formatPercent(value: number | null) {
   return typeof value === "number" && Number.isFinite(value)
     ? percentFormatter.format(value)
+    : "Unavailable";
+}
+
+function formatNullableAmount(value: number | null, currency: string | null) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? formatAmount(value, currency)
     : "Unavailable";
 }
 
@@ -220,6 +250,8 @@ function RevenueProfitabilityContent({
 }: {
   data: RevenueProfitabilityData;
 }) {
+  const roasCopy = getRevenueProfitabilityRoasCopy(data.proceedsModel);
+
   return (
     <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -232,20 +264,30 @@ function RevenueProfitabilityContent({
           </h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          Paid ad spend + UGC Pay owed + ViewsBase faceless spend + operating costs
+          Paid ad spend + UGC Pay + UGC management + faceless spend + operating costs
         </p>
       </div>
 
       <p className="mt-3 max-w-4xl text-sm leading-6 text-muted-foreground">
         Paid channel spend uses Singular `adn_cost` when Singular returns it and
-        Adapty Ads Manager for Apple Search Ads when dashboard auth is
-        configured. UGC spend is loaded from exact daily UGC Pay queries using
-        gained views and the first 7 days. Faceless spend uses ViewsBase&apos;s
-        daily ledger total or projected price, whichever is higher. Operating
-        costs are prorated by calendar day.
+        Singular Apple Search Ads rows when available. UGC Pay is loaded from
+        exact daily queries using gained views and the first 7 days, with UGC
+        management prorated daily. Faceless spend uses ViewsBase&apos;s daily
+        ledger total or projected price, whichever is higher, with management
+        fees broken out below. Operating costs are prorated by calendar day.
       </p>
 
-      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
+        <StatCard
+          icon="payouts"
+          label={roasCopy.primaryProceedsLabel}
+          meta={
+            roasCopy.primaryProceedsMetaKind === "cohorted_basis"
+              ? "Attribution-date proceeds; renewals included in source allocation"
+              : `${formatAmount(data.newProceeds, data.currency)} new + ${formatAmount(data.renewalProceeds, data.currency)} renewal`
+          }
+          value={formatAmount(data.totalProceeds, data.currency)}
+        />
         <StatCard
           icon="integrations"
           label="Known spend"
@@ -255,15 +297,23 @@ function RevenueProfitabilityContent({
         <StatCard
           icon="payouts"
           label="Net profit"
-          meta="Total proceeds minus known spend"
+          meta={`${formatAmount(data.totalProceeds, data.currency)} ${roasCopy.primaryRoasMetaProceedsLabel} minus known spend`}
           value={formatSignedAmount(data.netProfit, data.currency)}
         />
         <StatCard
           icon="compare"
-          label="Blended ROAS"
-          meta="Total proceeds / known spend"
+          label={roasCopy.primaryRoasLabel}
+          meta={`${formatAmount(data.totalProceeds, data.currency)} ${roasCopy.primaryRoasMetaProceedsLabel} / known spend`}
           value={formatPercent(data.blendedRoas)}
         />
+        {roasCopy.showNewProceedsRoas ? (
+          <StatCard
+            icon="compare"
+            label="New ROAS"
+            meta={`${formatAmount(data.newProceeds, data.currency)} new proceeds / known spend`}
+            value={formatPercent(data.newProceedsRoas)}
+          />
+        ) : null}
         <StatCard
           icon="integrations"
           label="Operating costs"
@@ -272,8 +322,8 @@ function RevenueProfitabilityContent({
         />
         <StatCard
           icon="creators"
-          label="UGC owed"
-          meta="Gained views, first 7 days"
+          label="UGC costs"
+          meta={`${formatAmount(data.ugcPaySpend, data.currency)} pay + ${formatAmount(data.ugcManagementSpend, data.currency)} management`}
           value={formatAmount(data.ugcSpend, data.currency)}
         />
       </div>
@@ -282,6 +332,20 @@ function RevenueProfitabilityContent({
         <div className="mt-4 rounded-[1.05rem] border border-[#FFD24D]/20 bg-[#FFD24D]/[0.08] p-3 text-sm leading-6 text-[#FFEAB1]">
           ViewsBase faceless spend could not be loaded:{" "}
           {data.facelessErrorMessage}
+        </div>
+      ) : null}
+
+      {data.warnings.length > 0 ? (
+        <div className="mt-4 rounded-[1.05rem] border border-[#FFD24D]/20 bg-[#FFD24D]/[0.08] p-3 text-sm leading-6 text-[#FFEAB1]">
+          {data.warnings.join(" ")}
+        </div>
+      ) : null}
+
+      {data.partialSpendLabels.length > 0 ? (
+        <div className="mt-4 rounded-[1.05rem] border border-[#FFD24D]/20 bg-[#FFD24D]/[0.08] p-3 text-sm leading-6 text-[#FFEAB1]">
+          Spend is still filling in for {data.partialSpendLabels.join(", ")}.
+          The table uses available Singular spend, so profit can move when
+          delayed cost rows arrive.
         </div>
       ) : null}
 
@@ -373,7 +437,7 @@ function RevenueProfitabilityContent({
       </div>
 
       <div className="mt-5 overflow-x-auto">
-        <table className="w-full min-w-[760px] border-separate border-spacing-0 text-left text-sm">
+        <table className="w-full min-w-[940px] border-separate border-spacing-0 text-left text-sm">
           <thead>
             <tr className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
               <th className="border-b border-white/[0.08] px-3 py-3 font-medium">
@@ -383,10 +447,16 @@ function RevenueProfitabilityContent({
                 Proceeds
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
+                New
+              </th>
+              <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
+                Renewal
+              </th>
+              <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
                 Singular spend
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
-                UGC owed
+                UGC costs
               </th>
               <th className="border-b border-white/[0.08] px-3 py-3 text-right font-medium">
                 Faceless
@@ -413,6 +483,12 @@ function RevenueProfitabilityContent({
                 </td>
                 <td className="border-b border-white/[0.06] px-3 py-3 text-right">
                   {formatAmount(row.proceeds, data.currency)}
+                </td>
+                <td className="border-b border-white/[0.06] px-3 py-3 text-right">
+                  {formatNullableAmount(row.newProceeds, data.currency)}
+                </td>
+                <td className="border-b border-white/[0.06] px-3 py-3 text-right">
+                  {formatNullableAmount(row.renewalProceeds, data.currency)}
                 </td>
                 <td className="border-b border-white/[0.06] px-3 py-3 text-right">
                   {row.paidSpend === null
@@ -451,6 +527,7 @@ function RevenueProfitabilityContent({
 export function RevenueProfitabilityClient({
   endDate,
   organizationSlug,
+  revenueModel,
   searchParams,
   startDate,
 }: RevenueProfitabilityClientProps) {
@@ -463,13 +540,16 @@ export function RevenueProfitabilityClient({
     error: null,
     status: "loading",
   });
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     const params = new URLSearchParams();
     appendSearchParams(params, searchParams);
     params.set("startDate", startDate);
     params.set("endDate", endDate);
+    params.set("revenueModel", revenueModel);
 
     setState({
       data: null,
@@ -505,6 +585,12 @@ export function RevenueProfitabilityClient({
           error: null,
           status: "ready",
         });
+
+        if (data.singularPending) {
+          retryTimer = setTimeout(() => {
+            setReloadNonce((value) => value + 1);
+          }, 15_000);
+        }
       })
       .catch((error) => {
         if (controller.signal.aborted) {
@@ -523,8 +609,20 @@ export function RevenueProfitabilityClient({
 
     return () => {
       controller.abort();
+
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+      }
     };
-  }, [endDate, organizationSlug, searchParams, searchParamsKey, startDate]);
+  }, [
+    endDate,
+    organizationSlug,
+    reloadNonce,
+    revenueModel,
+    searchParams,
+    searchParamsKey,
+    startDate,
+  ]);
 
   if (state.status === "ready") {
     return <RevenueProfitabilityContent data={state.data} />;
