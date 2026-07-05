@@ -46,7 +46,7 @@ test("creator deal schema coerces defaults and blank optional money fields", () 
   assert.equal(parsed.fixedFeePerVideo, 12.5);
   assert.equal(parsed.cpmAmount, 1);
   assert.equal(parsed.paidTrafficMetric, CreatorDealPaidTrafficMetric.IMPRESSIONS);
-  assert.equal(parsed.viewWindowDays, 30);
+  assert.equal(parsed.viewWindowDays, 7);
   assert.equal(parsed.payoutCapPerVideo, 100);
   assert.equal(parsed.perVideoCapScope, CreatorDealPerVideoCapScope.CPM);
   assert.equal(parsed.effectiveEndDate, undefined);

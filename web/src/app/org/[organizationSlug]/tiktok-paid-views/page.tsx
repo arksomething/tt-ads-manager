@@ -496,7 +496,7 @@ async function TikTokPaidViewsPageContent({
   let overlay = {
     configured: false,
     isPending: false,
-    cohortPeriod: process.env.SINGULAR_COHORT_PERIOD || "7d",
+    cohortPeriod: process.env.SINGULAR_COHORT_PERIOD || "actual",
     sourceNames: [] as string[],
     rowCount: 0,
     rows: [] as TikTokSingularReportRow[],

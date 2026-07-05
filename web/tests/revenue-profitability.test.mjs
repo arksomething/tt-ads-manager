@@ -66,7 +66,7 @@ registerHooks({
               "  return { excludesRenewalsFromOrganic: true };",
               "}",
               "export function normalizeRevenueProceedsModel(value) {",
-              "  return value === 'cohorted_all' ? 'cohorted_all' : 'new_proceeds';",
+              "  return value === 'new_proceeds' ? 'new_proceeds' : 'cohorted_all';",
               "}",
             ].join("\n"),
           ),
@@ -360,4 +360,68 @@ test("cohorted profitability keeps ROAS on total cohorted proceeds", async () =>
   assert.equal(result.renewalProceeds, 200);
   assert.equal(result.dailyRows[0]?.proceeds, 1_000);
   assert.equal(result.blendedRoas, 1_000 / result.knownSpend);
+});
+
+test("profitability calculates partial daily spend while carrying the warning status", async () => {
+  const { buildRevenueProfitabilityData } = await import(
+    "../src/server/revenue/revenue-profitability.ts"
+  );
+  const result = buildRevenueProfitabilityData({
+    facelessSpendReport: {
+      configured: true,
+      errorMessage: null,
+      report: null,
+    },
+    report: {
+      currency: "USD",
+      proceedsModel: "new_proceeds",
+      dailyRows: [
+        {
+          date: "2026-05-16",
+          paidSpend: 600.55,
+          paidSpendStatus: "partial",
+          total: 1_235.9,
+        },
+        {
+          date: "2026-05-20",
+          paidSpend: null,
+          paidSpendStatus: "unavailable",
+          total: 603.15,
+        },
+      ],
+      sourceRows: [
+        {
+          kind: "paid",
+          label: "Snapchat",
+          rawLabel: "Snapchat",
+          revenue: 0,
+          spend: 600.55,
+          spendStatus: "partial",
+        },
+      ],
+      totals: {
+        newProceeds: 1_839.05,
+        organic: 1_839.05,
+        renewal: 0,
+        renewalBucket: 0,
+        total: 1_839.05,
+      },
+    },
+    ugcPayData: {
+      dailyRows: [],
+      data: {
+        summary: {
+          totalPay: 0,
+        },
+      },
+    },
+  });
+
+  assert.equal(result.dailyRows[0]?.paidSpendStatus, "partial");
+  assert.equal(result.dailyRows[0]?.paidSpend, 600.55);
+  assert.equal(typeof result.dailyRows[0]?.totalSpend, "number");
+  assert.equal(typeof result.dailyRows[0]?.profit, "number");
+  assert.equal(typeof result.dailyRows[0]?.roas, "number");
+  assert.equal(result.dailyRows[1]?.paidSpendStatus, "unavailable");
+  assert.equal(result.dailyRows[1]?.totalSpend, null);
 });

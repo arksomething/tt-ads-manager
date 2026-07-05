@@ -2,6 +2,7 @@ import type {
   RevenueAttributionDailyRow,
   RevenueAttributionReport,
 } from "../revenue/revenue";
+import { getFacelessDailyCostBreakdown } from "../revenue/creator-costs.ts";
 import type { OrganizationUgcPayData } from "../ugc-pay/queries";
 import type { ViewsBaseFacelessReport } from "../viewsbase/report";
 import type { OperatingCostDailyRow } from "./operating-costs";
@@ -40,6 +41,7 @@ export type CanonicalUgcPayDailyRow = {
   date: string;
   totalPay: number;
   fixedPay?: number | null;
+  managementCost?: number | null;
   videoPay?: number | null;
   payableViews?: number | null;
   grossViews?: number | null;
@@ -54,15 +56,6 @@ function isFiniteNumber(value: unknown): value is number {
 
 function roundMoney(value: number) {
   return Number(value.toFixed(2));
-}
-
-function facelessCostAmount(args: { projectedSpend: number; totalSpend: number }) {
-  const totalSpend = Number.isFinite(args.totalSpend) ? args.totalSpend : 0;
-  const projectedSpend = Number.isFinite(args.projectedSpend)
-    ? args.projectedSpend
-    : 0;
-
-  return roundMoney(Math.max(totalSpend, projectedSpend));
 }
 
 function buildSource(args: {
@@ -312,6 +305,12 @@ export function adaptUgcPayDailyRowsToCanonicalDays(args: {
   const version = args.context.version ?? DEFAULT_VERSION;
 
   return args.rows.map((row) => {
+    const ugcPay = roundMoney(row.totalPay);
+    const managementCost = isFiniteNumber(row.managementCost)
+      ? roundMoney(row.managementCost)
+      : null;
+    const ugcTotal =
+      managementCost === null ? ugcPay : roundMoney(ugcPay + managementCost);
     const warnings = normalizeCanonicalWarnings([
       ...(args.warnings ?? []),
       ...(row.warnings ?? []),
@@ -330,9 +329,16 @@ export function adaptUgcPayDailyRowsToCanonicalDays(args: {
         {
           currency: args.currency ?? null,
           metricKey: "spend.ugc.total",
+          source: "ugc",
+          unit: "currency",
+          value: ugcTotal,
+        },
+        {
+          currency: args.currency ?? null,
+          metricKey: "spend.ugc.pay",
           source: "ugc_pay",
           unit: "currency",
-          value: row.totalPay,
+          value: ugcPay,
         },
         {
           currency: args.currency ?? null,
@@ -347,6 +353,13 @@ export function adaptUgcPayDailyRowsToCanonicalDays(args: {
           source: "ugc_pay",
           unit: "currency",
           value: row.videoPay,
+        },
+        {
+          currency: args.currency ?? null,
+          metricKey: "spend.ugc.management",
+          source: "ugc_management",
+          unit: "currency",
+          value: managementCost,
         },
         {
           metricKey: "views.ugc",
@@ -466,6 +479,7 @@ export function adaptViewsBaseFacelessReportToCanonicalDays(
   const version = context.version ?? DEFAULT_VERSION;
 
   return report.dailyRows.map((row) => {
+    const facelessCost = getFacelessDailyCostBreakdown(row);
     const rowIncomplete = row.status === "none";
     const warnings = normalizeCanonicalWarnings([
       ...reportWarnings,
@@ -490,24 +504,21 @@ export function adaptViewsBaseFacelessReportToCanonicalDays(
           metricKey: "spend.faceless.total",
           source: "viewsbase",
           unit: "currency",
-          value: facelessCostAmount({
-            projectedSpend: row.projectedSpend,
-            totalSpend: row.totalSpend,
-          }),
+          value: facelessCost.totalSpend,
         },
         {
           currency: "USD",
           metricKey: "spend.faceless.base",
           source: "viewsbase",
           unit: "currency",
-          value: row.baseTotalSpend,
+          value: facelessCost.baseSpend,
         },
         {
           currency: "USD",
           metricKey: "spend.faceless.management_fee",
           source: "viewsbase",
           unit: "currency",
-          value: row.managementFee,
+          value: facelessCost.managementSpend,
         },
         {
           currency: "USD",

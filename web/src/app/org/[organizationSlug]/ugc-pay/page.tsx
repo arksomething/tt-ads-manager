@@ -1366,6 +1366,7 @@ async function UgcPayPageReport({
         endDate={data.endDate}
         organizationSlug={organizationSlug}
         payMode={data.payMode}
+        selectedCampaignId={data.selectedCampaignId}
         startDate={data.startDate}
         summary={data.summary}
       />

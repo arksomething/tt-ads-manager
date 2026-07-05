@@ -55,6 +55,7 @@ export function OrgSidebar({
   const searchParams = useSearchParams();
   const activeSection = resolveDashboardSectionFromPathname(pathname);
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
+  const [pendingSection, setPendingSection] = useState<string | null>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
   const accountMenuId = useId();
   const viewerLabel = userName ?? userEmail ?? "Operator";
@@ -69,6 +70,10 @@ export function OrgSidebar({
   function withCurrentSearch(href: string) {
     return persistedQueryString ? `${href}?${persistedQueryString}` : href;
   }
+
+  useEffect(() => {
+    setPendingSection(null);
+  }, [pathname, persistedQueryString]);
 
   useEffect(() => {
     if (!isAccountMenuOpen) {
@@ -124,27 +129,55 @@ export function OrgSidebar({
                 <div className="space-y-1">
                   {group.items.map((item) => {
                     const isActive = item.key === activeSection;
+                    const isPending = pendingSection === item.key && !isActive;
+                    const href = withCurrentSearch(
+                      getDashboardHref(organizationSlug, item.segment),
+                    );
+                    const isHighlighted = isActive || isPending;
 
                     return (
                       <Link
+                        aria-busy={isPending || undefined}
+                        aria-current={isActive ? "page" : undefined}
                         key={item.key}
                         className={`flex items-center gap-3 rounded-[0.95rem] border px-3 py-2.5 text-[0.92rem] transition ${
-                          isActive
+                          isHighlighted
                             ? "border-white/[0.12] bg-white/[0.08] text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
                             : "border-transparent bg-transparent text-muted-foreground hover:border-white/[0.08] hover:bg-white/[0.04] hover:text-foreground/92"
                         }`}
-                        href={withCurrentSearch(
-                          getDashboardHref(organizationSlug, item.segment),
-                        )}
+                        href={href}
+                        onClick={(event) => {
+                          if (
+                            event.defaultPrevented ||
+                            event.button !== 0 ||
+                            event.metaKey ||
+                            event.ctrlKey ||
+                            event.shiftKey ||
+                            event.altKey ||
+                            isActive
+                          ) {
+                            return;
+                          }
+
+                          setPendingSection(item.key);
+                        }}
                         prefetch={false}
                       >
                         <DashboardIcon
                           className={`h-4 w-4 ${
-                            isActive ? "text-foreground" : "text-muted-foreground"
+                            isHighlighted ? "text-foreground" : "text-muted-foreground"
                           }`}
                           name={item.icon}
                         />
                         <span className="flex-1">{item.label}</span>
+                        <span
+                          aria-hidden="true"
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            isPending
+                              ? "bg-[#8AF064] shadow-[0_0_12px_rgba(138,240,100,0.85)]"
+                              : "bg-transparent"
+                          }`}
+                        />
                       </Link>
                     );
                   })}

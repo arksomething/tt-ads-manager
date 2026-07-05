@@ -54,7 +54,7 @@ test("does not mark Blazie proceeds pending for unrelated Singular warnings", ()
   );
 });
 
-test("marks Blazie proceeds pending only when source proceeds are hidden", () => {
+test("marks Blazie proceeds pending when source proceeds are unavailable", () => {
   assert.equal(
     hasPendingBlazieOrganicProceeds({
       proceeds: 0,
@@ -69,7 +69,38 @@ test("marks Blazie proceeds pending only when source proceeds are hidden", () =>
     hasPendingBlazieOrganicProceeds({
       proceeds: 100,
       warnings: [
-        "Singular is still preparing the source proceeds report, so organic / UGC proceeds are hidden until the paid-source split is ready.",
+        "Singular source proceeds are not ready for this window; organic / UGC proceeds are hidden until the paid-source split is ready.",
+      ],
+    }),
+    true,
+  );
+
+  assert.equal(
+    hasPendingBlazieOrganicProceeds({
+      proceeds: 100,
+      warnings: [
+        "Singular source proceeds report status is started. This page will check again automatically.",
+      ],
+    }),
+    true,
+  );
+
+  assert.equal(
+    hasPendingBlazieOrganicProceeds({
+      proceeds: 100,
+      warnings: [
+        "Singular returned source rows, but actual revenue is not ready for this date window yet.",
+      ],
+    }),
+    true,
+  );
+
+  assert.equal(
+    hasPendingBlazieOrganicProceeds({
+      proceeds: 0,
+      warnings: [
+        "Some Snapchat/Singular rows are Pacific-day aggregates mapped to UTC; exact UTC-day splitting would require hourly exports.",
+        "Singular spend is incomplete for Snapchat; profit may change as delayed cost rows arrive.",
       ],
     }),
     false,

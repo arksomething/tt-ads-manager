@@ -77,7 +77,7 @@ const singularEnvSchema = z.object({
   SINGULAR_API_KEY: z.string().min(1),
   SINGULAR_APP_NAMES: z.string().optional(),
   SINGULAR_SOURCE_NAMES: z.string().optional(),
-  SINGULAR_COHORT_PERIOD: z.string().min(1).default("7d"),
+  SINGULAR_COHORT_PERIOD: z.string().min(1).default("actual"),
 });
 
 const superwallEnvSchema = z.object({
@@ -97,6 +97,15 @@ const superwallEnvSchema = z.object({
     .string()
     .min(1)
     .default("social custom"),
+});
+
+const adaptyDashboardEnvSchema = z.object({
+  ADAPTY_DASHBOARD_BASE_URL: z
+    .url()
+    .default("https://api-asa-admin.adapty.io/api/v1"),
+  ADAPTY_DASHBOARD_TOKEN: z.string().min(1),
+  ADAPTY_DASHBOARD_COMPANY_ID: z.string().min(1),
+  ADAPTY_DASHBOARD_APP_ID: z.string().min(1),
 });
 
 const viewsBaseEnvSchema = z.object({
@@ -119,6 +128,7 @@ type TikTokBusinessEnv = z.infer<typeof tikTokBusinessEnvSchema>;
 type TikTokBusinessOauthEnv = z.infer<typeof tikTokBusinessOauthEnvSchema>;
 type SingularEnv = z.infer<typeof singularEnvSchema>;
 type SuperwallEnv = z.infer<typeof superwallEnvSchema>;
+type AdaptyDashboardEnv = z.infer<typeof adaptyDashboardEnvSchema>;
 type ViewsBaseEnv = z.infer<typeof viewsBaseEnvSchema>;
 
 let cachedAuthEnv: AuthEnv | undefined;
@@ -131,6 +141,7 @@ let cachedTikTokBusinessEnv: TikTokBusinessEnv | undefined;
 let cachedTikTokBusinessOauthEnv: TikTokBusinessOauthEnv | undefined;
 let cachedSingularEnv: SingularEnv | undefined;
 let cachedSuperwallEnv: SuperwallEnv | undefined;
+let cachedAdaptyDashboardEnv: AdaptyDashboardEnv | undefined;
 let cachedViewsBaseEnv: ViewsBaseEnv | undefined;
 
 function parseNumericCsv(value: string | undefined) {
@@ -319,7 +330,7 @@ export function getSingularEnv() {
       SINGULAR_API_KEY: process.env.SINGULAR_API_KEY,
       SINGULAR_APP_NAMES: process.env.SINGULAR_APP_NAMES || undefined,
       SINGULAR_SOURCE_NAMES: process.env.SINGULAR_SOURCE_NAMES || undefined,
-      SINGULAR_COHORT_PERIOD: process.env.SINGULAR_COHORT_PERIOD || "7d",
+      SINGULAR_COHORT_PERIOD: process.env.SINGULAR_COHORT_PERIOD || "actual",
     });
   }
 
@@ -356,6 +367,29 @@ export function getSuperwallEnv() {
   }
 
   return cachedSuperwallEnv;
+}
+
+export function hasAdaptyDashboardEnv() {
+  return Boolean(
+    process.env.ADAPTY_DASHBOARD_TOKEN &&
+      process.env.ADAPTY_DASHBOARD_COMPANY_ID &&
+      process.env.ADAPTY_DASHBOARD_APP_ID,
+  );
+}
+
+export function getAdaptyDashboardEnv() {
+  if (!cachedAdaptyDashboardEnv) {
+    cachedAdaptyDashboardEnv = adaptyDashboardEnvSchema.parse({
+      ADAPTY_DASHBOARD_BASE_URL:
+        process.env.ADAPTY_DASHBOARD_BASE_URL ||
+        "https://api-asa-admin.adapty.io/api/v1",
+      ADAPTY_DASHBOARD_TOKEN: process.env.ADAPTY_DASHBOARD_TOKEN,
+      ADAPTY_DASHBOARD_COMPANY_ID: process.env.ADAPTY_DASHBOARD_COMPANY_ID,
+      ADAPTY_DASHBOARD_APP_ID: process.env.ADAPTY_DASHBOARD_APP_ID,
+    });
+  }
+
+  return cachedAdaptyDashboardEnv;
 }
 
 export function hasViewsBaseEnv() {

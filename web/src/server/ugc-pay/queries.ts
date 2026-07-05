@@ -3,9 +3,11 @@ import {
   CreatorStatus,
   CreatorDealPerVideoCapScope,
   Platform,
+  type Prisma,
 } from "@/lib/prisma-shim";
 
 import { prisma } from "@/lib/db";
+import { getDefaultUgcPayStartDateForEndDate } from "@/lib/ugc-pay-date-defaults";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
 import {
   getAccessibleCampaignOptionsForMembership,
@@ -14,33 +16,111 @@ import {
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
 import {
   getOrganizationViewTallyData,
+  resolveViewTallyCreatorIdForLocalCreator,
   type OrganizationViewTallyData,
   type ViewTallyListItem,
 } from "@/server/videos/queries";
+import {
+  getPaidViewsForSourceVideosForCreatorForOrganization,
+  type TikTokSourceVideoPaidViewsResult,
+  type TikTokSourceVideoPaidViewsRow,
+} from "@/server/tiktok-business/reporting";
 
 import {
+  applyUgcPayVideoContentTypeCpm,
   applyUgcPayVideoDealOverride,
   calculateUgcPayVideoAmounts,
   getUgcPayPerVideoGrossViewCap,
   normalizeMoney,
   type UgcPayGainedViewCapContext,
 } from "./calculations";
+import {
+  buildCreatorAccessLedgerVideos,
+  buildCreatorAccessViewTallyRows,
+  filterCreatorAccessPayableRowsByMode,
+  getCreatorAccessMissingSourceVideoCount,
+  getCreatorAccessPaidLookupSourceVideoIds,
+  type CreatorAccessLocalVideoRow,
+  type CreatorAccessPeriodViewRow,
+} from "./creator-access-local-videos";
 
 const DEFAULT_DEAL_CURRENCY = "USD";
 const DEFAULT_DEAL_CPM_AMOUNT = 1;
-const DEFAULT_DEAL_VIEW_WINDOW_DAYS = 30;
+const DEFAULT_DEAL_VIEW_WINDOW_DAYS = 7;
 const DEFAULT_DEAL_PAYOUT_CAP_PER_VIDEO = 100;
 const DEFAULT_GLOBAL_VIEW_WINDOW_DAYS = 7;
 const DEFAULT_REPORT_TIME_ZONE = "UTC";
 const VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD = 100;
 const GAINED_VIEW_CAP_CONTEXT_BATCH_SIZE = 150;
 const UGC_PAY_CREATOR_QUERY_CONCURRENCY = 2;
+const CREATOR_ACCESS_PAID_LOOKUP_TIMEOUT_MS = 25_000;
+const CREATOR_ACCESS_PAID_LOOKUP_CACHE_TTL_MS = 5 * 60 * 1_000;
 
 export type UgcPayMode = "posted" | "gained";
 export type UgcPayViewWindowMode = "all" | "first-days";
 export type UgcPayVideoFetchMode = "global" | "per-creator";
 
 type ViewTallyCreatorOption = OrganizationViewTallyData["creatorOptions"][number];
+
+function normalizeImageUrl(value: string | null | undefined) {
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(value);
+
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return undefined;
+    }
+
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function getJsonString(
+  value: Prisma.JsonValue | null | undefined,
+  keys: string[],
+): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  for (const key of keys) {
+    const candidate = value[key];
+
+    if (typeof candidate === "string" && candidate.length > 0) {
+      return candidate;
+    }
+  }
+
+  return undefined;
+}
+
+function getAccountImageUrl(payload: Prisma.JsonValue | null | undefined) {
+  return normalizeImageUrl(
+    getJsonString(payload, [
+      "profilePictureUrl",
+      "accountProfilePictureUrl",
+      "creatorImage",
+      "profile_picture_url",
+      "account_profile_picture_url",
+    ]),
+  );
+}
+
+function getVideoThumbnailUrl(payload: Prisma.JsonValue | null | undefined) {
+  return normalizeImageUrl(
+    getJsonString(payload, [
+      "thumbnailUrl",
+      "thumbnail_url",
+      "previewImageUrl",
+      "preview_image_url",
+    ]),
+  );
+}
 
 type CampaignCreatorUgcPayRow = {
   id: string;
@@ -149,6 +229,11 @@ type LocalVideoViewCapRow = {
   lastSyncedAt: Date | null;
 };
 
+type LocalVideoContentTypeRow = {
+  sourceVideoId: string | null;
+  isTalking: boolean;
+};
+
 type LocalVideoMetricsSnapshotRow = {
   videoId: string;
   capturedAt: Date;
@@ -156,6 +241,16 @@ type LocalVideoMetricsSnapshotRow = {
 };
 
 type GainedViewCapContext = UgcPayGainedViewCapContext;
+
+type CreatorAccessPaidLookupCacheEntry = {
+  expiresAt: number;
+  promise: Promise<TikTokSourceVideoPaidViewsResult>;
+};
+
+const creatorAccessPaidLookupCache = new Map<
+  string,
+  CreatorAccessPaidLookupCacheEntry
+>();
 
 export type UgcPayVideoRow = {
   campaignCreatorId: string;
@@ -167,10 +262,13 @@ export type UgcPayVideoRow = {
   videoId: string;
   sourceVideoId: string;
   videoUrl: string;
+  thumbnailUrl?: string | null;
   titleOrCaption: string | null;
   publishedAt: Date | null;
   createdAt: Date;
+  isTalking: boolean;
   grossViews: number;
+  paidViews: number | null;
   paidViewsDeducted: number;
   payableViews: number;
   fixedFeePerVideo: number;
@@ -254,6 +352,12 @@ export type OrganizationUgcPayData = {
   };
   creators: UgcPayCreatorRow[];
   videos: UgcPayVideoRow[];
+};
+
+export type UgcPayCreatorAccessScope = {
+  organizationId: string;
+  creatorId: string;
+  campaignCreatorId?: string | null;
 };
 
 function getSearchParamValue(
@@ -491,14 +595,16 @@ function getSelectedDateRange(
   searchParams: DashboardSearchParams | undefined,
   timeZone: string,
 ) {
-  const fallbackDate = getDefaultReportDate(timeZone);
-  const startDate = getDateOnlySearchParam(searchParams, "startDate") ?? fallbackDate;
-  const endDate = getDateOnlySearchParam(searchParams, "endDate") ?? fallbackDate;
+  const fallbackEndDate = getDefaultReportDate(timeZone);
+  const endDate = getDateOnlySearchParam(searchParams, "endDate") ?? fallbackEndDate;
+  const fallbackStartDate = getDefaultUgcPayStartDateForEndDate(endDate);
+  const startDate =
+    getDateOnlySearchParam(searchParams, "startDate") ?? fallbackStartDate;
 
   if (endDate < startDate) {
     return {
-      startDate: fallbackDate,
-      endDate: fallbackDate,
+      startDate: addDateOnlyDays(fallbackEndDate, -6) ?? fallbackEndDate,
+      endDate: fallbackEndDate,
     };
   }
 
@@ -515,7 +621,7 @@ function getSelectedPayMode(searchParams: DashboardSearchParams | undefined): Ug
 }
 
 function getDefaultVideoWindowStartDate(startDate: string) {
-  return addDateOnlyMonths(startDate, -1) ?? startDate;
+  return addDateOnlyDays(startDate, -6) ?? startDate;
 }
 
 function getSelectedVideoWindowStartDate(
@@ -753,10 +859,13 @@ function getMatchedViewTallyCreatorOptionsForRows(args: {
 
 async function getPerCreatorViewTallyRowsForOptions(args: {
   organizationSlug: string;
+  organizationId?: string;
   creatorOptions: ViewTallyCreatorOption[];
   baseData: OrganizationViewTallyData;
   startDate: string;
   endDate: string;
+  includePaidViews?: boolean;
+  topVideoLimit?: number;
   warningPrefix: string;
 }) {
   const warnings: string[] = [];
@@ -774,13 +883,19 @@ async function getPerCreatorViewTallyRowsForOptions(args: {
     async (creatorOption) => {
       const data = await getOrganizationViewTallyData({
         organizationSlug: args.organizationSlug,
+        organizationId: args.organizationId,
         searchParams: {
           startDate: args.startDate,
           endDate: args.endDate,
           creator: creatorOption.id,
+          ...(args.topVideoLimit
+            ? { topLimit: String(args.topVideoLimit) }
+            : {}),
         },
         includeAdSpend: false,
+        includePaidViews: args.includePaidViews,
         includeSummaryAnalytics: false,
+        topVideoLimit: args.topVideoLimit,
       });
 
       return {
@@ -819,10 +934,13 @@ async function getPerCreatorViewTallyRowsForOptions(args: {
 
 async function getPerCreatorViewTallyRows(args: {
   organizationSlug: string;
+  organizationId?: string;
   campaignCreators: CampaignCreatorUgcPayRow[];
   baseData: OrganizationViewTallyData;
   startDate: string;
   endDate: string;
+  includePaidViews?: boolean;
+  topVideoLimit?: number;
 }) {
   const { matchedOptions, unmatchedCampaignCreators } =
     getMatchedViewTallyCreatorOptions({
@@ -852,10 +970,13 @@ async function getPerCreatorViewTallyRows(args: {
 
   const expandedRows = await getPerCreatorViewTallyRowsForOptions({
     organizationSlug: args.organizationSlug,
+    organizationId: args.organizationId,
     creatorOptions: matchedOptions,
     baseData: args.baseData,
     startDate: args.startDate,
     endDate: args.endDate,
+    includePaidViews: args.includePaidViews,
+    topVideoLimit: args.topVideoLimit,
     warningPrefix: "accurate creator videos",
   });
 
@@ -973,12 +1094,16 @@ function getVideoPostedDateOnly(row: ViewTallyListItem, timeZone: string) {
 
 async function applyGlobalViewWindowToRows(args: {
   organizationSlug: string;
+  organizationId?: string;
+  viewTallyCreatorId?: string | null;
   rows: ViewTallyListItem[];
   startDate: string;
   endDate: string;
   reportTimeZone: string;
   videoFetchMode: UgcPayVideoFetchMode;
   globalViewWindowDays: number;
+  includePaidViews?: boolean;
+  topVideoLimit?: number;
 }) {
   const reportEndExclusiveDate = addDateOnlyDays(args.endDate, 1);
 
@@ -1049,12 +1174,23 @@ async function applyGlobalViewWindowToRows(args: {
   for (const group of clippedRowGroups.values()) {
     const clippedData = await getOrganizationViewTallyData({
       organizationSlug: args.organizationSlug,
+      organizationId: args.organizationId,
       searchParams: {
         startDate: group.startDate,
         endDate: group.endDate,
+        ...(args.viewTallyCreatorId
+          ? {
+              creator: args.viewTallyCreatorId,
+              topLimit: String(args.topVideoLimit ?? 100),
+            }
+          : args.topVideoLimit
+            ? { topLimit: String(args.topVideoLimit) }
+          : {}),
       },
       includeAdSpend: false,
+      includePaidViews: args.includePaidViews,
       includeSummaryAnalytics: false,
+      topVideoLimit: args.topVideoLimit,
     });
     warnings.push(...clippedData.warnings);
 
@@ -1073,10 +1209,13 @@ async function applyGlobalViewWindowToRows(args: {
       });
       const expandedClippedRows = await getPerCreatorViewTallyRowsForOptions({
         organizationSlug: args.organizationSlug,
+        organizationId: args.organizationId,
         creatorOptions,
         baseData: clippedData,
         startDate: group.startDate,
         endDate: group.endDate,
+        includePaidViews: args.includePaidViews,
+        topVideoLimit: args.topVideoLimit,
         warningPrefix: "accurate view-window videos",
       });
 
@@ -1291,8 +1430,85 @@ async function getLocalGainedViewCapContexts(args: {
   return contexts;
 }
 
+async function getLocalVideoContentTypes(args: {
+  organizationId: string;
+  rows: ViewTallyListItem[];
+}) {
+  const sourceVideoIds = [
+    ...new Set(
+      args.rows
+        .map((row) => row.sourceVideoId)
+        .filter((value): value is string => value.length > 0),
+    ),
+  ];
+
+  if (sourceVideoIds.length === 0) {
+    return new Map<string, boolean>();
+  }
+
+  const [classifications, videos] = await Promise.all([
+    prisma.videoContentClassification.findMany({
+      where: {
+        organizationId: args.organizationId,
+        platform: Platform.TIKTOK,
+        sourceVideoId: {
+          in: sourceVideoIds,
+        },
+      },
+      select: {
+        sourceVideoId: true,
+        isTalking: true,
+      },
+    }),
+    (async () => {
+      const localVideos: LocalVideoContentTypeRow[] = [];
+
+      for (const sourceVideoIdBatch of chunkArray(
+        sourceVideoIds,
+        GAINED_VIEW_CAP_CONTEXT_BATCH_SIZE,
+      )) {
+        localVideos.push(
+          ...((await prisma.video.findMany({
+            where: {
+              platform: Platform.TIKTOK,
+              sourceVideoId: {
+                in: sourceVideoIdBatch,
+              },
+              creator: {
+                organizationId: args.organizationId,
+              },
+            },
+            select: {
+              sourceVideoId: true,
+              isTalking: true,
+            },
+          })) as LocalVideoContentTypeRow[]),
+        );
+      }
+
+      return localVideos;
+    })(),
+  ]);
+  const statusBySourceVideoId = new Map(
+    videos
+      .filter((video) => video.sourceVideoId != null)
+      .map((video) => [video.sourceVideoId as string, video.isTalking]),
+  );
+
+  for (const classification of classifications) {
+    statusBySourceVideoId.set(
+      classification.sourceVideoId,
+      classification.isTalking,
+    );
+  }
+
+  return statusBySourceVideoId;
+}
+
 async function getProviderGainedViewCapContexts(args: {
   organizationSlug: string;
+  organizationId?: string;
+  viewTallyCreatorId?: string | null;
   rows: ViewTallyListItem[];
   startDate: string;
   endDate: string;
@@ -1306,9 +1522,13 @@ async function getProviderGainedViewCapContexts(args: {
 
   const cumulativeData = await getOrganizationViewTallyData({
     organizationSlug: args.organizationSlug,
+    organizationId: args.organizationId,
     searchParams: {
       startDate: args.startDate,
       endDate: args.endDate,
+      ...(args.viewTallyCreatorId
+        ? { creator: args.viewTallyCreatorId, topLimit: "100" }
+        : {}),
     },
     includeAdSpend: false,
     includePaidViews: false,
@@ -1366,11 +1586,437 @@ function getFallbackGainedViewCapContext(row: ViewTallyListItem) {
   };
 }
 
+function getViewTallyNetViews(row: ViewTallyListItem) {
+  return Math.max(
+    (row.views ?? 0) -
+      (row.paidStatus === "yes" ? (row.paidViews ?? 0) : 0),
+    0,
+  );
+}
+
+function buildLocalCreatorViewTallyData(args: {
+  creatorId: string;
+  creatorName: string;
+  accountHandle: string | null;
+  startDate: string;
+  endDate: string;
+  rows: ViewTallyListItem[];
+  warnings: string[];
+  errorMessage: string | null;
+}) {
+  const selectedCreator = {
+    id: args.creatorId,
+    label: args.creatorName,
+    meta: args.accountHandle ? `@${args.accountHandle}` : undefined,
+  };
+  const totalViews = args.rows.reduce(
+    (total, row) => total + (row.views ?? 0),
+    0,
+  );
+  const paidViewsTotal = args.rows.reduce(
+    (total, row) => total + (row.paidViews ?? 0),
+    0,
+  );
+  const deductedPaidViews = args.rows.reduce(
+    (total, row) =>
+      row.paidStatus === "yes" ? total + (row.paidViews ?? 0) : total,
+    0,
+  );
+  const topVideos = [...args.rows].sort(
+    (left, right) => getViewTallyNetViews(right) - getViewTallyNetViews(left),
+  );
+  const topAccounts =
+    args.rows.length > 0
+      ? [
+          {
+            id: args.creatorId,
+            label: args.creatorName,
+            handle: args.accountHandle,
+            views: totalViews,
+            paidViews: paidViewsTotal,
+            videos: args.rows.length,
+            avatarUrl: args.rows.find((row) => row.thumbnailUrl)?.thumbnailUrl,
+          },
+        ]
+      : [];
+
+  return {
+    creatorOptions: [selectedCreator],
+    selectedCreator,
+    startDate: args.startDate,
+    endDate: args.endDate,
+    warnings: args.warnings,
+    errorMessage: args.errorMessage,
+    topLimit: args.rows.length,
+    topLimitOptions: [args.rows.length],
+    rows: args.rows,
+    topVideos,
+    topAccounts,
+    adSpend: {
+      advertiserId: null,
+      totalSpend: 0,
+      rowCount: 0,
+      rows: [],
+      warnings: [],
+    },
+    totals: {
+      videos: args.rows.length,
+      totalViews,
+      paidViews: paidViewsTotal,
+      deductedPaidViews,
+      unpaidViews: Math.max(totalViews - deductedPaidViews, 0),
+      organicViewsEstimate: args.rows.reduce(
+        (total, row) => total + (row.organicViewsEstimate ?? 0),
+        0,
+      ),
+      yesVideos: args.rows.filter((row) => row.paidStatus === "yes").length,
+      noVideos: args.rows.filter((row) => row.paidStatus === "no").length,
+      unknownVideos: args.rows.filter((row) => row.paidStatus === "unknown").length,
+      unsupportedVideos: args.rows.filter((row) => row.paidStatus === "unsupported")
+        .length,
+    },
+  } satisfies OrganizationViewTallyData;
+}
+
+function getCreatorAccessPaidLookupCacheKey(args: {
+  organizationId: string;
+  creatorId: string;
+  sourceVideoIds: string[];
+  startDate: string;
+  endDate: string;
+}) {
+  return [
+    args.organizationId,
+    args.creatorId,
+    args.startDate,
+    args.endDate,
+    [...args.sourceVideoIds].sort().join(","),
+  ].join("::");
+}
+
+function getCreatorAccessPaidLookupPromise(args: {
+  organizationSlug: string;
+  organizationId: string;
+  creatorId: string;
+  sourceVideoIds: string[];
+  startDate: string;
+  endDate: string;
+}) {
+  const cacheKey = getCreatorAccessPaidLookupCacheKey(args);
+  const now = Date.now();
+  const existing = creatorAccessPaidLookupCache.get(cacheKey);
+
+  if (existing && existing.expiresAt > now) {
+    return existing.promise;
+  }
+
+  if (existing) {
+    creatorAccessPaidLookupCache.delete(cacheKey);
+  }
+
+  const promise = getPaidViewsForSourceVideosForCreatorForOrganization({
+    organizationSlug: args.organizationSlug,
+    organizationId: args.organizationId,
+    creatorId: args.creatorId,
+    sourceVideoIds: args.sourceVideoIds,
+    startDate: args.startDate,
+    endDate: args.endDate,
+  });
+
+  creatorAccessPaidLookupCache.set(cacheKey, {
+    expiresAt: now + CREATOR_ACCESS_PAID_LOOKUP_CACHE_TTL_MS,
+    promise,
+  });
+  promise.catch(() => {
+    if (creatorAccessPaidLookupCache.get(cacheKey)?.promise === promise) {
+      creatorAccessPaidLookupCache.delete(cacheKey);
+    }
+  });
+
+  return promise;
+}
+
+async function getCreatorAccessPaidLookupWithTimeout(args: {
+  organizationSlug: string;
+  organizationId: string;
+  creatorId: string;
+  sourceVideoIds: string[];
+  startDate: string;
+  endDate: string;
+}) {
+  const paidLookupPromise = getCreatorAccessPaidLookupPromise(args);
+  let timeoutId: NodeJS.Timeout | null = null;
+
+  const timeoutPromise = new Promise<"timeout">((resolve) => {
+    timeoutId = setTimeout(
+      () => resolve("timeout"),
+      CREATOR_ACCESS_PAID_LOOKUP_TIMEOUT_MS,
+    );
+  });
+
+  const result = await Promise.race([paidLookupPromise, timeoutPromise]);
+
+  if (timeoutId) {
+    clearTimeout(timeoutId);
+  }
+
+  return result;
+}
+
+async function getCreatorAccessPeriodViewRows(args: {
+  organizationSlug: string;
+  organizationId: string;
+  creatorId: string;
+  startDate: string;
+  endDate: string;
+}) {
+  const warnings: string[] = [];
+  let errorMessage: string | null = null;
+  const viewTallyCreatorId = await resolveViewTallyCreatorIdForLocalCreator({
+    organizationId: args.organizationId,
+    creatorId: args.creatorId,
+  });
+
+  if (!viewTallyCreatorId) {
+    return {
+      rows: [] as CreatorAccessPeriodViewRow[],
+      warnings: [
+        "Could not match this local creator to a tracked View Tally account, so selected-period view counts could not be resolved.",
+      ],
+      errorMessage: null,
+    };
+  }
+
+  const periodData = await getOrganizationViewTallyData({
+    organizationSlug: args.organizationSlug,
+    organizationId: args.organizationId,
+    searchParams: {
+      creator: viewTallyCreatorId,
+      startDate: args.startDate,
+      endDate: args.endDate,
+      topLimit: "100",
+    },
+    includeAdSpend: false,
+    includePaidViews: false,
+    includeSummaryAnalytics: false,
+  });
+
+  warnings.push(...periodData.warnings);
+  errorMessage = periodData.errorMessage;
+
+  return {
+    rows: periodData.rows.map(
+      (row) =>
+        ({
+          sourceVideoId: row.sourceVideoId,
+          views: row.views,
+          currentViews: row.currentViews,
+          titleOrCaption: row.titleOrCaption,
+          publishedAt: row.publishedAt,
+          createdAt: row.createdAt,
+          videoUrl: row.videoUrl,
+          thumbnailUrl: row.thumbnailUrl,
+        }) satisfies CreatorAccessPeriodViewRow,
+    ),
+    warnings,
+    errorMessage,
+  };
+}
+
+async function getCreatorAccessLocalViewTallyData(args: {
+  organizationSlug: string;
+  organizationId: string;
+  creatorId: string;
+  creatorName: string;
+  accountHandle: string | null;
+  startDate: string;
+  endDate: string;
+  start: Date;
+  endExclusive: Date;
+}) {
+  type CreatorAccessLocalVideoRecord = Omit<
+    CreatorAccessLocalVideoRow,
+    "thumbnailUrl"
+  > & {
+    rawPayload: Prisma.JsonValue | null;
+    creatorPlatformAccount: {
+      rawPayload: Prisma.JsonValue | null;
+    } | null;
+  };
+
+  const videoRecords = (await prisma.video.findMany({
+    where: {
+      creatorId: args.creatorId,
+      platform: Platform.TIKTOK,
+      creator: {
+        organizationId: args.organizationId,
+      },
+      OR: [
+        {
+          publishedAt: {
+            lt: args.endExclusive,
+          },
+        },
+        {
+          publishedAt: null,
+          createdAt: {
+            lt: args.endExclusive,
+          },
+        },
+      ],
+    },
+    select: {
+      id: true,
+      sourceVideoId: true,
+      videoUrl: true,
+      titleOrCaption: true,
+      publishedAt: true,
+      createdAt: true,
+      views: true,
+      isTalking: true,
+      rawPayload: true,
+      creatorPlatformAccount: {
+        select: {
+          rawPayload: true,
+        },
+      },
+      creator: {
+        select: {
+          displayName: true,
+          platformAccounts: {
+            where: {
+              platform: Platform.TIKTOK,
+            },
+            select: {
+              handle: true,
+              platform: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+  })) as CreatorAccessLocalVideoRecord[];
+  const videos = videoRecords.map(
+    ({ rawPayload, creatorPlatformAccount, ...video }) =>
+      ({
+        ...video,
+        thumbnailUrl:
+          getVideoThumbnailUrl(rawPayload) ??
+          getAccountImageUrl(rawPayload) ??
+          getAccountImageUrl(creatorPlatformAccount?.rawPayload),
+      }) satisfies CreatorAccessLocalVideoRow,
+  );
+  const warnings: string[] = [];
+  let errorMessage: string | null = null;
+  let periodRows: CreatorAccessPeriodViewRow[] = [];
+  let paidRows: TikTokSourceVideoPaidViewsRow[] = [];
+  let lookupWindowUnresolvedPostBackedGroupCount = 0;
+  let lookupWindowUnresolvedNonPostBackedGroupCount = 0;
+
+  try {
+    const periodResult = await getCreatorAccessPeriodViewRows({
+      organizationSlug: args.organizationSlug,
+      organizationId: args.organizationId,
+      creatorId: args.creatorId,
+      startDate: args.startDate,
+      endDate: args.endDate,
+    });
+
+    periodRows = periodResult.rows;
+    warnings.push(...periodResult.warnings);
+    errorMessage ??= periodResult.errorMessage;
+
+    if (
+      periodRows.length >= VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD
+    ) {
+      warnings.push(
+        "View Tally returned 100 selected-period video rows for this creator. The ledger includes queried provider videos plus local tracked videos, but provider period-view counts may be capped for lower-view posts.",
+      );
+    }
+  } catch (error) {
+    warnings.push(
+      error instanceof Error
+        ? `Could not load selected-period view counts right now: ${error.message}`
+      : "Could not load selected-period view counts right now.",
+    );
+  }
+
+  const ledgerVideos = buildCreatorAccessLedgerVideos({
+    accountHandle: args.accountHandle,
+    creatorName: args.creatorName,
+    videos,
+    periodRows,
+    periodStart: args.start,
+    periodEndExclusive: args.endExclusive,
+  });
+  const sourceVideoIds = getCreatorAccessPaidLookupSourceVideoIds(ledgerVideos);
+  const missingSourceVideoCount =
+    getCreatorAccessMissingSourceVideoCount(ledgerVideos);
+
+  if (sourceVideoIds.length > 0) {
+    try {
+      const paidReport = await getCreatorAccessPaidLookupWithTimeout({
+        organizationSlug: args.organizationSlug,
+        organizationId: args.organizationId,
+        creatorId: args.creatorId,
+        sourceVideoIds,
+        startDate: args.startDate,
+        endDate: args.endDate,
+      });
+
+      if (paidReport === "timeout") {
+        warnings.push(
+          "Paid traffic matching did not finish within 25 seconds, so paid delivery remains unknown for unmatched rows. Refresh this page to retry exact paid matching.",
+        );
+      } else {
+        paidRows = paidReport.rows;
+        lookupWindowUnresolvedPostBackedGroupCount =
+          paidReport.unresolvedPostBackedGroupCount;
+        lookupWindowUnresolvedNonPostBackedGroupCount =
+          paidReport.unresolvedNonPostBackedGroupCount;
+        warnings.push(...paidReport.warnings);
+      }
+    } catch (error) {
+      errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Could not resolve paid TikTok impressions for these videos right now.";
+    }
+  }
+
+  if (missingSourceVideoCount > 0) {
+    warnings.push(
+      `${missingSourceVideoCount} local TikTok video${missingSourceVideoCount === 1 ? "" : "s"} had no TikTok post ID. They are included in the ledger, but paid-delivery matching and per-video overrides cannot be resolved for those rows.`,
+    );
+  }
+
+  const rows = buildCreatorAccessViewTallyRows({
+    videos: ledgerVideos,
+    periodRows,
+    paidRows,
+    lookupWindowUnresolvedPostBackedGroupCount,
+    lookupWindowUnresolvedNonPostBackedGroupCount,
+  }) as ViewTallyListItem[];
+
+  return buildLocalCreatorViewTallyData({
+    creatorId: args.creatorId,
+    creatorName: args.creatorName,
+    accountHandle: args.accountHandle,
+    startDate: args.startDate,
+    endDate: args.endDate,
+    rows,
+    warnings,
+    errorMessage,
+  });
+}
+
 function calculateVideoPay(args: {
   row: ViewTallyListItem;
   campaignCreator: CampaignCreatorUgcPayRow;
   deal: ResolvedUgcPayDeal;
   videoDealOverride: CampaignCreatorVideoDealUgcPayRow | null;
+  isTalking: boolean;
   includeFixedFeePerVideo: boolean;
   gainedViewCapContext: GainedViewCapContext | null;
   payMode: UgcPayMode;
@@ -1399,10 +2045,13 @@ function calculateVideoPay(args: {
     videoId: args.row.id,
     sourceVideoId: args.row.sourceVideoId,
     videoUrl: args.row.videoUrl,
+    thumbnailUrl: args.row.thumbnailUrl ?? null,
     titleOrCaption: args.row.titleOrCaption,
     publishedAt: args.row.publishedAt,
     createdAt: args.row.createdAt,
+    isTalking: args.isTalking,
     grossViews,
+    paidViews: args.row.paidViews,
     paidViewsDeducted: amountResult.paidViewsDeducted,
     payableViews: amountResult.payableViews,
     fixedFeePerVideo,
@@ -1672,14 +2321,46 @@ function getEmptyData(args: {
 export async function getOrganizationUgcPayData(args: {
   organizationSlug: string;
   searchParams?: DashboardSearchParams;
+  creatorAccess?: UgcPayCreatorAccessScope;
+  includePaidViews?: boolean;
+  topVideoLimit?: number;
 }): Promise<OrganizationUgcPayData> {
-  const membership = await requireOrganizationMembership(args.organizationSlug);
-  const campaignOptions = (await getAccessibleCampaignOptionsForMembership(membership)).map(
-    (campaign) => ({
-      id: campaign.id,
-      label: campaign.name,
-    }),
-  );
+  const membership = args.creatorAccess
+    ? null
+    : await requireOrganizationMembership(args.organizationSlug);
+  const organizationId = args.creatorAccess?.organizationId ?? membership?.organizationId;
+
+  if (!organizationId) {
+    throw new Error("Organization access denied");
+  }
+
+  const campaignOptions = (
+    args.creatorAccess
+      ? await prisma.campaign.findMany({
+          where: {
+            organizationId,
+            creators: {
+              some: {
+                creatorId: args.creatorAccess.creatorId,
+                ...(args.creatorAccess.campaignCreatorId
+                  ? { id: args.creatorAccess.campaignCreatorId }
+                  : {}),
+              },
+            },
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+          orderBy: {
+            createdAt: "desc",
+          },
+        })
+      : await getAccessibleCampaignOptionsForMembership(membership!)
+  ).map((campaign) => ({
+    id: campaign.id,
+    label: campaign.name,
+  }));
   const requestedCampaignId = getSearchParamValue(args.searchParams, "campaign");
   const selectedCampaign =
     campaignOptions.find((campaign) => campaign.id === requestedCampaignId) ??
@@ -1698,9 +2379,12 @@ export async function getOrganizationUgcPayData(args: {
     startDate,
     endDate,
   );
-  const viewWindowMode = getSelectedViewWindowMode(args.searchParams);
+  const viewWindowMode = args.creatorAccess
+    ? "all"
+    : getSelectedViewWindowMode(args.searchParams);
   const videoFetchMode = getSelectedVideoFetchMode(args.searchParams);
   const globalViewWindowDays = getSelectedGlobalViewWindowDays(args.searchParams);
+  const viewTallyTopLimit = getSearchParamValue(args.searchParams, "topLimit");
   const start = parseDateOnly(startDate);
   const end = parseDateOnly(endDate);
   const reportDateBounds = getReportDateRangeBounds({
@@ -1750,9 +2434,17 @@ export async function getOrganizationUgcPayData(args: {
 
   const campaignCreators = (await prisma.campaignCreator.findMany({
     where: {
+      ...(args.creatorAccess?.campaignCreatorId
+        ? { id: args.creatorAccess.campaignCreatorId }
+        : {}),
       campaignId: selectedCampaign.id,
-      campaign: getAccessibleCampaignWhere(membership),
+      campaign: args.creatorAccess
+        ? {
+            organizationId,
+          }
+        : getAccessibleCampaignWhere(membership!),
       creator: {
+        ...(args.creatorAccess ? { id: args.creatorAccess.creatorId } : {}),
         internalStatus: {
           not: CreatorStatus.ARCHIVED,
         },
@@ -1785,7 +2477,7 @@ export async function getOrganizationUgcPayData(args: {
       },
       deals: {
         where: {
-          organizationId: membership.organizationId,
+          organizationId,
         },
         select: {
           id: true,
@@ -1825,7 +2517,7 @@ export async function getOrganizationUgcPayData(args: {
   const videoDealOverrides = campaignCreatorIds.length
     ? ((await prisma.campaignCreatorVideoDeal.findMany({
         where: {
-          organizationId: membership.organizationId,
+          organizationId,
           campaignCreatorId: {
             in: campaignCreatorIds,
           },
@@ -1863,32 +2555,62 @@ export async function getOrganizationUgcPayData(args: {
     }
   }
 
-  const viewTallyData = await getOrganizationViewTallyData({
-    organizationSlug: args.organizationSlug,
-    searchParams: {
-      startDate,
-      endDate,
-    },
-    includeAdSpend: false,
-    includeSummaryAnalytics: false,
-  });
+  const creatorAccessViewTallyCreatorId = null;
+  const creatorAccessCampaignCreator = campaignCreators[0] ?? null;
+  const viewTallyData = args.creatorAccess
+    ? await getCreatorAccessLocalViewTallyData({
+        organizationSlug: args.organizationSlug,
+        organizationId,
+        creatorId: args.creatorAccess.creatorId,
+        creatorName:
+          creatorAccessCampaignCreator?.creator.displayName ?? "Creator",
+        accountHandle: creatorAccessCampaignCreator
+          ? getTikTokHandle(creatorAccessCampaignCreator)
+          : null,
+        startDate,
+        endDate,
+        start: reportDateBounds.start,
+        endExclusive: reportDateBounds.endExclusive,
+      })
+    : await getOrganizationViewTallyData({
+        organizationSlug: args.organizationSlug,
+        organizationId,
+        searchParams: {
+          startDate,
+          endDate,
+          ...(viewTallyTopLimit ? { topLimit: viewTallyTopLimit } : {}),
+        },
+        includeAdSpend: false,
+        includePaidViews: args.includePaidViews,
+        includeSummaryAnalytics: false,
+        topVideoLimit: args.topVideoLimit,
+      });
   const warnings = [...viewTallyData.warnings];
   let viewTallyRows = viewTallyData.rows;
 
   if (payMode === "gained" && videoFetchMode === "per-creator") {
     const perCreatorRows = await getPerCreatorViewTallyRows({
       organizationSlug: args.organizationSlug,
+      organizationId,
       campaignCreators,
       baseData: viewTallyData,
       startDate,
       endDate,
+      includePaidViews: args.includePaidViews,
+      topVideoLimit: args.topVideoLimit,
     });
     viewTallyRows = perCreatorRows.rows;
     warnings.push(...perCreatorRows.warnings);
   }
 
-  const candidatePayableRows =
-    payMode === "gained"
+  const candidatePayableRows = args.creatorAccess
+    ? filterCreatorAccessPayableRowsByMode({
+        payMode,
+        rows: viewTallyRows,
+        periodStart: reportDateBounds.start,
+        periodEndExclusive: reportDateBounds.endExclusive,
+      })
+    : payMode === "gained"
       ? viewTallyRows.filter((row) => {
           return (
             (row.views ?? 0) > 0 &&
@@ -1912,12 +2634,16 @@ export async function getOrganizationUgcPayData(args: {
     viewWindowMode === "first-days"
       ? await applyGlobalViewWindowToRows({
           organizationSlug: args.organizationSlug,
+          organizationId,
+          viewTallyCreatorId: creatorAccessViewTallyCreatorId,
           rows: candidatePayableRows,
           startDate,
           endDate,
           reportTimeZone,
           videoFetchMode,
           globalViewWindowDays,
+          includePaidViews: args.includePaidViews,
+          topVideoLimit: args.topVideoLimit,
         })
       : {
           rows: candidatePayableRows,
@@ -1925,8 +2651,13 @@ export async function getOrganizationUgcPayData(args: {
         };
   const payableRows = viewWindowAdjustedRows.rows;
   warnings.push(...viewWindowAdjustedRows.warnings);
+  const videoContentTypesBySourceVideoId = await getLocalVideoContentTypes({
+    organizationId,
+    rows: payableRows,
+  });
 
   if (
+    !args.creatorAccess &&
     videoFetchMode === "global" &&
     viewTallyData.rows.length >= VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD
   ) {
@@ -1939,9 +2670,11 @@ export async function getOrganizationUgcPayData(args: {
   let localGainedViewCapContexts = new Map<string, GainedViewCapContext>();
 
   if (payMode === "gained") {
-    if (viewWindowMode === "all") {
+    if (!args.creatorAccess && viewWindowMode === "all") {
       const providerContextResult = await getProviderGainedViewCapContexts({
         organizationSlug: args.organizationSlug,
+        organizationId,
+        viewTallyCreatorId: creatorAccessViewTallyCreatorId,
         rows: payableRows,
         startDate: videoWindowStartDate,
         endDate,
@@ -1951,7 +2684,7 @@ export async function getOrganizationUgcPayData(args: {
     }
 
     localGainedViewCapContexts = await getLocalGainedViewCapContexts({
-      organizationId: membership.organizationId,
+      organizationId,
       rows: payableRows,
       periodStart: reportDateBounds.start,
       periodEndExclusive: reportDateBounds.endExclusive,
@@ -2007,9 +2740,12 @@ export async function getOrganizationUgcPayData(args: {
       reportTimeZone,
       fallbackStartDate: start,
     });
-    const effectiveDeal = applyUgcPayVideoDealOverride(
-      baseVideoDeal,
-      videoDealOverride,
+    const effectiveDeal = applyUgcPayVideoContentTypeCpm(
+      applyUgcPayVideoDealOverride(baseVideoDeal, videoDealOverride),
+      {
+        hasVideoDealOverride: videoDealOverride != null,
+        isTalking: videoContentTypesBySourceVideoId.get(row.sourceVideoId) ?? true,
+      },
     );
     const includeFixedFeePerVideo =
       payMode === "posted" ||
@@ -2045,6 +2781,7 @@ export async function getOrganizationUgcPayData(args: {
       campaignCreator,
       deal: effectiveDeal,
       videoDealOverride,
+      isTalking: videoContentTypesBySourceVideoId.get(row.sourceVideoId) ?? true,
       includeFixedFeePerVideo,
       gainedViewCapContext,
       payMode,

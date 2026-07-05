@@ -11,6 +11,10 @@ import {
 } from "@/lib/blazie-fixed-costs";
 import {
   getInitialDetailedStatisticsOpen,
+  getNextExpandedUgcStatusDates,
+  getTikTokEmbedPlayerUrl,
+  getTikTokEmbedPostId,
+  getUgcStatusVideoViewShare,
   type UgcStatusViewVariant,
 } from "@/lib/ugc-status-view";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
@@ -55,6 +59,7 @@ type TopVideosLoadState =
     };
 
 type TopVideosByDate = Record<string, TopVideosLoadState | undefined>;
+type TopVideoRow = UgcStatusTopVideosData["ugc"][number];
 
 const currencyFormatterCache = new Map<string, Intl.NumberFormat>();
 const integerFormatter = new Intl.NumberFormat("en-US", {
@@ -106,6 +111,17 @@ function formatSignedAmount(value: number, currency: string | null) {
   return value < 0 ? `-${absoluteValue}` : absoluteValue;
 }
 
+function formatOptionalAmount(value: number | null, currency: string | null) {
+  return value === null ? "Unavailable" : formatAmount(value, currency);
+}
+
+function formatOptionalSignedAmount(
+  value: number | null,
+  currency: string | null,
+) {
+  return value === null ? "Unavailable" : formatSignedAmount(value, currency);
+}
+
 function formatViews(value: number) {
   return integerFormatter.format(value);
 }
@@ -150,17 +166,113 @@ function LabelWithTip({ label, tip }: { label: string; tip: string }) {
   );
 }
 
+function TikTokVideoModal({
+  onClose,
+  video,
+}: {
+  onClose: () => void;
+  video: TopVideoRow;
+}) {
+  const postId = getTikTokEmbedPostId({
+    sourceVideoId: video.sourceVideoId,
+    url: video.url,
+  });
+  const embedUrl = postId ? getTikTokEmbedPlayerUrl(postId) : null;
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+
+  if (!embedUrl) {
+    return null;
+  }
+
+  return (
+    <div
+      aria-label={video.title}
+      aria-modal="true"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+      role="dialog"
+    >
+      <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-[30rem] flex-col overflow-hidden rounded-[1rem] border border-white/[0.12] bg-[#0B0B0D] shadow-[0_24px_90px_rgba(0,0,0,0.65)]">
+        <div className="flex items-start justify-between gap-3 border-b border-white/[0.08] px-4 py-3">
+          <div className="min-w-0">
+            <p className="line-clamp-1 text-sm font-medium text-foreground">
+              {video.title}
+            </p>
+            <p className="mt-1 truncate text-xs text-muted-foreground">
+              {video.creatorName ?? "Unknown creator"}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {video.url ? (
+              <a
+                aria-label="Open in TikTok"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.1] bg-white/[0.04] text-muted-foreground transition hover:border-white/[0.22] hover:text-foreground"
+                href={video.url}
+                rel="noreferrer"
+                target="_blank"
+              >
+                <DashboardIcon className="h-4 w-4" name="externalLink" />
+              </a>
+            ) : null}
+            <button
+              aria-label="Close video"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.1] bg-white/[0.04] text-muted-foreground transition hover:border-white/[0.22] hover:text-foreground"
+              onClick={onClose}
+              type="button"
+            >
+              <DashboardIcon className="h-4 w-4" name="close" />
+            </button>
+          </div>
+        </div>
+        <iframe
+          allow="fullscreen; encrypted-media; picture-in-picture"
+          allowFullScreen
+          className="aspect-[9/16] max-h-[78vh] w-full bg-black"
+          loading="lazy"
+          referrerPolicy="strict-origin-when-cross-origin"
+          src={embedUrl}
+          title={video.title}
+        />
+      </div>
+    </div>
+  );
+}
+
 function TopVideoList({
   currency,
   label,
   spendLabel,
+  totalViews,
   videos,
 }: {
   currency: string | null;
   label: string;
   spendLabel: string;
+  totalViews: number;
   videos: UgcStatusTopVideosData["ugc"];
 }) {
+  const [selectedVideo, setSelectedVideo] = useState<TopVideoRow | null>(null);
+
   return (
     <div className="rounded-[1rem] border border-white/[0.08] bg-black/20 p-4">
       <div className="flex items-center justify-between gap-3">
@@ -171,18 +283,78 @@ function TopVideoList({
       </div>
 
       {videos.length > 0 ? (
-        <div className="mt-3 divide-y divide-white/[0.06]">
-          {videos.map((video, index) => (
-            <div
-              className="grid grid-cols-[2rem_minmax(0,1fr)_auto] gap-3 py-3 text-sm"
-              key={video.id}
-            >
-              <div className="text-muted-foreground">{index + 1}</div>
-              <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-2">
+        <div className="mt-4 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+          {videos.map((video, index) => {
+            const viewShare = getUgcStatusVideoViewShare(
+              video.views,
+              totalViews,
+            );
+            const embedPostId = getTikTokEmbedPostId({
+              sourceVideoId: video.sourceVideoId,
+              url: video.url,
+            });
+            const viewShareLabel =
+              viewShare === null
+                ? "Unavailable"
+                : `${formatPercent(viewShare)} of views`;
+
+            return (
+              <article
+                className="min-w-0 rounded-[0.75rem] border border-white/[0.08] bg-white/[0.035] p-2 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]"
+                key={video.id}
+              >
+                <div className="relative overflow-hidden rounded-lg border border-white/[0.08] bg-white/[0.04]">
+                  {video.thumbnailUrl ? (
+                    <img
+                      alt=""
+                      className="aspect-[4/5] w-full object-cover"
+                      loading="lazy"
+                      src={video.thumbnailUrl}
+                    />
+                  ) : (
+                    <span className="flex aspect-[4/5] w-full items-center justify-center text-[0.62rem] uppercase tracking-[0.16em] text-muted-foreground">
+                      Video
+                    </span>
+                  )}
+                  {embedPostId ? (
+                    <button
+                      aria-label={`Watch ${video.title}`}
+                      className="absolute inset-0 z-[1] flex items-center justify-center bg-black/0 text-white transition hover:bg-black/25"
+                      onClick={() => setSelectedVideo(video)}
+                      type="button"
+                    >
+                      <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-black/65 shadow-[0_12px_28px_rgba(0,0,0,0.35)]">
+                        <DashboardIcon className="h-5 w-5" name="videos" />
+                      </span>
+                    </button>
+                  ) : video.url ? (
+                    <a
+                      aria-label={`Open ${video.title}`}
+                      className="absolute inset-0 z-[1]"
+                      href={video.url}
+                      rel="noreferrer"
+                      target="_blank"
+                    />
+                  ) : null}
+                  <span className="absolute left-2 top-2 z-[2] inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-black/70 px-2 text-xs font-medium text-white shadow-[0_8px_20px_rgba(0,0,0,0.28)]">
+                    {index + 1}
+                  </span>
                   {video.url ? (
                     <a
-                      className="truncate font-medium text-foreground hover:text-white"
+                      aria-label={`Open ${video.title} in TikTok`}
+                      className="absolute right-2 top-2 z-[3] inline-flex h-7 w-7 items-center justify-center rounded-full bg-black/70 text-white shadow-[0_8px_20px_rgba(0,0,0,0.28)] transition hover:bg-black/85"
+                      href={video.url}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      <DashboardIcon className="h-3.5 w-3.5" name="externalLink" />
+                    </a>
+                  ) : null}
+                </div>
+                <div className="mt-3 min-w-0">
+                  {video.url ? (
+                    <a
+                      className="line-clamp-2 min-h-10 text-sm font-medium leading-5 text-foreground hover:text-white"
                       href={video.url}
                       rel="noreferrer"
                       target="_blank"
@@ -190,40 +362,49 @@ function TopVideoList({
                       {video.title}
                     </a>
                   ) : (
-                    <p className="truncate font-medium text-foreground">
+                    <p className="line-clamp-2 min-h-10 text-sm font-medium leading-5 text-foreground">
                       {video.title}
                     </p>
                   )}
-                  {video.url ? (
-                    <DashboardIcon
-                      aria-hidden="true"
-                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                      name="externalLink"
-                    />
-                  ) : null}
+                  <p className="mt-1 truncate text-xs text-muted-foreground">
+                    {video.creatorName ?? "Unknown creator"}
+                  </p>
                 </div>
-                <p className="mt-1 truncate text-xs text-muted-foreground">
-                  {video.creatorName ?? "Unknown creator"}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="font-medium text-foreground">
-                  {formatViews(video.views)}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {video.spend === null
-                    ? spendLabel
-                    : `${formatAmount(video.spend, currency)} ${spendLabel}`}
-                </p>
-              </div>
-            </div>
-          ))}
+                <div className="mt-3 flex items-end justify-between gap-2 border-t border-white/[0.06] pt-2">
+                  <div>
+                    <p className="text-[0.58rem] uppercase tracking-[0.16em] text-muted-foreground">
+                      Views
+                    </p>
+                    <p className="mt-1 text-sm font-medium text-foreground">
+                      {formatViews(video.views)}
+                    </p>
+                  </div>
+                  <div className="text-right text-xs">
+                    <p className="font-medium text-foreground">
+                      {viewShareLabel}
+                    </p>
+                    <p className="mt-1 text-muted-foreground">
+                      {video.spend === null
+                        ? spendLabel
+                        : `${formatAmount(video.spend, currency)} ${spendLabel}`}
+                    </p>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
       ) : (
         <p className="mt-4 text-sm text-muted-foreground">
           No video rows for this day.
         </p>
       )}
+      {selectedVideo ? (
+        <TikTokVideoModal
+          onClose={() => setSelectedVideo(null)}
+          video={selectedVideo}
+        />
+      ) : null}
     </div>
   );
 }
@@ -245,20 +426,20 @@ function TopVideosUnavailable({
 
 function TopVideosLoading() {
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      {Array.from({ length: 2 }).map((_, index) => (
-        <div
-          className="rounded-[1rem] border border-white/[0.08] bg-black/20 p-4"
-          key={index}
-        >
-          <SkeletonBlock className="h-4 w-36" />
-          <div className="mt-4 space-y-3">
-            {Array.from({ length: 5 }).map((__, itemIndex) => (
-              <SkeletonBlock className="h-9 w-full" key={itemIndex} />
-            ))}
+    <div className="rounded-[1rem] border border-white/[0.08] bg-black/20 p-4">
+      <SkeletonBlock className="h-4 w-40" />
+      <div className="mt-4 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+        {Array.from({ length: 12 }).map((_, index) => (
+          <div
+            className="rounded-[0.75rem] border border-white/[0.08] bg-white/[0.035] p-2"
+            key={index}
+          >
+            <SkeletonBlock className="aspect-[4/5] w-full" />
+            <SkeletonBlock className="mt-3 h-4 w-full" />
+            <SkeletonBlock className="mt-2 h-3 w-2/3" />
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -296,18 +477,13 @@ function TopVideosPanel({
           {topVideos.warnings[0]}
         </div>
       ) : null}
-      <div className="grid gap-4 lg:grid-cols-2">
-        <TopVideoList
-          currency={currency}
-          label="UGC videos by 30/7 gained views"
-          spendLabel="paid"
-          videos={topVideos.ugc}
-        />
-        <TopVideosUnavailable
-          message={topVideos.facelessUnavailableReason}
-          title="Faceless 30/7 gained views"
-        />
-      </div>
+      <TopVideoList
+        currency={currency}
+        label="UGC videos by 30/7 gained views"
+        spendLabel="paid"
+        totalViews={topVideos.totalViews}
+        videos={topVideos.ugc}
+      />
     </div>
   );
 }
@@ -695,7 +871,7 @@ function ReportWarningsButton({ warnings }: { warnings: string[] }) {
         <DashboardIcon className="h-4 w-4" name="warning" />
       </button>
 
-      <div className="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden w-[calc(100vw-2rem)] max-w-[38rem] rounded-[1rem] border border-[#FFD24D]/20 bg-[#17140A] p-4 text-left text-sm leading-5 text-[#FFEAB1] shadow-[0_24px_70px_rgba(0,0,0,0.45)] group-hover:block group-focus-within:block">
+      <div className="absolute right-0 top-full z-50 mt-2 hidden max-h-[min(22rem,calc(100vh-8rem))] w-[calc(100vw-2rem)] max-w-[38rem] overflow-y-auto overscroll-contain rounded-[1rem] border border-[#FFD24D]/20 bg-[#17140A] p-4 text-left text-sm leading-5 text-[#FFEAB1] shadow-[0_24px_70px_rgba(0,0,0,0.45)] group-hover:block group-focus-within:block">
         <p className="text-xs uppercase tracking-[0.2em] text-[#FFEAB1]/80">
           Report warnings
         </p>
@@ -820,7 +996,7 @@ function UgcStatusTable({
 }) {
   const isBlazie = variant === "blazie";
   const proceedsPending = isBlazie && hasPendingOrganicProceeds(data);
-  const [expandedDate, setExpandedDate] = useState<string | null>(null);
+  const [expandedDates, setExpandedDates] = useState<string[]>([]);
   const [topVideoStates, setTopVideoStates] = useState<TopVideosByDate>({});
   const searchParamsKey = useMemo(
     () => JSON.stringify(searchParams),
@@ -828,7 +1004,7 @@ function UgcStatusTable({
   );
 
   useEffect(() => {
-    setExpandedDate(null);
+    setExpandedDates([]);
     setTopVideoStates({});
   }, [data.endDate, data.startDate, searchParamsKey]);
 
@@ -851,7 +1027,7 @@ function UgcStatusTable({
     const params = new URLSearchParams();
     appendSearchParams(params, searchParams);
     params.set("date", date);
-    params.set("limit", "5");
+    params.set("limit", "12");
 
     fetch(
       `/api/org/${encodeURIComponent(organizationSlug)}/ugc-status/top-videos?${params.toString()}`,
@@ -1008,7 +1184,7 @@ function UgcStatusTable({
           </thead>
           <tbody>
             {data.rows.map((row) => {
-              const isExpanded = expandedDate === row.date;
+              const isExpanded = expandedDates.includes(row.date);
 
               return (
                 <Fragment key={row.date}>
@@ -1019,7 +1195,9 @@ function UgcStatusTable({
                         aria-label={`Toggle ${formatDate(row.date)} video breakdown`}
                         className="flex h-7 w-7 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.03] text-muted-foreground transition hover:border-white/[0.18] hover:text-foreground"
                         onClick={() => {
-                          setExpandedDate(isExpanded ? null : row.date);
+                          setExpandedDates((current) =>
+                            getNextExpandedUgcStatusDates(current, row.date),
+                          );
 
                           if (!isExpanded) {
                             loadTopVideos(row.date);
@@ -1039,7 +1217,7 @@ function UgcStatusTable({
                     <td className="border-b border-white/[0.06] px-3 py-3 text-right font-medium">
                       {proceedsPending
                         ? "Pending"
-                        : formatAmount(row.proceeds, data.currency)}
+                        : formatOptionalAmount(row.proceeds, data.currency)}
                     </td>
                     <td className="border-b border-white/[0.06] px-3 py-3 text-right">
                       {formatAmount(row.spend, data.currency)}
@@ -1065,7 +1243,7 @@ function UgcStatusTable({
                     <td className="border-b border-white/[0.06] px-3 py-3 text-right">
                       {proceedsPending
                         ? "Pending"
-                        : formatSignedAmount(row.profit, data.currency)}
+                        : formatOptionalSignedAmount(row.profit, data.currency)}
                     </td>
                     <td className="border-b border-white/[0.06] px-3 py-3 text-right">
                       {formatViews(row.views)}

@@ -131,6 +131,38 @@ test("aggregates range totals as the sum of current daily facts", () => {
   assert.deepEqual(aggregation.missingDays, []);
 });
 
+test("publishes all-in canonical UGC spend with management cost children", () => {
+  const [day] = adaptUgcPayDailyRowsToCanonicalDays({
+    context,
+    currency: "USD",
+    endDate: "2026-05-04",
+    rows: [
+      {
+        date: "2026-05-04",
+        fixedPay: 10,
+        managementCost: 32.26,
+        payableViews: 1_000,
+        totalPay: 30,
+        videoPay: 20,
+      },
+    ],
+    startDate: "2026-05-04",
+  });
+
+  assert.equal(
+    day.facts.find((fact) => fact.metricKey === "spend.ugc.total")?.value,
+    62.26,
+  );
+  assert.equal(
+    day.facts.find((fact) => fact.metricKey === "spend.ugc.pay")?.value,
+    30,
+  );
+  assert.equal(
+    day.facts.find((fact) => fact.metricKey === "spend.ugc.management")?.value,
+    32.26,
+  );
+});
+
 test("does not fabricate organic or paid source facts while Singular split is pending", () => {
   const [day] = adaptRevenueAttributionReportToCanonicalDays(
     context,
@@ -233,7 +265,7 @@ test("aggregates provenance and warnings into source breakdowns", () => {
   const [breakdown] = total.sourceBreakdown;
 
   assert.equal(total.value, 60);
-  assert.equal(breakdown.source, "ugc_pay");
+  assert.equal(breakdown.source, "ugc");
   assert.deepEqual(breakdown.days, ["2026-05-04", "2026-05-05"]);
   assert.equal(breakdown.provenance.length, 2);
   assert.deepEqual(breakdown.warnings, [
@@ -314,6 +346,10 @@ test("converts ViewsBase faceless daily rows into spend, fee, and view facts", (
   assert.equal(
     day.facts.find((fact) => fact.metricKey === "spend.faceless.total")?.value,
     136.06,
+  );
+  assert.equal(
+    day.facts.find((fact) => fact.metricKey === "spend.faceless.base")?.value,
+    120,
   );
   assert.equal(
     day.facts.find((fact) => fact.metricKey === "spend.faceless.management_fee")?.value,

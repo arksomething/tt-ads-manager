@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 import { extname, resolve as resolvePath } from "node:path";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import { pathToFileURL } from "node:url";
 
 const superwallClientMock = `
@@ -65,6 +65,29 @@ export const superwallClient = {
 const mockModules = new Map([
   ["@/server/superwall/client", superwallClientMock],
   [
+    "@/server/adapty/dashboard-client",
+    `
+let mockAppleSearchAdsDashboardReport = {
+  configured: false,
+  conversions: null,
+  installs: null,
+  revenue: null,
+  revenueBasis: null,
+  rowCount: 0,
+  spend: null,
+  warnings: [],
+};
+
+export function setMockAppleSearchAdsDashboardReport(report) {
+  mockAppleSearchAdsDashboardReport = report;
+}
+
+export async function getAppleSearchAdsDashboardReport() {
+  return mockAppleSearchAdsDashboardReport;
+}
+`,
+  ],
+  [
     "@/server/settings/managed-secrets",
     `
 export async function getSuperwallCredentials() {
@@ -88,14 +111,32 @@ export async function getSuperwallCredentials() {
   [
     "@/server/singular/reporting",
     `
-export async function getSingularSourceRevenueReport() {
-  return {
-    cohortPeriod: null,
-    configured: false,
-    isPending: false,
-    rows: [],
-    warnings: [],
+const defaultSingularSourceRevenueReport = {
+  cohortMetric: "revenue",
+  cohortPeriod: "actual",
+  configured: false,
+  isPending: false,
+  rowCount: 0,
+  rows: [],
+  totalRevenue: 0,
+  warnings: [],
+};
+
+let mockSingularSourceRevenueReport = defaultSingularSourceRevenueReport;
+
+export function resetMockSingularSourceRevenueReport() {
+  mockSingularSourceRevenueReport = defaultSingularSourceRevenueReport;
+}
+
+export function setMockSingularSourceRevenueReport(report) {
+  mockSingularSourceRevenueReport = {
+    ...defaultSingularSourceRevenueReport,
+    ...report,
   };
+}
+
+export async function getSingularSourceRevenueReport() {
+  return mockSingularSourceRevenueReport;
 }
 `,
   ],
@@ -132,7 +173,15 @@ registerHooks({
   },
 });
 
-test("queries Superwall proceeds by purchase date, not ingestion event date", async () => {
+beforeEach(async () => {
+  const { resetMockSingularSourceRevenueReport } = await import(
+    "@/server/singular/reporting"
+  );
+
+  resetMockSingularSourceRevenueReport();
+});
+
+test("explicit new proceeds model queries Superwall proceeds by purchase date", async () => {
   const { getRevenueAttributionReport } = await import(
     "../src/server/revenue/revenue.ts"
   );
@@ -143,9 +192,11 @@ test("queries Superwall proceeds by purchase date, not ingestion event date", as
   const report = await getRevenueAttributionReport({
     endDate: "2026-05-16",
     organizationSlug: "gotall",
+    proceedsModel: "new_proceeds",
     startDate: "2026-05-14",
   });
 
+  assert.equal(report.proceedsModel, "new_proceeds");
   assert.equal(report.totals.total, 150);
   assert.equal(capturedSuperwallQueries.length, 3);
 
@@ -177,7 +228,7 @@ test("queries Superwall proceeds by purchase date, not ingestion event date", as
   assert.match(capturedSuperwallQueries[0], /name = 'renewal',\s*'Renewal'/);
 });
 
-test("cohorted all model queries Superwall proceeds by attribution cohort date", async () => {
+test("defaults to cohorted all Superwall proceeds by install cohort date", async () => {
   const { getRevenueAttributionReport } = await import(
     "../src/server/revenue/revenue.ts"
   );
@@ -188,7 +239,6 @@ test("cohorted all model queries Superwall proceeds by attribution cohort date",
   const report = await getRevenueAttributionReport({
     endDate: "2026-05-16",
     organizationSlug: "gotall",
-    proceedsModel: "cohorted_all",
     startDate: "2026-05-14",
   });
 
@@ -199,14 +249,16 @@ test("cohorted all model queries Superwall proceeds by attribution cohort date",
   for (const sql of capturedSuperwallQueries) {
     assert.match(
       sql,
-      /attributionTs >= toDateTime64\('2026-05-14 00:00:00', 6, 'UTC'\)/,
+      /installDate >= toDateTime64\('2026-05-14 00:00:00', 6, 'UTC'\)/,
     );
     assert.match(
       sql,
-      /attributionTs < toDateTime64\('2026-05-17 00:00:00', 6, 'UTC'\)/,
+      /installDate < toDateTime64\('2026-05-17 00:00:00', 6, 'UTC'\)/,
     );
     assert.doesNotMatch(sql, /\bpurchasedAt >= toDateTime64/);
     assert.doesNotMatch(sql, /\bpurchasedAt < toDateTime64/);
+    assert.doesNotMatch(sql, /\battributionTs >= toDateTime64/);
+    assert.doesNotMatch(sql, /\battributionTs < toDateTime64/);
     assert.match(sql, /attributionEventId != ''/);
   }
 
@@ -217,6 +269,101 @@ test("cohorted all model queries Superwall proceeds by attribution cohort date",
   assert.equal(dailyBucketQueries.length, 2);
 
   for (const sql of dailyBucketQueries) {
-    assert.match(sql, /toDate\(attributionTs, 'UTC'\)/);
+    assert.match(sql, /toDate\(installDate, 'UTC'\)/);
   }
+});
+
+test("hides organic proceeds while Singular source cohort revenue is pending", async () => {
+  const { getRevenueAttributionReport } = await import(
+    "../src/server/revenue/revenue.ts"
+  );
+  const { setMockSingularSourceRevenueReport } = await import(
+    "@/server/singular/reporting"
+  );
+
+  setMockSingularSourceRevenueReport({
+    cohortMetric: "revenue",
+    cohortPeriod: "actual",
+    configured: true,
+    isPending: true,
+    rowCount: 1,
+    rows: [
+      {
+        conversions: 381,
+        currency: "USD",
+        installs: 378,
+        label: "Facebook",
+        points: [
+          {
+            date: "2026-05-14",
+            revenue: 0,
+            spend: 547.47,
+            spendAvailable: true,
+          },
+        ],
+        revenue: 0,
+        revenueAvailable: false,
+        source: "Facebook",
+        spend: 547.47,
+        spendAvailable: true,
+      },
+    ],
+    totalRevenue: 0,
+    warnings: [
+      "Singular returned source rows, but actual revenue is not ready for this date window yet.",
+    ],
+  });
+
+  const report = await getRevenueAttributionReport({
+    endDate: "2026-05-16",
+    organizationSlug: "gotall",
+    startDate: "2026-05-14",
+  });
+
+  assert.equal(report.sourceProvider, "singular");
+  assert.equal(report.singularPending, true);
+  assert.equal(report.totals.total, 150);
+  assert.equal(report.totals.organic, 0);
+  assert.equal(report.dailyRows[0]?.organic, null);
+  assert.equal(report.dailyRows[0]?.paid, null);
+  assert.match(
+    report.warnings.join(" "),
+    /organic \/ UGC proceeds are hidden until the paid-source split is ready/,
+  );
+});
+
+test("uses Adapty Ads Manager totals for Apple Search Ads when available", async () => {
+  const { getRevenueAttributionReport } = await import(
+    "../src/server/revenue/revenue.ts"
+  );
+  const { setMockAppleSearchAdsDashboardReport } = await import(
+    "@/server/adapty/dashboard-client"
+  );
+
+  setMockAppleSearchAdsDashboardReport({
+    configured: true,
+    conversions: 14,
+    installs: 420,
+    revenue: 248.11,
+    revenueBasis: "proceeds",
+    rowCount: 33,
+    spend: 262.26,
+    warnings: [],
+  });
+
+  const report = await getRevenueAttributionReport({
+    endDate: "2026-05-16",
+    organizationSlug: "gotall",
+    startDate: "2026-05-14",
+  });
+  const appleRow = report.sourceRows.find((row) => row.kind === "apple");
+
+  assert.ok(appleRow);
+  assert.equal(report.appleSourceProvider, "adapty");
+  assert.equal(report.appleAdsDashboardRowCount, 33);
+  assert.equal(appleRow.rawLabel, "adapty_apple_search_ads");
+  assert.equal(appleRow.revenue, 248.11);
+  assert.equal(appleRow.spend, 262.26);
+  assert.equal(appleRow.installs, 420);
+  assert.equal(appleRow.conversions, 14);
 });

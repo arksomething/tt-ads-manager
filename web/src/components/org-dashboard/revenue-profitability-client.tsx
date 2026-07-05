@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { DashboardIcon } from "@/components/org-dashboard/org-icons";
 import {
@@ -37,6 +37,7 @@ type RevenueProfitabilityDailyRow = {
   operatingSpend: number;
   proceeds: number;
   paidSpend: number | null;
+  paidSpendStatus?: "complete" | "partial" | "unavailable";
   renewalProceeds: number | null;
   ugcManagementSpend: number;
   ugcPaySpend: number;
@@ -159,6 +160,44 @@ function formatDate(value: string) {
   return Number.isNaN(parsed.getTime()) ? value : dateFormatter.format(parsed);
 }
 
+const partialSpendTooltip =
+  "Partial ad spend. Singular has not returned final cost for every paid channel yet. Values use the spend available now, so profit and ROAS may change when delayed cost rows arrive.";
+
+function PartialSpendMarker() {
+  return (
+    <span
+      aria-label={partialSpendTooltip}
+      className="group relative inline-flex h-5 w-5 items-center justify-center text-[#FF6B6B]"
+      tabIndex={0}
+      title={partialSpendTooltip}
+    >
+      <DashboardIcon className="h-3.5 w-3.5" name="warning" />
+      <span className="pointer-events-none absolute bottom-full right-0 z-20 mb-2 hidden w-72 rounded-[0.7rem] border border-[#FF6B6B]/30 bg-[#170707] p-3 text-left text-xs leading-5 text-[#FFD8D8] shadow-[0_14px_44px_rgba(0,0,0,0.35)] group-hover:block group-focus:block">
+        {partialSpendTooltip}
+      </span>
+    </span>
+  );
+}
+
+function PartialAwareValue({
+  children,
+  partial,
+}: {
+  children: ReactNode;
+  partial: boolean;
+}) {
+  if (!partial) {
+    return <>{children}</>;
+  }
+
+  return (
+    <span className="inline-flex items-center justify-end gap-1.5">
+      <span>{children}</span>
+      <PartialSpendMarker />
+    </span>
+  );
+}
+
 function appendSearchParams(
   params: URLSearchParams,
   searchParams: DashboardSearchParams,
@@ -270,7 +309,7 @@ function RevenueProfitabilityContent({
 
       <p className="mt-3 max-w-4xl text-sm leading-6 text-muted-foreground">
         Paid channel spend uses Singular `adn_cost` when Singular returns it and
-        Singular Apple Search Ads rows when available. UGC Pay is loaded from
+        Adapty Ads Manager for Apple Search Ads when available. UGC Pay is loaded from
         exact daily queries using gained views and the first 7 days, with UGC
         management prorated daily. Faceless spend uses ViewsBase&apos;s daily
         ledger total or projected price, whichever is higher, with management
@@ -283,7 +322,7 @@ function RevenueProfitabilityContent({
           label={roasCopy.primaryProceedsLabel}
           meta={
             roasCopy.primaryProceedsMetaKind === "cohorted_basis"
-              ? "Attribution-date proceeds; renewals included in source allocation"
+              ? "Install-date cohorted proceeds; renewals included in source allocation"
               : `${formatAmount(data.newProceeds, data.currency)} new + ${formatAmount(data.renewalProceeds, data.currency)} renewal`
           }
           value={formatAmount(data.totalProceeds, data.currency)}
@@ -491,9 +530,11 @@ function RevenueProfitabilityContent({
                   {formatNullableAmount(row.renewalProceeds, data.currency)}
                 </td>
                 <td className="border-b border-white/[0.06] px-3 py-3 text-right">
-                  {row.paidSpend === null
-                    ? "Unavailable"
-                    : formatAmount(row.paidSpend, data.currency)}
+                  <PartialAwareValue partial={row.paidSpendStatus === "partial"}>
+                    {row.paidSpend === null
+                      ? "Unavailable"
+                      : formatAmount(row.paidSpend, data.currency)}
+                  </PartialAwareValue>
                 </td>
                 <td className="border-b border-white/[0.06] px-3 py-3 text-right">
                   {formatAmount(row.ugcSpend, data.currency)}
@@ -505,15 +546,21 @@ function RevenueProfitabilityContent({
                   {formatAmount(row.operatingSpend, data.currency)}
                 </td>
                 <td className="border-b border-white/[0.06] px-3 py-3 text-right">
-                  {row.totalSpend === null
-                    ? "Unavailable"
-                    : formatAmount(row.totalSpend, data.currency)}
+                  <PartialAwareValue partial={row.paidSpendStatus === "partial"}>
+                    {row.totalSpend === null
+                      ? "Unavailable"
+                      : formatAmount(row.totalSpend, data.currency)}
+                  </PartialAwareValue>
                 </td>
                 <td className="border-b border-white/[0.06] px-3 py-3 text-right">
-                  {formatSignedAmount(row.profit, data.currency)}
+                  <PartialAwareValue partial={row.paidSpendStatus === "partial"}>
+                    {formatSignedAmount(row.profit, data.currency)}
+                  </PartialAwareValue>
                 </td>
                 <td className="border-b border-white/[0.06] px-3 py-3 text-right">
-                  {formatPercent(row.roas)}
+                  <PartialAwareValue partial={row.paidSpendStatus === "partial"}>
+                    {formatPercent(row.roas)}
+                  </PartialAwareValue>
                 </td>
               </tr>
             ))}

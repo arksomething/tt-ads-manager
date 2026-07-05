@@ -8,7 +8,7 @@ ALTER TABLE IF EXISTS "CampaignCreatorDeal"
   ALTER COLUMN "cpmAmount" SET DEFAULT 1;
 
 ALTER TABLE IF EXISTS "CampaignCreatorDeal"
-  ALTER COLUMN "viewWindowDays" SET DEFAULT 30;
+  ALTER COLUMN "viewWindowDays" SET DEFAULT 7;
 
 ALTER TABLE IF EXISTS "CampaignCreatorDeal"
   ALTER COLUMN "payoutCapPerVideo" SET DEFAULT 100;
@@ -18,8 +18,8 @@ SET "cpmAmount" = 1
 WHERE "cpmAmount" IS NULL;
 
 UPDATE "CampaignCreatorDeal"
-SET "viewWindowDays" = 30
-WHERE "viewWindowDays" IS NULL;
+SET "viewWindowDays" = 7
+WHERE "viewWindowDays" IS NULL OR "viewWindowDays" <> 7;
 
 UPDATE "CampaignCreatorDeal"
 SET "payoutCapPerVideo" = 100

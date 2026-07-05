@@ -346,7 +346,7 @@ export default async function PayoutsPage({
               from Singular.
             </p>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Default creator terms: $1 CPM, 30-day view window, and a $100
+              Default creator terms: $1 CPM, 7-day view window, and a $100
               per-video cap unless you save a custom override. ViewsBase-synced
               video rows are treated as a separate source and priced at $0.50 CPM
               with a $100 per-video cap and no fixed fee.
@@ -545,7 +545,7 @@ export default async function PayoutsPage({
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.28em] text-muted-foreground">
-              Creator Deals
+              Creator Terms
             </p>
             <h2 className="mt-2 text-lg font-medium tracking-[-0.04em] text-foreground">
               All creator deal terms

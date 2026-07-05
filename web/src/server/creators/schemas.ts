@@ -1,6 +1,8 @@
 import { CreatorStatus, Platform } from "@/lib/prisma-shim";
 import { z } from "zod";
 
+import { normalizeTikTokHandleInput } from "./handles";
+
 export const trackedAccountMaxVideoOptions = [
   0,
   10,
@@ -28,6 +30,23 @@ export const createCreatorSchema = z.object({
   notesSummary: z.string().max(5000).optional(),
   contactEmail: z.email().optional(),
   customTags: z.array(z.string().min(1).max(40)).default([]),
+});
+
+export const addCreatorToCampaignSchema = z.object({
+  campaignId: z.string().min(1).max(191),
+  displayName: z.string().trim().max(160).optional(),
+  tiktokHandle: z
+    .string()
+    .trim()
+    .min(1, "Enter a TikTok handle.")
+    .transform(normalizeTikTokHandleInput)
+    .pipe(
+      z
+        .string()
+        .min(2, "Enter a valid TikTok handle.")
+        .max(24, "TikTok handles must be 24 characters or fewer.")
+        .regex(/^[A-Za-z0-9._]+$/, "Use only letters, numbers, dots, and underscores."),
+    ),
 });
 
 export const trackCreatorAccountFormSchema = z.object({
@@ -68,6 +87,9 @@ export const setCreatorStatusSchema = z.object({
 });
 
 export type CreateCreatorInput = z.infer<typeof createCreatorSchema>;
+export type AddCreatorToCampaignInput = z.infer<
+  typeof addCreatorToCampaignSchema
+>;
 export type TrackCreatorAccountFormInput = z.infer<
   typeof trackCreatorAccountFormSchema
 >;

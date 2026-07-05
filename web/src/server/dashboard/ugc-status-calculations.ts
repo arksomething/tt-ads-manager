@@ -23,7 +23,9 @@ export type UgcStatusMetrics = {
 export type UgcStatusTopVideoRow = {
   creatorName: string | null;
   id: string;
+  sourceVideoId: string | null;
   spend: number | null;
+  thumbnailUrl?: string | null;
   title: string;
   url: string | null;
   views: number;
@@ -44,6 +46,10 @@ function getRatio(numerator: number, denominator: number) {
 function perThousand(value: number, views: number) {
   const ratio = getRatio(value, views);
   return ratio === null ? null : ratio * 1_000;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 export function calculateUgcStatusMetrics(
@@ -145,12 +151,21 @@ export function getUgcStatusDailyProceedsMap(args: {
         return [date, roundCurrency(Math.max(row.organic, 0))];
       }
 
-      const nonRenewalProceeds =
-        row?.newProceeds ??
-        (row ? Math.max(row.total - (row.renewal ?? 0), 0) : 0);
-      const paidProceeds = row?.paid ?? 0;
+      if (!row || !isFiniteNumber(row.paid)) {
+        return [date, null];
+      }
 
-      return [date, roundCurrency(Math.max(nonRenewalProceeds - paidProceeds, 0))];
+      const nonRenewalProceeds = isFiniteNumber(row.newProceeds)
+        ? row.newProceeds
+        : isFiniteNumber(row.renewal)
+          ? Math.max(row.total - row.renewal, 0)
+          : null;
+
+      if (!isFiniteNumber(nonRenewalProceeds)) {
+        return [date, null];
+      }
+
+      return [date, roundCurrency(Math.max(nonRenewalProceeds - row.paid, 0))];
     }),
   );
 }
@@ -166,6 +181,22 @@ export function selectTopUgcStatusVideos(
   limit = 5,
 ): UgcStatusTopVideoRow[] {
   return [...videos].sort((a, b) => b.views - a.views).slice(0, limit);
+}
+
+export function getUgcStatusTopVideoViewTotal(
+  videos: UgcStatusTopVideoRow[],
+) {
+  return videos.reduce(
+    (total, video) => total + Math.max(Math.round(video.views), 0),
+    0,
+  );
+}
+
+export function getUgcStatusOrganicViewCount(args: {
+  grossViews: number;
+  paidViews: number | null;
+}) {
+  return Math.max(Math.round(args.grossViews - (args.paidViews ?? 0)), 0);
 }
 
 function addDateOnlyDays(value: string, days: number) {

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  NON_TALKING_VIDEO_CPM_AMOUNT,
+  applyUgcPayVideoContentTypeCpm,
   applyUgcPayVideoDealOverride,
   calculateUgcPayVideoAmounts,
 } from "../src/server/ugc-pay/calculations.ts";
@@ -88,6 +90,36 @@ test("per-video CPM override replaces the creator CPM for that video", () => {
   assert.equal(withOverride.cpmAmount, 7);
   assert.equal(withOverride.cpmPay, 84);
   assert.equal(withOverride.videoPay, 84);
+});
+
+test("non-talking videos use the content CPM unless a video override exists", () => {
+  const creatorDeal = deal({ cpmAmount: 2 });
+  const nonTalkingDeal = applyUgcPayVideoContentTypeCpm(creatorDeal, {
+    isTalking: false,
+    hasVideoDealOverride: false,
+  });
+  const explicitOverrideDeal = applyUgcPayVideoContentTypeCpm(
+    applyUgcPayVideoDealOverride(creatorDeal, {
+      fixedFeePerVideo: null,
+      cpmAmount: 7,
+      paidTrafficMetric: "IMPRESSIONS",
+      deductPaidTraffic: true,
+      viewCapPerVideo: null,
+      payoutCapPerVideo: null,
+      perVideoCapScope: "NONE",
+      notes: null,
+    }),
+    {
+      isTalking: false,
+      hasVideoDealOverride: true,
+    },
+  );
+
+  assert.equal(NON_TALKING_VIDEO_CPM_AMOUNT, 0.5);
+  assert.equal(nonTalkingDeal.cpmAmount, NON_TALKING_VIDEO_CPM_AMOUNT);
+  assert.equal(calculateWithDeal(nonTalkingDeal).cpmPay, 6);
+  assert.equal(explicitOverrideDeal.cpmAmount, 7);
+  assert.equal(calculateWithDeal(explicitOverrideDeal).cpmPay, 84);
 });
 
 test("per-video fixed fee and total cap still use the overridden CPM", () => {
@@ -241,7 +273,7 @@ function creatorDeal(overrides = {}) {
     paidTrafficMetric: "IMPRESSIONS",
     deductPaidTraffic: true,
     viewCapPerVideo: null,
-    viewWindowDays: 30,
+    viewWindowDays: 7,
     payoutCapPerVideo: 100,
     perVideoCapScope: "NONE",
     payoutCapTotal: null,
@@ -265,6 +297,7 @@ function videoRow(overrides = {}) {
     titleOrCaption: "Video",
     publishedAt: new Date("2026-05-04T00:00:00.000Z"),
     createdAt: new Date("2026-05-04T00:00:00.000Z"),
+    isTalking: true,
     grossViews: 10_000,
     paidViewsDeducted: 0,
     payableViews: 10_000,
@@ -343,7 +376,7 @@ function creatorForm(overrides = {}) {
     cpmAmount: "3",
     paidTrafficMetric: "IMPRESSIONS",
     viewCapPerVideo: "",
-    viewWindowDays: "30",
+    viewWindowDays: "7",
     payoutCapPerVideo: "100",
     perVideoCapScope: "NONE",
     payoutCapTotal: "",
@@ -408,6 +441,57 @@ test("local creator deal save recalculates only the creator rows from existing v
     recalculated.videos.map((video) => video.videoPay).sort((left, right) => left - right),
     [15, 30],
   );
+});
+
+test("local creator deal save preserves non-talking video CPM", () => {
+  const creator = creatorRow({
+    videos: [
+      videoRow({
+        isTalking: false,
+        cpmAmount: 0.5,
+        cpmPay: 5,
+        videoPay: 5,
+      }),
+      videoRow({
+        videoId: "video-2",
+        sourceVideoId: "source-video-2",
+        grossViews: 5_000,
+        payableViews: 5_000,
+        cpmPay: 5,
+        videoPay: 5,
+      }),
+    ],
+  });
+  const nextDeal = getCreatorDealFromForm(
+    creator,
+    creatorForm({
+      cpmAmount: "4",
+    }),
+  );
+  const recalculated = recalculateCreatorWithDeal({
+    creator,
+    deal: nextDeal,
+    hasCustomDeal: true,
+    options: {
+      startDate: "2026-05-01",
+      endDate: "2026-05-09",
+      payMode: "posted",
+    },
+  });
+  const nonTalkingVideo = recalculated.videos.find(
+    (row) => row.sourceVideoId === "source-video-1",
+  );
+  const talkingVideo = recalculated.videos.find(
+    (row) => row.sourceVideoId === "source-video-2",
+  );
+
+  assert.ok(nonTalkingVideo);
+  assert.ok(talkingVideo);
+  assert.equal(nonTalkingVideo.cpmAmount, 0.5);
+  assert.equal(nonTalkingVideo.videoPay, 5);
+  assert.equal(talkingVideo.cpmAmount, 4);
+  assert.equal(talkingVideo.videoPay, 20);
+  assert.equal(recalculated.totalPay, 25);
 });
 
 test("local per-video override save recalculates the selected video and creator totals", () => {

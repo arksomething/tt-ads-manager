@@ -13,6 +13,7 @@ import {
 import { requireOrganizationMembership } from "@/server/auth/organizations";
 import { getOrganizationUgcPayData } from "@/server/ugc-pay/queries";
 import { getViewsBaseFacelessReport } from "@/server/viewsbase/report";
+import { getUgcManagementDailyCost } from "@/server/revenue/creator-costs";
 
 import {
   getCanonicalFreshness,
@@ -294,6 +295,7 @@ async function getUgcPayDailyRows(args: {
         date,
         fixedPay: data.summary.fixedPay,
         grossViews: data.summary.grossViews,
+        managementCost: getUgcManagementDailyCost(date),
         paidViewsDeducted: data.summary.paidViewsDeducted,
         payableViews: data.summary.payableViews,
         totalPay: data.summary.totalPay,

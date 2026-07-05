@@ -88,6 +88,7 @@ export type RevenueProfitabilityDailyRow = {
   operatingSpend: number;
   proceeds: number;
   paidSpend: number | null;
+  paidSpendStatus?: "complete" | "partial" | "unavailable";
   renewalProceeds: number | null;
   ugcManagementSpend: number;
   ugcPaySpend: number;
@@ -287,6 +288,8 @@ function buildProfitabilityRows(args: {
             ? "Proceeds only; spend unavailable"
             : row.spendStatus === "partial"
               ? "Partial Singular spend + proceeds"
+            : row.kind === "apple" && row.rawLabel === "adapty_apple_search_ads"
+              ? "Adapty Apple Ads spend + proceeds"
             : row.kind === "apple" && row.rawLabel === "superwall_apple_search_ads"
               ? "Superwall proceeds + Singular spend"
               : "Singular spend + proceeds",
@@ -501,6 +504,11 @@ export function buildRevenueProfitabilityData(args: {
       proceeds: row.total,
     }).total;
     const paidSpend = row.paidSpend;
+    const paidSpendStatus =
+      row.paidSpendStatus ??
+      (typeof paidSpend === "number" && Number.isFinite(paidSpend)
+        ? "complete"
+        : "unavailable");
     const totalSpend =
       typeof paidSpend === "number" && Number.isFinite(paidSpend)
         ? roundCurrency(
@@ -517,6 +525,7 @@ export function buildRevenueProfitabilityData(args: {
       newProceeds: row.newProceeds ?? null,
       operatingSpend,
       paidSpend,
+      paidSpendStatus,
       proceeds: row.total,
       profit,
       renewalProceeds: row.renewal ?? null,

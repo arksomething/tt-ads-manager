@@ -1,6 +1,11 @@
 import { Platform, SparkAuthorizationStatus } from "@/lib/prisma-shim";
 
 import { prisma } from "@/lib/db";
+import {
+  canUseSingularCreativeIdAsVideoSignal,
+  getSingularRowsForTikTokAdGroup,
+  type SingularRowAssociationMode,
+} from "@/lib/singular-row-association";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
 import {
   getTikTokSingularOverlay,
@@ -1103,6 +1108,7 @@ async function resolveExactItemIdsFromSingular(args: {
       title: string | null;
     }>;
   }>;
+  singularMatchMode?: SingularRowAssociationMode;
 }): Promise<ExactItemIdFallbackResult> {
   const unresolvedGroups = args.groups.filter((group) => group.itemIds.length === 0);
 
@@ -1202,39 +1208,45 @@ async function resolveExactItemIdsFromSingular(args: {
   let groupsResolvedByPostUrl = 0;
   let groupsWithoutExactVideoSignal = 0;
   let groupsMatchedByAdId = 0;
+  let groupsBlockedByNameOnlyMatch = 0;
   let ambiguousGroups = 0;
 
   for (const group of unresolvedGroups) {
-    const matchedRows = new Map<string, (typeof singular.rows)[number]>();
+    const association = getSingularRowsForTikTokAdGroup({
+      groupAdId: group.adId,
+      groupNameKeys: getAdCandidateNameKeys(group),
+      groupIdsByNameKey,
+      rowsByCreativeId,
+      rowsByNameKey,
+      mode: args.singularMatchMode,
+    });
 
-    for (const row of rowsByCreativeId.get(group.adId) ?? []) {
-      matchedRows.set(row.rowKey, row);
+    if (association.blockedNameOnlyMatch) {
+      groupsBlockedByNameOnlyMatch += 1;
     }
 
-    for (const nameKey of getAdCandidateNameKeys(group)) {
-      if ((groupIdsByNameKey.get(nameKey)?.size ?? 0) !== 1) {
-        continue;
-      }
-
-      for (const row of rowsByNameKey.get(nameKey) ?? []) {
-        matchedRows.set(row.rowKey, row);
-      }
-    }
-
-    if (matchedRows.size === 0) {
+    if (association.rows.length === 0) {
       continue;
     }
 
     groupsMatchedBySingular += 1;
-    if ((rowsByCreativeId.get(group.adId)?.length ?? 0) > 0) {
+    if (association.matchedByAdId) {
       groupsMatchedByAdId += 1;
     }
     const sourcesByItemId = new Map<string, Set<TikTokVideoPaidAttributionSource>>();
 
-    for (const row of matchedRows.values()) {
+    for (const row of association.rows) {
       const creativeId = row.creativeId?.trim() ?? "";
 
-      if (creativeId.length > 0 && itemIdSet.has(creativeId)) {
+      if (
+        creativeId.length > 0 &&
+        itemIdSet.has(creativeId) &&
+        canUseSingularCreativeIdAsVideoSignal({
+          creativeId,
+          groupAdId: group.adId,
+          mode: args.singularMatchMode,
+        })
+      ) {
         addSetMapEntry(sourcesByItemId, creativeId, "singular_creative_id");
       }
 
@@ -1356,6 +1368,11 @@ async function resolveExactItemIdsFromSingular(args: {
             "Singular could not line up the unresolved TikTok ad groups with creative rows in this date window.",
           ]
         : []),
+      ...(groupsBlockedByNameOnlyMatch > 0
+        ? [
+            `Singular had creative-name matches for ${groupsBlockedByNameOnlyMatch} unresolved TikTok ad group${groupsBlockedByNameOnlyMatch === 1 ? "" : "s"}, but creator payout matching requires an exact TikTok ad ID before those rows can affect pay.`,
+          ]
+        : []),
       ...(groupsMatchedByAdId > 0
         ? [
             `Singular lined up ${groupsMatchedByAdId} unresolved TikTok ad group${groupsMatchedByAdId === 1 ? "" : "s"} by TikTok ad ID.`,
@@ -1372,6 +1389,7 @@ async function resolveExactItemIdsFromAdMetadata(args: {
   startDate: string;
   endDate: string;
   rows: TikTokPaidViewsRow[];
+  singularMatchMode?: SingularRowAssociationMode;
 }): Promise<ExactItemIdFallbackResult> {
   const rowsNeedingResolution = args.rows.filter((row) => row.adId && !row.itemId);
 
@@ -1477,6 +1495,7 @@ async function resolveExactItemIdsFromAdMetadata(args: {
     startDate: args.startDate,
     endDate: args.endDate,
     groups: fallback.groups,
+    singularMatchMode: args.singularMatchMode,
   });
 
   for (const [itemId, paidViews] of singularFallback.paidViewsByItemId.entries()) {
@@ -3463,15 +3482,18 @@ export async function getPaidViewsForItemIdsForOrganization(args: {
 
 export async function getPaidViewsForSourceVideosForCreatorForOrganization(args: {
   organizationSlug: string;
+  organizationId?: string;
   creatorId: string;
   sourceVideoIds: string[];
   startDate: QueryDateInput;
   endDate: QueryDateInput;
   metric?: TikTokPaidViewMetric;
 }): Promise<TikTokSourceVideoPaidViewsResult> {
-  const membership = await requireOrganizationMembership(args.organizationSlug);
+  const organizationId =
+    args.organizationId ??
+    (await requireOrganizationMembership(args.organizationSlug)).organizationId;
   await resolveCreatorById({
-    organizationId: membership.organizationId,
+    organizationId,
     creatorId: args.creatorId,
   });
   const startDate = parseDateInput(args.startDate, "start date");
@@ -3502,7 +3524,7 @@ export async function getPaidViewsForSourceVideosForCreatorForOrganization(args:
   let accessToken: string | null = null;
 
   try {
-    const accountLookup = await getOrgTikTokAccount(membership.organizationId);
+    const accountLookup = await getOrgTikTokAccount(organizationId);
     advertiserId = accountLookup.account.advertiserId;
     accessToken = accountLookup.account.accessToken;
     accountWarnings = accountLookup.warnings;
@@ -3546,7 +3568,7 @@ export async function getPaidViewsForSourceVideosForCreatorForOrganization(args:
   }
 
   const itemIdsBySourceVideoId = await getCreatorSparkItemIdsBySourceVideo({
-    organizationId: membership.organizationId,
+    organizationId,
     creatorId: args.creatorId,
     advertiserId,
     sourceVideoIds,
@@ -3583,14 +3605,15 @@ export async function getPaidViewsForSourceVideosForCreatorForOrganization(args:
     Set<TikTokVideoPaidAttributionSource>
   >();
   const fallbackResolution = rowsIncludeAdIds
-    ? await resolveExactItemIdsFromAdMetadata({
-        advertiserId,
-        accessToken,
-        itemIds: candidateItemIds,
-        startDate: toDateOnlyString(startDate),
-        endDate: toDateOnlyString(endDate),
-        rows: normalizedRows,
-      })
+      ? await resolveExactItemIdsFromAdMetadata({
+          advertiserId,
+          accessToken,
+          itemIds: candidateItemIds,
+          startDate: toDateOnlyString(startDate),
+          endDate: toDateOnlyString(endDate),
+          rows: normalizedRows,
+          singularMatchMode: "exact-ad-id-only",
+        })
     : getEmptyExactItemIdFallbackResult();
 
   if (rowsIncludeItemIds) {
@@ -3875,6 +3898,7 @@ export async function getPaidViewTimelineForSourceVideosForCreatorForOrganizatio
         startDate: toDateOnlyString(startDate),
         endDate: toDateOnlyString(endDate),
         rows: normalizedRows,
+        singularMatchMode: "exact-ad-id-only",
       })
     : getEmptyExactItemIdFallbackResult();
 

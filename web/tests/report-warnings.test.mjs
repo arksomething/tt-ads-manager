@@ -33,12 +33,18 @@ test("summarizes verbose UGC status provider diagnostics", () => {
     "Could not associate Ali Haider with a local creator record, so paid TikTok delivery cannot be attributed to these View Tally rows.",
     "View Tally returned 100 video rows while applying the 7-day view window for 2026-05-15 to 2026-05-17. Lower-view rows may be missing from this clipped window.",
     "Singular is still preparing the report for this date window. This page will check again automatically.",
+    "Singular is still preparing the source proceeds report, so organic / UGC proceeds are hidden until the paid-source split is ready.",
+    "Singular source proceeds report status is started. This page will check again automatically.",
+    "Singular returned source rows, but actual revenue is not ready for this date window yet.",
+    "Singular report status is queued. This page will check again automatically and reuse the export once it is ready.",
+    "Singular report status is started. This page will check again automatically and reuse the export once it is ready.",
   ]);
 
   assert.deepEqual(result, [
     "Some Snapchat/Singular rows are Pacific-day aggregates mapped to UTC; exact UTC-day splitting would require hourly exports.",
-    "Singular is still preparing the report for this date window. This page will check again automatically.",
     "Singular spend is incomplete for Facebook and TikTok Ads; profit may change as delayed cost rows arrive.",
+    "Singular is still preparing one or more report exports. This page will check again automatically.",
+    "Singular source proceeds are not ready for this window; organic / UGC proceeds are hidden until the paid-source split is ready.",
     "TikTok paid-delivery matching is partial for this window; some ad groups lack exact post IDs or creative metadata, so per-video paid deductions may be incomplete.",
     "2 creators not linked to local creator records; paid TikTok delivery may not be attributed to those View Tally rows.",
     "View Tally hit its 100-row response cap for part of this window; lower-view UGC rows may be missing.",

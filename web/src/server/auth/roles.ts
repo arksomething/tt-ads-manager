@@ -34,6 +34,24 @@ export function canReadOrganizationCampaignData(role: OrganizationRole) {
   return canManageOrganization(role) || isBlazieOnlyOrganizationRole(role);
 }
 
+export function canOpenCreatorPayLinks(role: OrganizationRole) {
+  return canManageOrganization(role) || isBlazieOnlyOrganizationRole(role);
+}
+
+export function canManageCreatorDeals(role: OrganizationRole) {
+  return canManageOrganization(role) || isBlazieOnlyOrganizationRole(role);
+}
+
+export function canEditCreatorPortalDealTerms(args: {
+  campaignCanManage?: boolean;
+  organizationRole?: OrganizationRole | null;
+}) {
+  return Boolean(
+    (args.organizationRole && canManageCreatorDeals(args.organizationRole)) ||
+      args.campaignCanManage,
+  );
+}
+
 export function canManageOrganizationRole(
   viewerRole: OrganizationRole,
   targetRole: OrganizationRole,

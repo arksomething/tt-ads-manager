@@ -75,18 +75,18 @@ export function hasPendingBlazieOrganicProceeds(args: {
   proceeds: number;
   warnings: readonly string[];
 }) {
-  if (normalizeCurrencyInput(args.proceeds) > 0) {
-    return false;
-  }
-
   return args.warnings.some((warning) => {
     const normalizedWarning = warning.toLowerCase();
 
     return (
       normalizedWarning.includes("organic / ugc proceeds are hidden") ||
       normalizedWarning.includes("source split is still preparing") ||
+      normalizedWarning.includes("singular source proceeds are not ready") ||
+      (normalizedWarning.includes("singular returned source rows") &&
+        normalizedWarning.includes("revenue is not ready")) ||
       (normalizedWarning.includes("source proceeds report") &&
-        normalizedWarning.includes("still preparing"))
+        (normalizedWarning.includes("still preparing") ||
+          normalizedWarning.includes("status is")))
     );
   });
 }

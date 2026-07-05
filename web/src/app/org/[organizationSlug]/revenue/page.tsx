@@ -394,13 +394,17 @@ function SourceBreakdownTable({ report }: { report: RevenueAttributionReport }) 
         <p className="text-sm text-muted-foreground">
           {report.sourceProvider === "singular"
             ? `Singular ${report.singularCohortPeriod ?? ""} source split${
-                report.appleSourceProvider === "superwall"
+                report.appleSourceProvider === "adapty"
+                  ? " plus Adapty Apple Ads"
+                  : report.appleSourceProvider === "superwall"
                   ? " plus Superwall Apple Search Ads"
                   : report.appleSourceProvider === "singular"
                     ? " plus Singular Apple Search Ads"
                   : ""
               }`
-            : report.appleSourceProvider === "superwall"
+            : report.appleSourceProvider === "adapty"
+              ? "Superwall source split plus Adapty Apple Ads"
+              : report.appleSourceProvider === "superwall"
               ? "Superwall source split plus Apple Search Ads"
               : "Superwall source split"}
         </p>
@@ -507,14 +511,14 @@ export default async function RevenuePage({
             </h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
               Total proceeds use {proceedsModelConfig.description} Apple Ads
-              proceeds use Superwall Apple Search Ads attribution when present.
+              proceeds, spend, and installs use Adapty Ads Manager when present.
               Renewal proceeds use Superwall renewal-type events: new purchases
               and trial conversions are new proceeds, renewals are
               existing-subscriber proceeds.
             </p>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Apple Search Ads spend is filled from Singular when its source
-              report includes Apple Ads rows.
+              Apple Search Ads falls back to Superwall attribution and Singular
+              source rows when Adapty does not return dashboard totals.
             </p>
           </div>
 
@@ -543,7 +547,9 @@ export default async function RevenuePage({
           />
           <SummaryPill
             label={`Apple Ads ${
-              report.appleSourceProvider === "superwall"
+              report.appleSourceProvider === "adapty"
+                ? `Adapty ${report.appleAdsDashboardRowCount} rows`
+                : report.appleSourceProvider === "superwall"
                 ? `Superwall ${report.appleAdsDashboardRowCount} rows`
                 : report.appleSourceProvider === "singular"
                   ? "Singular"
@@ -723,6 +729,8 @@ export default async function RevenuePage({
           meta={
             report.appleSourceProvider === "none"
               ? "No Apple Search Ads revenue found"
+              : report.appleSourceProvider === "adapty"
+                ? `${formatPercent(report.totals.appleShare)} of total proceeds from Adapty Apple Ads`
               : report.appleSourceProvider === "superwall"
                 ? `${formatPercent(report.totals.appleShare)} of total proceeds from Superwall Apple Search Ads`
                 : `${formatPercent(report.totals.appleShare)} of total proceeds from Singular Apple Search Ads`

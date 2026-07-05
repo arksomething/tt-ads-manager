@@ -37,7 +37,20 @@ export const setVideoReviewSchema = z.object({
   action: z.enum(["mark-reviewed", "clear-reviewed"]),
 });
 
+export const setVideoTalkingStatusSchema = z.object({
+  videoId: z.string().min(1).max(191).optional(),
+  sourceVideoId: z.string().min(1).max(255).optional(),
+  platform: z.nativeEnum(Platform).default(Platform.TIKTOK),
+  action: z.enum(["mark-talking", "mark-non-talking"]),
+}).refine((value) => value.videoId || value.sourceVideoId, {
+  message: "Choose a video to update.",
+  path: ["sourceVideoId"],
+});
+
 export type CreateVideoInput = z.infer<typeof createVideoSchema>;
 export type VideoFiltersInput = z.infer<typeof videoFiltersSchema>;
 export type TrackVideoInput = z.infer<typeof trackVideoSchema>;
 export type SetVideoReviewInput = z.infer<typeof setVideoReviewSchema>;
+export type SetVideoTalkingStatusInput = z.infer<
+  typeof setVideoTalkingStatusSchema
+>;

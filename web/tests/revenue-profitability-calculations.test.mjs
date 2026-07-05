@@ -30,14 +30,14 @@ test("builds exact UGC Pay query params for revenue profitability", () => {
   );
 });
 
-test("defaults revenue UGC Pay video window to one month before the report", () => {
+test("defaults revenue UGC Pay video window to seven days before the report", () => {
   assert.equal(
     getRevenueUgcPaySearchParams({
       endDate: "2026-05-09",
       searchParams: {},
       startDate: "2026-05-03",
     }).videoWindowStartDate,
-    "2026-04-03",
+    "2026-04-27",
   );
 });
 

@@ -8,7 +8,10 @@ import { unstable_cache } from "next/cache";
 
 import { prisma } from "@/lib/db";
 import { timeAsync, timeSync } from "@/lib/server-timing";
-import { canManageOrganization } from "@/server/auth/roles";
+import {
+  canManageOrganization,
+  canReadOrganizationCampaignData,
+} from "@/server/auth/roles";
 import {
   ViralAppApiError,
   viralAppClient,
@@ -55,6 +58,46 @@ export type ImportedVideoListItem = {
   creatorName: string;
   accountHandle: string | null;
   thumbnailUrl?: string;
+};
+
+export type VideoManagerListItem = {
+  id: string;
+  sourceVideoId: string;
+  videoUrl: string;
+  titleOrCaption: string | null;
+  platform: Platform;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  publishedAt: Date | null;
+  createdAt: Date;
+  isTalking: boolean;
+  campaignId: string | null;
+  campaignName: string | null;
+  creatorId: string;
+  creatorName: string;
+  accountHandle: string | null;
+  thumbnailUrl?: string;
+};
+
+export type OrganizationVideoManagerData = {
+  creatorOptions: Array<{
+    id: string;
+    label: string;
+    meta?: string;
+  }>;
+  selectedCreatorId: string | null;
+  startDate: string;
+  endDate: string;
+  warnings: string[];
+  errorMessage: string | null;
+  rows: VideoManagerListItem[];
+  totalCount: number;
+  rowLimit: number;
+  isLimited: boolean;
+  talkingCount: number;
+  nonTalkingCount: number;
+  canManageTalkingStatus: boolean;
 };
 
 export type ReviewQueueVideoItem = {
@@ -201,6 +244,7 @@ const VIEW_TALLY_AD_SPEND_TIMEOUT_MS = 20000;
 const VIEW_TALLY_SPEND_CONTENT_LOOKUP_TIMEOUT_MS = 4500;
 const VIEW_TALLY_SPEND_CONTENT_LOOKUP_LIMIT = 30;
 const VIEW_TALLY_TOP_LIMIT_OPTIONS = [5, 10, 25, 50, 100] as const;
+const VIDEO_MANAGER_ROW_LIMIT = 5;
 
 type ViewTallyCreatorOption = OrganizationViewTallyData["creatorOptions"][number];
 
@@ -961,6 +1005,69 @@ const getTrackedTikTokAccounts = unstable_cache(
   },
 );
 
+function normalizeViewTallyHandle(value: string | null | undefined) {
+  const normalized = value?.trim().replace(/^@/, "").toLowerCase();
+  return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function normalizeViewTallyName(value: string | null | undefined) {
+  const normalized = value?.trim().replace(/\s+/g, " ").toLowerCase();
+  return normalized && normalized.length > 0 ? normalized : null;
+}
+
+export async function resolveViewTallyCreatorIdForLocalCreator(args: {
+  organizationId: string;
+  creatorId: string;
+}) {
+  const localCreator = await prisma.creator.findFirst({
+    where: {
+      id: args.creatorId,
+      organizationId: args.organizationId,
+    },
+    select: {
+      displayName: true,
+      platformAccounts: {
+        where: {
+          platform: Platform.TIKTOK,
+        },
+        select: {
+          handle: true,
+        },
+      },
+    },
+  });
+
+  if (!localCreator) {
+    return null;
+  }
+
+  const localHandles = new Set(
+    (localCreator.platformAccounts as Array<{ handle: string }>)
+      .map((account) => normalizeViewTallyHandle(account.handle))
+      .filter((handle): handle is string => Boolean(handle)),
+  );
+  const localName = normalizeViewTallyName(localCreator.displayName);
+  const trackedAccounts = await getTrackedTikTokAccounts();
+
+  for (const account of trackedAccounts) {
+    if (localHandles.has(normalizeViewTallyHandle(account.username) ?? "")) {
+      return account.id;
+    }
+  }
+
+  if (localName) {
+    const nameMatches = trackedAccounts.filter(
+      (account) => normalizeViewTallyName(account.displayName) === localName,
+    );
+
+    if (nameMatches.length === 1) {
+      return nameMatches[0]?.id ?? null;
+    }
+  }
+
+  return null;
+}
+
 async function getTrackedTikTokVideosUncached(args?: {
   search?: string;
 }) {
@@ -1026,13 +1133,14 @@ async function getProviderAnalyticsTopVideosUncached(args: {
   orgAccountId?: string | null;
   startDate: string;
   endDate: string;
+  limit?: number;
 }) {
   const response = await viralAppClient.request<unknown>({
     path: "/analytics/top-videos",
     query: {
       ...buildProviderAnalyticsQuery(args),
       metric: "viewCountInPeriod",
-      limit: 100,
+      limit: args.limit ?? 100,
     },
   });
 
@@ -1049,11 +1157,13 @@ const getProviderAnalyticsTopVideos = unstable_cache(
     orgAccountId: string | null | undefined,
     startDate: string,
     endDate: string,
+    limit?: number,
   ) =>
     getProviderAnalyticsTopVideosUncached({
       orgAccountId,
       startDate,
       endDate,
+      limit,
     }),
   ["view-tally-provider-analytics-top-videos"],
   {
@@ -1276,6 +1386,144 @@ export async function getOrganizationImportedVideosPage(args: {
         getAccountImageUrl(video.rawPayload) ??
         getAccountImageUrl(video.creatorPlatformAccount?.rawPayload),
     })) satisfies ImportedVideoListItem[],
+  };
+}
+
+async function getVideoTalkingStatusBySourceVideoId(args: {
+  organizationId: string;
+  rows: ViewTallyListItem[];
+}) {
+  const sourceVideoIds = [
+    ...new Set(
+      args.rows
+        .map((row) => row.sourceVideoId)
+        .filter((value): value is string => value.length > 0),
+    ),
+  ];
+
+  if (sourceVideoIds.length === 0) {
+    return new Map<string, boolean>();
+  }
+
+  const [classifications, localVideos] = await Promise.all([
+    prisma.videoContentClassification.findMany({
+      where: {
+        organizationId: args.organizationId,
+        platform: Platform.TIKTOK,
+        sourceVideoId: {
+          in: sourceVideoIds,
+        },
+      },
+      select: {
+        sourceVideoId: true,
+        isTalking: true,
+      },
+    }),
+    prisma.video.findMany({
+      where: {
+        platform: Platform.TIKTOK,
+        sourceVideoId: {
+          in: sourceVideoIds,
+        },
+        creator: {
+          organizationId: args.organizationId,
+        },
+      },
+      select: {
+        sourceVideoId: true,
+        isTalking: true,
+      },
+    }),
+  ]);
+  const statusBySourceVideoId = new Map<string, boolean>();
+
+  for (const video of localVideos) {
+    if (video.sourceVideoId) {
+      statusBySourceVideoId.set(video.sourceVideoId, video.isTalking);
+    }
+  }
+
+  for (const classification of classifications) {
+    statusBySourceVideoId.set(
+      classification.sourceVideoId,
+      classification.isTalking,
+    );
+  }
+
+  return statusBySourceVideoId;
+}
+
+export async function getOrganizationVideoManagerData(args: {
+  organizationSlug: string;
+  startDate: string;
+  endDate: string;
+  creatorId?: string | null;
+}): Promise<OrganizationVideoManagerData> {
+  const shellData = await getOrganizationDashboardShellData(args.organizationSlug);
+  const canManageTalkingStatus = canReadOrganizationCampaignData(
+    shellData.membership.role,
+  );
+  const viewTallyData = await getOrganizationViewTallyData({
+    organizationSlug: args.organizationSlug,
+    searchParams: {
+      creator: args.creatorId ?? VIEW_TALLY_ALL_CREATORS_ID,
+      startDate: args.startDate,
+      endDate: args.endDate,
+      topLimit: String(VIDEO_MANAGER_ROW_LIMIT),
+    },
+    includeAdSpend: false,
+    includePaidViews: false,
+    includeSummaryAnalytics: false,
+    topVideoLimit: VIDEO_MANAGER_ROW_LIMIT,
+  });
+  const talkingStatusBySourceVideoId = await getVideoTalkingStatusBySourceVideoId({
+    organizationId: shellData.membership.organizationId,
+    rows: viewTallyData.rows,
+  });
+  const rows = viewTallyData.rows.map((video) => {
+    const isTalking =
+      talkingStatusBySourceVideoId.get(video.sourceVideoId) ?? true;
+
+    return {
+      id: video.id,
+      sourceVideoId: video.sourceVideoId,
+      videoUrl: video.videoUrl,
+      titleOrCaption: video.titleOrCaption,
+      platform: Platform.TIKTOK,
+      views: video.views,
+      likes: null,
+      comments: null,
+      publishedAt: video.publishedAt,
+      createdAt: video.createdAt,
+      isTalking,
+      campaignId: null,
+      campaignName: "View Tally",
+      creatorId:
+        viewTallyData.selectedCreator?.id ??
+        video.accountHandle ??
+        video.creatorName,
+      creatorName: video.creatorName,
+      accountHandle: video.accountHandle,
+      thumbnailUrl: video.thumbnailUrl,
+    } satisfies VideoManagerListItem;
+  });
+  const talkingCount = rows.filter((row) => row.isTalking).length;
+  const nonTalkingCount = rows.length - talkingCount;
+
+  return {
+    creatorOptions: viewTallyData.creatorOptions,
+    selectedCreatorId: viewTallyData.selectedCreator?.id ?? null,
+    startDate: args.startDate,
+    endDate: args.endDate,
+    warnings: viewTallyData.warnings,
+    errorMessage: viewTallyData.errorMessage,
+    rows,
+    totalCount: rows.length,
+    rowLimit: VIDEO_MANAGER_ROW_LIMIT,
+    isLimited: rows.length >= VIDEO_MANAGER_ROW_LIMIT,
+    talkingCount,
+    nonTalkingCount,
+    canManageTalkingStatus,
   };
 }
 
@@ -1625,19 +1873,24 @@ export async function getOrganizationViewTallyAdSpendData(args: {
 
 export async function getOrganizationViewTallyData(args: {
   organizationSlug: string;
+  organizationId?: string;
   searchParams?: DashboardSearchParams;
   includeAdSpend?: boolean;
   includePaidViews?: boolean;
   includeSummaryAnalytics?: boolean;
+  topVideoLimit?: number;
 }): Promise<OrganizationViewTallyData> {
-  const shellData = await timeAsync(
-    "view-tally.shell",
-    {
-      organizationSlug: args.organizationSlug,
-    },
-    () => getOrganizationDashboardShellData(args.organizationSlug),
-  );
-  const organizationId = shellData.membership.organizationId;
+  const organizationId =
+    args.organizationId ??
+    (
+      await timeAsync(
+        "view-tally.shell",
+        {
+          organizationSlug: args.organizationSlug,
+        },
+        () => getOrganizationDashboardShellData(args.organizationSlug),
+      )
+    ).membership.organizationId;
   let warnings: string[] = [];
   let errorMessage: string | null = null;
   let trackedAccounts: TrackedTikTokAccountRecord[] = [];
@@ -1851,6 +2104,7 @@ export async function getOrganizationViewTallyData(args: {
             selectedAnalyticsOrgAccountId,
             startDate,
             endDate,
+            args.topVideoLimit,
           ),
           getProviderAnalyticsTopAccounts(
             selectedAnalyticsOrgAccountId,
@@ -1907,6 +2161,7 @@ export async function getOrganizationViewTallyData(args: {
             selectedAnalyticsOrgAccountId,
             startDate,
             endDate,
+            args.topVideoLimit,
           ),
       );
     } catch (error) {
@@ -2092,6 +2347,7 @@ export async function getOrganizationViewTallyData(args: {
           const paidReport =
             await getPaidViewsForSourceVideosForCreatorForOrganization({
               organizationSlug: args.organizationSlug,
+              organizationId: args.organizationId,
               creatorId: paidLookupCreatorId,
               sourceVideoIds,
               startDate,

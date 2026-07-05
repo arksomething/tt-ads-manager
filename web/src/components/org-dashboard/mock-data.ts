@@ -17,6 +17,8 @@ export type DashboardSectionKey =
   | "ugc-pay"
   | "ugc-status"
   | "blazie"
+  | "video-manager"
+  | "format-comparison"
   | "tiktok-paid-views"
   | "revenue"
   | "campaigns"
@@ -225,6 +227,18 @@ export const dashboardNavGroups: DashboardNavGroup[] = [
         icon: "creators",
       },
       {
+        key: "video-manager",
+        label: "Video Manager",
+        segment: "video-manager",
+        icon: "videos",
+      },
+      {
+        key: "format-comparison",
+        label: "Format Comparison",
+        segment: "format-comparison",
+        icon: "compare",
+      },
+      {
         key: "tiktok-paid-views",
         label: "Ad Profit",
         segment: "tiktok-paid-views",
@@ -344,6 +358,20 @@ export const dashboardRouteMeta: Record<DashboardSectionKey, DashboardRouteMeta>
     description:
       "This route gives a plain recommendation, bottom-line profit/loss, and UGC + faceless ROAS without fixed costs mixed into ROAS.",
   },
+  "video-manager": {
+    groupLabel: "Analytics",
+    navLabel: "Video Manager",
+    title: "Classify creator videos for talking and non-talking CPM treatment.",
+    description:
+      "This route lets Blazie mark tracked videos as talking or non-talking before UGC pay applies video-level CPM rules.",
+  },
+  "format-comparison": {
+    groupLabel: "Analytics",
+    navLabel: "Format Comparison",
+    title: "Compare manually tagged UGC video formats by revenue per thousand views.",
+    description:
+      "This route lets Blazie tag arbitrary video formats and rank those formats by Revenue organic proceeds allocated over UGC gained views.",
+  },
   "tiktok-paid-views": {
     groupLabel: "Analytics",
     navLabel: "Ad Profit",
@@ -462,7 +490,12 @@ export function canAccessDashboardSection(
   role: string | null | undefined,
   section: DashboardSectionKey,
 ) {
-  return role === "BLAZIE" ? section === "blazie" : true;
+  return role === "BLAZIE"
+    ? section === "blazie" ||
+        section === "ugc-pay" ||
+        section === "video-manager" ||
+        section === "format-comparison"
+    : true;
 }
 
 export function getDefaultDashboardHrefForRole(
@@ -474,6 +507,18 @@ export function getDefaultDashboardHrefForRole(
     : getDashboardHref(organizationSlug, "");
 }
 
+export function getDashboardWorkspaceEntryHref({
+  organization,
+  role,
+}: {
+  organization: {
+    slug: string;
+  };
+  role: string | null | undefined;
+}) {
+  return getDefaultDashboardHrefForRole(organization.slug, role);
+}
+
 export function getDashboardNavGroupsForRole(role: string | null | undefined) {
   if (role !== "BLAZIE") {
     return dashboardNavGroups;
@@ -482,7 +527,13 @@ export function getDashboardNavGroupsForRole(role: string | null | undefined) {
   return dashboardNavGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => item.key === "blazie"),
+      items: group.items.filter(
+        (item) =>
+          item.key === "blazie" ||
+          item.key === "ugc-pay" ||
+          item.key === "video-manager" ||
+          item.key === "format-comparison",
+      ),
     }))
     .filter((group) => group.items.length > 0);
 }
@@ -948,6 +999,40 @@ export const placeholderSectionData: Record<
       { label: "Recommendation", value: "Plain text", status: "Ready" },
       { label: "Profit/loss", value: "After fixed costs", status: "Ready" },
       { label: "ROAS", value: "No fixed costs", status: "Ready" },
+    ],
+  },
+  "video-manager": {
+    eyebrow: "Video manager",
+    spotlightTitle: "Talking status is managed from the live Video Manager.",
+    spotlightDescription:
+      "The route filters tracked videos by creator and post date, then persists talking status for CPM treatment.",
+    highlights: ["Talking status", "Creator filter", "$0.50 CPM"],
+    statCards: [
+      { label: "Default status", value: "Talking" },
+      { label: "Non-talking CPM", value: "$0.50" },
+      { label: "Source", value: "Tracked videos" },
+    ],
+    rows: [
+      { label: "Status edits", value: "Live page", status: "Ready" },
+      { label: "UGC Pay", value: "Uses status", status: "Ready" },
+      { label: "Blazie access", value: "Enabled", status: "Ready" },
+    ],
+  },
+  "format-comparison": {
+    eyebrow: "Format comparison",
+    spotlightTitle: "Manual format tags rank UGC videos by revenue per 1K views.",
+    spotlightDescription:
+      "The live route allocates Revenue organic proceeds across UGC gained views, then groups tagged videos by arbitrary format labels.",
+    highlights: ["Manual tags", "Revenue / 1K", "Blazie access"],
+    statCards: [
+      { label: "Metric", value: "Revenue / 1K views" },
+      { label: "Tags", value: "Manual" },
+      { label: "Rows", value: "Expanded" },
+    ],
+    rows: [
+      { label: "Format tags", value: "Persisted per video", status: "Ready" },
+      { label: "Revenue", value: "Organic proceeds", status: "Ready" },
+      { label: "Views", value: "UGC gained views", status: "Ready" },
     ],
   },
   "tiktok-paid-views": {

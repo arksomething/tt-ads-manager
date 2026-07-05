@@ -5,6 +5,12 @@ environment setup, local-only previews, or "works on my machine" instructions.
 When a change is requested, make the repo change, verify it as much as practical,
 and ship it to the production target.
 
+This repo may have concurrent agents and a dirty working tree. Do not treat
+uncommitted or unrelated local changes as a reason to pause, request extra
+approval, or avoid production deployment. The owner accepts that production
+deploys ship the current working tree. Preserve unrelated changes, verify the
+requested work, and deploy.
+
 ## Web Production
 
 The web app is deployed on Vercel. The linked Vercel project metadata is already

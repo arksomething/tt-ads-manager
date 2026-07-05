@@ -1,11 +1,13 @@
 "use server";
 
+import { addCreatorToCampaignForOrganization } from "@/server/creators/mutations";
 import {
   deleteCampaignCreatorDealForOrganization,
   deleteCampaignCreatorVideoDealForOrganization,
   upsertCampaignCreatorDealForOrganization,
   upsertCampaignCreatorVideoDealForOrganization,
 } from "@/server/payouts/mutations";
+import { setVideoTalkingStatusForOrganization } from "@/server/videos/mutations";
 
 type UgcPayDealActionResult =
   | {
@@ -141,6 +143,52 @@ export async function clearVideoDeal(
       organizationSlug,
       input: {
         campaignCreatorId: getTrimmedFormValue(formData, "campaignCreatorId"),
+        sourceVideoId: getTrimmedFormValue(formData, "sourceVideoId"),
+      },
+    });
+
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: getActionErrorMessage(error),
+    };
+  }
+}
+
+export async function addCreatorToUgcPay(
+  organizationSlug: string,
+  formData: FormData,
+): Promise<UgcPayDealActionResult> {
+  try {
+    await addCreatorToCampaignForOrganization({
+      organizationSlug,
+      input: {
+        campaignId: getTrimmedFormValue(formData, "campaignId"),
+        displayName: getTrimmedFormValue(formData, "displayName") || undefined,
+        tiktokHandle: getTrimmedFormValue(formData, "tiktokHandle"),
+      },
+    });
+
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: getActionErrorMessage(error),
+    };
+  }
+}
+
+export async function setUgcPayVideoTalkingStatus(
+  organizationSlug: string,
+  formData: FormData,
+): Promise<UgcPayDealActionResult> {
+  try {
+    await setVideoTalkingStatusForOrganization({
+      organizationSlug,
+      input: {
+        action: getTrimmedFormValue(formData, "action"),
+        platform: getTrimmedFormValue(formData, "platform") || undefined,
         sourceVideoId: getTrimmedFormValue(formData, "sourceVideoId"),
       },
     });

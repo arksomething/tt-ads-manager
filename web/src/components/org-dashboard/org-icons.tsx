@@ -19,6 +19,7 @@ export type DashboardIconName =
   | "settings"
   | "chevronDown"
   | "chevronRight"
+  | "close"
   | "externalLink"
   | "refresh"
   | "calendar"
@@ -186,6 +187,13 @@ export function DashboardIcon({
       return (
         <svg {...commonProps}>
           <path d="m7.6 5.2 4.8 4.8-4.8 4.8" />
+        </svg>
+      );
+    case "close":
+      return (
+        <svg {...commonProps}>
+          <path d="m5.4 5.4 9.2 9.2" />
+          <path d="m14.6 5.4-9.2 9.2" />
         </svg>
       );
     case "externalLink":

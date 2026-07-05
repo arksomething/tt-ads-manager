@@ -1,4 +1,5 @@
 import {
+  applyUgcPayVideoContentTypeCpm,
   calculateUgcPayVideoAmounts,
   normalizeMoney,
   type UgcPayVideoDealOverride,
@@ -53,6 +54,7 @@ type UgcPayVideoRow = {
   titleOrCaption: string | null;
   publishedAt: Date | null;
   createdAt: Date;
+  isTalking: boolean;
   grossViews: number;
   paidViewsDeducted: number;
   payableViews: number;
@@ -209,26 +211,33 @@ function recalculateVideo(args: {
   videoOverride: UgcPayVideoDealOverride | null;
   payMode: UgcPayMode;
 }) {
-  const effectiveDeal: UgcPayDeal = args.videoOverride
-    ? {
-        ...args.creatorDeal,
-        fixedFeePerVideo: args.videoOverride.fixedFeePerVideo,
-        cpmAmount: args.videoOverride.cpmAmount ?? args.creatorDeal.cpmAmount,
-        paidTrafficMetric: parsePaidTrafficMetric(
-          args.videoOverride.paidTrafficMetric,
-          args.creatorDeal.paidTrafficMetric,
-        ),
-        deductPaidTraffic: args.videoOverride.deductPaidTraffic,
-        viewCapPerVideo: args.videoOverride.viewCapPerVideo,
-        payoutCapPerVideo:
-          args.videoOverride.payoutCapPerVideo ?? args.creatorDeal.payoutCapPerVideo,
-        perVideoCapScope: parsePerVideoCapScope(
-          args.videoOverride.perVideoCapScope,
-          args.creatorDeal.perVideoCapScope,
-        ),
-        notes: args.videoOverride.notes ?? args.creatorDeal.notes,
-      }
-    : args.creatorDeal;
+  const effectiveDeal: UgcPayDeal = applyUgcPayVideoContentTypeCpm(
+    args.videoOverride
+      ? {
+          ...args.creatorDeal,
+          fixedFeePerVideo: args.videoOverride.fixedFeePerVideo,
+          cpmAmount: args.videoOverride.cpmAmount ?? args.creatorDeal.cpmAmount,
+          paidTrafficMetric: parsePaidTrafficMetric(
+            args.videoOverride.paidTrafficMetric,
+            args.creatorDeal.paidTrafficMetric,
+          ),
+          deductPaidTraffic: args.videoOverride.deductPaidTraffic,
+          viewCapPerVideo: args.videoOverride.viewCapPerVideo,
+          payoutCapPerVideo:
+            args.videoOverride.payoutCapPerVideo ??
+            args.creatorDeal.payoutCapPerVideo,
+          perVideoCapScope: parsePerVideoCapScope(
+            args.videoOverride.perVideoCapScope,
+            args.creatorDeal.perVideoCapScope,
+          ),
+          notes: args.videoOverride.notes ?? args.creatorDeal.notes,
+        }
+      : args.creatorDeal,
+    {
+      hasVideoDealOverride: args.videoOverride != null,
+      isTalking: args.video.isTalking,
+    },
+  );
   const fixedFeePerVideo = effectiveDeal.fixedFeePerVideo ?? 0;
   const amountResult = calculateUgcPayVideoAmounts({
     grossViews: args.video.grossViews,

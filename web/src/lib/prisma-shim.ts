@@ -356,6 +356,20 @@ export interface CampaignCreator {
   updatedAt: Date;
 }
 
+export interface CreatorPortalAccess {
+  id: string;
+  organizationId: string;
+  creatorId: string;
+  campaignCreatorId: string | null;
+  linkTokenHash: string;
+  encryptedLinkToken: string | null;
+  codeHash: string;
+  codePrefix: string;
+  revokedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface CampaignCreatorDeal {
   id: string;
   organizationId: string;
@@ -412,8 +426,20 @@ export interface Video {
   engagementRate: number | null;
   contentTags: string[];
   hookSummary: string | null;
+  isTalking: boolean;
   rawPayload: Prisma.JsonValue | null | null;
   lastSyncedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface VideoContentClassification {
+  id: string;
+  organizationId: string;
+  platform: Platform;
+  sourceVideoId: string;
+  isTalking: boolean;
+  formatTag: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -829,6 +855,11 @@ export namespace Prisma {
   export type CampaignCreatorSelect = GenericSelect;
   export type CampaignCreatorCreateInput = GenericInput;
   export type CampaignCreatorUpdateInput = GenericInput;
+  export type CreatorPortalAccessWhereInput = GenericWhereInput;
+  export type CreatorPortalAccessOrderByWithRelationInput = GenericOrderByInput;
+  export type CreatorPortalAccessSelect = GenericSelect;
+  export type CreatorPortalAccessCreateInput = GenericInput;
+  export type CreatorPortalAccessUpdateInput = GenericInput;
   export type CampaignCreatorDealWhereInput = GenericWhereInput;
   export type CampaignCreatorDealOrderByWithRelationInput = GenericOrderByInput;
   export type CampaignCreatorDealSelect = GenericSelect;
@@ -844,6 +875,11 @@ export namespace Prisma {
   export type VideoSelect = GenericSelect;
   export type VideoCreateInput = GenericInput;
   export type VideoUpdateInput = GenericInput;
+  export type VideoContentClassificationWhereInput = GenericWhereInput;
+  export type VideoContentClassificationOrderByWithRelationInput = GenericOrderByInput;
+  export type VideoContentClassificationSelect = GenericSelect;
+  export type VideoContentClassificationCreateInput = GenericInput;
+  export type VideoContentClassificationUpdateInput = GenericInput;
   export type VideoReviewWhereInput = GenericWhereInput;
   export type VideoReviewOrderByWithRelationInput = GenericOrderByInput;
   export type VideoReviewSelect = GenericSelect;
@@ -969,9 +1005,11 @@ export namespace Prisma {
     CreatorPlatformAccount: "CreatorPlatformAccount",
     CreatorMetricsSnapshot: "CreatorMetricsSnapshot",
     CampaignCreator: "CampaignCreator",
+    CreatorPortalAccess: "CreatorPortalAccess",
     CampaignCreatorDeal: "CampaignCreatorDeal",
     CampaignCreatorVideoDeal: "CampaignCreatorVideoDeal",
     Video: "Video",
+    VideoContentClassification: "VideoContentClassification",
     VideoReview: "VideoReview",
     VideoMetricsSnapshot: "VideoMetricsSnapshot",
     OrganizationTwilioConfig: "OrganizationTwilioConfig",

@@ -23,10 +23,13 @@ import {
 import {
   calculateUgcStatusMetrics,
   getUgcStatusDailyProceedsMap,
+  getUgcStatusOrganicViewCount,
   getUgcStatusSummaryProceeds,
   getUgcStatusSpendByDate,
   getUgcStatusTopVideoSearchParams,
+  getUgcStatusTopVideoViewTotal,
   selectTopUgcStatusVideos,
+  type UgcStatusMetricInputs,
   type UgcStatusMetrics,
   type UgcStatusTopVideoRow,
 } from "./ugc-status-calculations";
@@ -39,13 +42,29 @@ type FacelessSpendReport = {
   report: ViewsBaseFacelessReport | null;
 };
 
-export type UgcStatusDailyRow = UgcStatusMetrics & {
+type UgcStatusDailyMetrics = Omit<
+  UgcStatusMetrics,
+  | "margin"
+  | "proceeds"
+  | "proceedsPerThousandViews"
+  | "profit"
+  | "profitPerThousandViews"
+  | "roas"
+> & {
+  margin: number | null;
+  proceeds: number | null;
+  proceedsPerThousandViews: number | null;
+  profit: number | null;
+  profitPerThousandViews: number | null;
+  roas: number | null;
+};
+
+export type UgcStatusDailyRow = UgcStatusDailyMetrics & {
   date: string;
   facelessBaseSpend: number;
   facelessManagementSpend: number;
   facelessSpend: number;
   facelessViews: number;
-  proceeds: number;
   ugcCpmSpend: number;
   ugcFixedSpend: number;
   ugcManagementSpend: number;
@@ -87,10 +106,39 @@ export type UgcStatusTopVideosData = {
   facelessUnavailableReason: string;
   limit: number;
   lookbackDays: number;
+  totalViews: number;
   ugc: UgcStatusTopVideoRow[];
   viewWindowDays: number;
   warnings: string[];
 };
+
+function calculateUgcStatusDailyMetrics(
+  inputs: Omit<UgcStatusMetricInputs, "proceeds"> & {
+    proceeds: number | null;
+  },
+): UgcStatusDailyMetrics {
+  if (inputs.proceeds !== null) {
+    return calculateUgcStatusMetrics({
+      ...inputs,
+      proceeds: inputs.proceeds,
+    });
+  }
+
+  const baseMetrics = calculateUgcStatusMetrics({
+    ...inputs,
+    proceeds: 0,
+  });
+
+  return {
+    ...baseMetrics,
+    margin: null,
+    proceeds: null,
+    proceedsPerThousandViews: null,
+    profit: null,
+    profitPerThousandViews: null,
+    roas: null,
+  };
+}
 
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -129,20 +177,28 @@ function getUgcVideoTitle(video: UgcPayVideoRow) {
 }
 
 export function getTopUgcStatusVideos(
-  videos: UgcPayVideoRow[],
+  videos: UgcStatusTopVideoRow[],
   limit = 5,
 ): UgcStatusTopVideoRow[] {
-  return selectTopUgcStatusVideos(
-    videos.map((video) => ({
-      creatorName: video.creatorName,
-      id: video.videoId,
-      spend: video.videoPay,
-      title: getUgcVideoTitle(video),
-      url: video.videoUrl,
-      views: video.payableViews,
-    })),
-    limit,
-  );
+  return selectTopUgcStatusVideos(videos, limit);
+}
+
+export function getUgcStatusVideoRows(
+  videos: UgcPayVideoRow[],
+): UgcStatusTopVideoRow[] {
+  return videos.map((video) => ({
+    creatorName: video.creatorName,
+    id: video.videoId,
+    sourceVideoId: video.sourceVideoId,
+    spend: video.videoPay,
+    thumbnailUrl: video.thumbnailUrl ?? null,
+    title: getUgcVideoTitle(video),
+    url: video.videoUrl,
+    views: getUgcStatusOrganicViewCount({
+      grossViews: video.grossViews,
+      paidViews: video.paidViews,
+    }),
+  }));
 }
 
 export async function getUgcStatusTopVideosData(args: {
@@ -151,7 +207,7 @@ export async function getUgcStatusTopVideosData(args: {
   organizationSlug: string;
   searchParams: DashboardSearchParams;
 }): Promise<UgcStatusTopVideosData> {
-  const limit = Math.max(Math.min(args.limit ?? 5, 25), 1);
+  const limit = Math.max(Math.min(args.limit ?? 12, 25), 1);
   const lookbackDays = 30;
   const viewWindowDays = 7;
   const ugcPayData = await getOrganizationUgcPayData({
@@ -163,6 +219,7 @@ export async function getUgcStatusTopVideosData(args: {
       viewWindowDays,
     }),
   });
+  const ugcVideoRows = getUgcStatusVideoRows(ugcPayData.videos);
 
   return {
     date: args.date,
@@ -170,7 +227,8 @@ export async function getUgcStatusTopVideosData(args: {
       "Faceless 30-day lookback and 7-day gained-view video deltas are not available from UGC Pay.",
     limit,
     lookbackDays,
-    ugc: getTopUgcStatusVideos(ugcPayData.videos, limit),
+    totalViews: getUgcStatusTopVideoViewTotal(ugcVideoRows),
+    ugc: getTopUgcStatusVideos(ugcVideoRows, limit),
     viewWindowDays,
     warnings: summarizeUgcStatusWarnings([
       ...ugcPayData.warnings,
@@ -314,7 +372,7 @@ export async function getUgcStatusData(args: {
       ugcPaySpend: reconciledUgcSpend.spend,
       ugcSpend: ugcDailySpend,
       ugcViews: ugc.views,
-      ...calculateUgcStatusMetrics({
+      ...calculateUgcStatusDailyMetrics({
         facelessViews: faceless.views,
         proceeds,
         spend,

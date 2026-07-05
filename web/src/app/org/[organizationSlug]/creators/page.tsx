@@ -429,7 +429,7 @@ function getDealCpmAmount(
 function getDealViewWindowDays(
   deal: { viewWindowDays: number | null } | null | undefined,
 ) {
-  return Math.max(deal?.viewWindowDays ?? 30, 1);
+  return Math.max(deal?.viewWindowDays ?? 7, 1);
 }
 
 function getDealPayoutCapPerVideo(

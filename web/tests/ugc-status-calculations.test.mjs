@@ -5,9 +5,11 @@ import {
   allocateTotalByDailyWeights,
   calculateUgcStatusMetrics,
   getUgcStatusDailyProceedsMap,
+  getUgcStatusOrganicViewCount,
   getUgcStatusSummaryProceeds,
   getUgcStatusSpendByDate,
   getUgcStatusTopVideoSearchParams,
+  getUgcStatusTopVideoViewTotal,
   selectTopUgcStatusVideos,
 } from "../src/server/dashboard/ugc-status-calculations.ts";
 
@@ -80,7 +82,7 @@ test("allocates evenly when daily proceeds weights are unavailable", () => {
 
 test("calculates UGC status proceeds from Revenue organic proceeds", () => {
   const proceeds = getUgcStatusDailyProceedsMap({
-    dates: ["2026-05-04", "2026-05-05", "2026-05-06"],
+    dates: ["2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07"],
     dailyRows: [
       {
         date: "2026-05-04",
@@ -109,10 +111,19 @@ test("calculates UGC status proceeds from Revenue organic proceeds", () => {
         renewal: 0,
         total: 100,
       },
+      {
+        date: "2026-05-07",
+        newProceeds: 500,
+        organic: null,
+        paid: null,
+        paidSpend: null,
+        renewal: 0,
+        total: 500,
+      },
     ],
   });
 
-  assert.deepEqual([...proceeds.values()], [475, 650, 0]);
+  assert.deepEqual([...proceeds.values()], [475, 650, 0, null]);
   assert.equal(
     getUgcStatusSummaryProceeds({
       organicProceeds: 1_425,
@@ -154,17 +165,131 @@ test("reconciles daily UGC spend back to the UGC Pay summary total", () => {
 
 test("selects the requested top UGC status videos by views", () => {
   const videos = [
-    { id: "1", title: "one", creatorName: "A", url: null, views: 10, spend: 1 },
-    { id: "2", title: "two", creatorName: "B", url: null, views: 60, spend: 6 },
-    { id: "3", title: "three", creatorName: "C", url: null, views: 20, spend: 2 },
-    { id: "4", title: "four", creatorName: "D", url: null, views: 50, spend: 5 },
-    { id: "5", title: "five", creatorName: "E", url: null, views: 40, spend: 4 },
-    { id: "6", title: "six", creatorName: "F", url: null, views: 30, spend: 3 },
+    {
+      id: "1",
+      sourceVideoId: "1",
+      title: "one",
+      creatorName: "A",
+      url: null,
+      views: 10,
+      spend: 1,
+    },
+    {
+      id: "2",
+      sourceVideoId: "2",
+      title: "two",
+      creatorName: "B",
+      url: null,
+      views: 60,
+      spend: 6,
+    },
+    {
+      id: "3",
+      sourceVideoId: "3",
+      title: "three",
+      creatorName: "C",
+      url: null,
+      views: 20,
+      spend: 2,
+    },
+    {
+      id: "4",
+      sourceVideoId: "4",
+      title: "four",
+      creatorName: "D",
+      url: null,
+      views: 50,
+      spend: 5,
+    },
+    {
+      id: "5",
+      sourceVideoId: "5",
+      title: "five",
+      creatorName: "E",
+      url: null,
+      views: 40,
+      spend: 4,
+    },
+    {
+      id: "6",
+      sourceVideoId: "6",
+      title: "six",
+      creatorName: "F",
+      url: null,
+      views: 30,
+      spend: 3,
+    },
   ];
 
   assert.deepEqual(
     selectTopUgcStatusVideos(videos, 3).map((video) => video.id),
     ["2", "4", "5"],
+  );
+});
+
+test("totals all UGC status top-video views before limiting the card list", () => {
+  const videos = [
+    {
+      id: "1",
+      sourceVideoId: "1",
+      title: "one",
+      creatorName: "A",
+      url: null,
+      views: 10,
+      spend: 1,
+    },
+    {
+      id: "2",
+      sourceVideoId: "2",
+      title: "two",
+      creatorName: "B",
+      url: null,
+      views: 60,
+      spend: 6,
+    },
+    {
+      id: "3",
+      sourceVideoId: "3",
+      title: "three",
+      creatorName: "C",
+      url: null,
+      views: 20,
+      spend: 2,
+    },
+  ];
+
+  assert.equal(getUgcStatusTopVideoViewTotal(videos), 90);
+  assert.equal(selectTopUgcStatusVideos(videos, 1)[0]?.views, 60);
+});
+
+test("calculates UGC status video ranking views before payout caps", () => {
+  assert.equal(
+    getUgcStatusOrganicViewCount({
+      grossViews: 349_020,
+      paidViews: 0,
+    }),
+    349_020,
+  );
+  assert.equal(
+    getUgcStatusOrganicViewCount({
+      grossViews: 10_000,
+      paidViews: 3_000,
+    }),
+    7_000,
+  );
+  assert.equal(
+    getUgcStatusOrganicViewCount({
+      grossViews: 2_000,
+      paidViews: 3_000,
+    }),
+    0,
+  );
+  assert.equal(
+    getUgcStatusOrganicViewCount({
+      grossViews: 1_500,
+      paidViews: null,
+    }),
+    1_500,
   );
 });
 

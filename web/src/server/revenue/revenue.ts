@@ -1,4 +1,8 @@
 import {
+  getAppleSearchAdsDashboardReport,
+  type AppleSearchAdsDashboardReport,
+} from "@/server/adapty/dashboard-client";
+import {
   SuperwallApiError,
   superwallClient,
   type SuperwallQueryScope,
@@ -41,12 +45,12 @@ export type RevenueProceedsModelConfig = {
   shortLabel: string;
   description: string;
   dateBasisLabel: string;
-  dateColumn: "purchasedAt" | "attributionTs";
+  dateColumn: "purchasedAt" | "installDate";
   excludesRenewalsFromOrganic: boolean;
 };
 
 export const DEFAULT_REVENUE_PROCEEDS_MODEL: RevenueProceedsModel =
-  "new_proceeds";
+  "cohorted_all";
 
 export const REVENUE_PROCEEDS_MODELS: RevenueProceedsModelConfig[] = [
   {
@@ -64,9 +68,9 @@ export const REVENUE_PROCEEDS_MODELS: RevenueProceedsModelConfig[] = [
     label: "Cohorted all proceeds",
     shortLabel: "Cohorted all",
     description:
-      "Superwall proceeds bucketed by attribution cohort date, with renewal proceeds included in the attributed source / organic allocation.",
-    dateBasisLabel: "attribution cohort date",
-    dateColumn: "attributionTs",
+      "Superwall proceeds bucketed by install cohort date, with renewal proceeds included in the attributed source / organic allocation.",
+    dateBasisLabel: "install cohort date",
+    dateColumn: "installDate",
     excludesRenewalsFromOrganic: false,
   },
 ];
@@ -104,6 +108,8 @@ export type RevenueAttributionSourceRow = {
   conversions: number | null;
 };
 
+type RevenueSpendStatus = "complete" | "partial" | "unavailable";
+
 export type RevenueAttributionDailyRow = {
   date: string;
   total: number;
@@ -114,7 +120,9 @@ export type RevenueAttributionDailyRow = {
   apple: number | null;
   organic: number | null;
   paidSpend: number | null;
+  paidSpendStatus?: RevenueSpendStatus;
   tiktokSpend: number | null;
+  tiktokSpendStatus?: RevenueSpendStatus;
 };
 
 export type RevenueProviderTimeZoneRow = {
@@ -136,7 +144,7 @@ export type RevenueAttributionReport = {
   attributionDimension: "superwall_source";
   tiktokPatterns: string[];
   sourceProvider: "singular" | "superwall" | "none";
-  appleSourceProvider: "superwall" | "singular" | "none";
+  appleSourceProvider: "adapty" | "superwall" | "singular" | "none";
   currency: string | null;
   totals: {
     total: number;
@@ -171,7 +179,7 @@ export type AppleSearchAdsRevenueReport = {
   conversions: number | null;
   installs: number | null;
   revenue: number | null;
-  revenueBasis: "proceeds" | null;
+  revenueBasis: "proceeds" | "net" | "gross" | null;
   rowCount: number;
   spend: number | null;
   warnings: string[];
@@ -1044,8 +1052,9 @@ function rebuildOrganicSourceRow(args: {
 }
 
 function buildAppleSearchAdsRow(args: {
-  appleReport: AppleSearchAdsRevenueReport;
+  appleReport: AppleSearchAdsRevenueReport | AppleSearchAdsDashboardReport;
   fallbackRows: RevenueAttributionSourceRow[];
+  rawLabel: string;
   totalRevenue: number;
 }) {
   if (!args.appleReport.configured || args.appleReport.rowCount === 0) {
@@ -1098,7 +1107,7 @@ function buildAppleSearchAdsRow(args: {
       (hasFallbackInstalls ? fallbackInstalls : null),
     kind: "apple",
     label: "Apple Search Ads",
-    rawLabel: "superwall_apple_search_ads",
+    rawLabel: args.rawLabel,
     revenue,
     share: args.totalRevenue > 0 ? revenue / args.totalRevenue : null,
     spend:
@@ -1327,7 +1336,7 @@ function buildDailyRows(args: {
 
   return {
     hasSourceDailyBreakdown,
-    rows: dateKeys.map((date) => {
+    rows: dateKeys.map<RevenueAttributionDailyRow>((date) => {
       const total =
         totalMap.get(date) ??
         sourceTotalMap.get(date) ??
@@ -1346,12 +1355,30 @@ function buildDailyRows(args: {
             : Math.max(total - newProceeds, 0);
       const tiktok = hasSourceDailyBreakdown ? tiktokMap.get(date) ?? 0 : null;
       const paidSpend =
-        hasDailySpendBreakdown && !missingPaidSpendDates.has(date)
+        paidSpendMap.has(date)
           ? paidSpendMap.get(date) ?? 0
+          : hasDailySpendBreakdown && !missingPaidSpendDates.has(date)
+            ? 0
+            : null;
+      const paidSpendStatus: RevenueSpendStatus | null = missingPaidSpendDates.has(date)
+        ? paidSpendMap.has(date)
+          ? "partial"
+          : "unavailable"
+        : hasDailySpendBreakdown
+          ? "complete"
           : null;
       const tiktokSpend =
-        hasDailySpendBreakdown && !missingTiktokSpendDates.has(date)
+        tiktokSpendMap.has(date)
           ? tiktokSpendMap.get(date) ?? 0
+          : hasDailySpendBreakdown && !missingTiktokSpendDates.has(date)
+            ? 0
+            : null;
+      const tiktokSpendStatus: RevenueSpendStatus | null = missingTiktokSpendDates.has(date)
+        ? tiktokSpendMap.has(date)
+          ? "partial"
+          : "unavailable"
+        : hasDailySpendBreakdown
+          ? "complete"
           : null;
       const apple =
         hasSourceDailyBreakdown && appleMap.size > 0
@@ -1377,7 +1404,9 @@ function buildDailyRows(args: {
         renewal,
         organic,
         paidSpend,
+        ...(paidSpendStatus ? { paidSpendStatus } : {}),
         tiktokSpend,
+        ...(tiktokSpendStatus ? { tiktokSpendStatus } : {}),
       };
     }),
   };
@@ -1448,17 +1477,24 @@ export function reconcileRevenueDailyRowsToTotals(args: {
     total: args.totals.paid,
     weights: getDailyWeightMap(args.rows, (row) => row.paid, totalWeights),
   });
+  const hasRawPaidSpendBreakdown = args.rows.some((row) => row.paidSpend !== null);
+  const hasIncompleteRawPaidSpendBreakdown =
+    hasRawPaidSpendBreakdown &&
+    args.rows.some(
+      (row) =>
+        row.paidSpend === null ||
+        row.paidSpendStatus === "partial" ||
+        row.paidSpendStatus === "unavailable",
+    );
   const paidSpendByDate =
-    typeof args.totals.paidSpend === "number"
+    typeof args.totals.paidSpend === "number" && !hasIncompleteRawPaidSpendBreakdown
       ? allocateTotalByDailyWeights({
           dates,
           total: args.totals.paidSpend,
           weights: getDailyWeightMap(
             args.rows,
             (row) => row.paidSpend,
-            args.rows.some((row) => row.paidSpend !== null)
-              ? undefined
-              : paidByDate,
+            hasRawPaidSpendBreakdown ? undefined : paidByDate,
           ),
         })
       : null;
@@ -1467,22 +1503,28 @@ export function reconcileRevenueDailyRowsToTotals(args: {
     total: args.totals.tiktok,
     weights: getDailyWeightMap(args.rows, (row) => row.tiktok, totalWeights),
   });
+  const hasRawTiktokSpendBreakdown = args.rows.some((row) => row.tiktokSpend !== null);
+  const hasIncompleteRawTiktokSpendBreakdown =
+    hasRawTiktokSpendBreakdown &&
+    args.rows.some(
+      (row) =>
+        row.tiktokSpend === null ||
+        row.tiktokSpendStatus === "partial" ||
+        row.tiktokSpendStatus === "unavailable",
+    );
   const tiktokSpendByDate =
-    typeof args.totals.tiktokSpend === "number"
+    typeof args.totals.tiktokSpend === "number" &&
+    !hasIncompleteRawTiktokSpendBreakdown
       ? allocateTotalByDailyWeights({
           dates,
           total: args.totals.tiktokSpend,
           weights: getDailyWeightMap(
             args.rows,
             (row) => row.tiktokSpend,
-            args.rows.some((row) => row.tiktokSpend !== null)
-              ? undefined
-              : tiktokByDate,
+            hasRawTiktokSpendBreakdown ? undefined : tiktokByDate,
           ),
         })
       : null;
-  const hasRawPaidSpendBreakdown = args.rows.some((row) => row.paidSpend !== null);
-  const hasRawTiktokSpendBreakdown = args.rows.some((row) => row.tiktokSpend !== null);
   const appleByDate = allocateTotalByDailyWeights({
     dates,
     total: args.totals.apple,
@@ -1521,6 +1563,13 @@ export function reconcileRevenueDailyRowsToTotals(args: {
         getValue: (row) => row.organic,
       })
     : false;
+  const publishPaidSpend = Boolean(
+    paidSpendByDate && (args.includeSourceBreakdown || hasRawPaidSpendBreakdown),
+  );
+  const publishTiktokSpend = Boolean(
+    tiktokSpendByDate &&
+      (args.includeSourceBreakdown || hasRawTiktokSpendBreakdown),
+  );
 
   return args.rows.map((row) => ({
     ...row,
@@ -1529,23 +1578,35 @@ export function reconcileRevenueDailyRowsToTotals(args: {
     organic: publishOrganic ? organicByDate.get(row.date) ?? 0 : null,
     paid: publishPaid ? paidByDate.get(row.date) ?? 0 : null,
     paidSpend:
-      paidSpendByDate &&
-      (args.includeSourceBreakdown ||
-        args.rows.some((dailyRow) => dailyRow.paidSpend !== null))
+      hasIncompleteRawPaidSpendBreakdown
+        ? row.paidSpend
+        : publishPaidSpend
         ? row.paidSpend === null && hasRawPaidSpendBreakdown
           ? null
-          : paidSpendByDate.get(row.date) ?? 0
+          : paidSpendByDate?.get(row.date) ?? 0
         : row.paidSpend,
+    paidSpendStatus: hasIncompleteRawPaidSpendBreakdown
+      ? row.paidSpendStatus ??
+        (row.paidSpend === null ? "unavailable" : "partial")
+      : publishPaidSpend
+        ? "complete"
+        : row.paidSpendStatus,
     renewal: renewalByDate.get(row.date) ?? 0,
     tiktok: publishTiktok ? tiktokByDate.get(row.date) ?? 0 : null,
     tiktokSpend:
-      tiktokSpendByDate &&
-      (args.includeSourceBreakdown ||
-        args.rows.some((dailyRow) => dailyRow.tiktokSpend !== null))
+      hasIncompleteRawTiktokSpendBreakdown
+        ? row.tiktokSpend
+        : publishTiktokSpend
         ? row.tiktokSpend === null && hasRawTiktokSpendBreakdown
           ? null
-          : tiktokSpendByDate.get(row.date) ?? 0
+          : tiktokSpendByDate?.get(row.date) ?? 0
         : row.tiktokSpend,
+    tiktokSpendStatus: hasIncompleteRawTiktokSpendBreakdown
+      ? row.tiktokSpendStatus ??
+        (row.tiktokSpend === null ? "unavailable" : "partial")
+      : publishTiktokSpend
+        ? "complete"
+        : row.tiktokSpendStatus,
     total: totalByDate.get(row.date) ?? 0,
   }));
 }
@@ -1663,6 +1724,7 @@ export async function getRevenueAttributionReport(args: {
       superwallMetricPayloads,
       singularSourceReport,
       appleSearchAdsReport,
+      adaptyAppleSearchAdsReport,
     ] = await Promise.all([
       getSuperwallMetricPayloads({
         credentials,
@@ -1680,6 +1742,10 @@ export async function getRevenueAttributionReport(args: {
         endDate: args.endDate,
         proceedsModel,
         scope,
+        startDate: args.startDate,
+      }),
+      getAppleSearchAdsDashboardReport({
+        endDate: args.endDate,
         startDate: args.startDate,
       }),
     ]);
@@ -1704,14 +1770,29 @@ export async function getRevenueAttributionReport(args: {
     let appleSearchAdsRow = buildAppleSearchAdsRow({
       appleReport: appleSearchAdsReport,
       fallbackRows: superwallAppleRows,
+      rawLabel: "superwall_apple_search_ads",
       totalRevenue: periodMetric.total,
     });
-    let appleRows = appleSearchAdsRow
-      ? [appleSearchAdsRow]
-      : superwallAppleRows;
+    let adaptyAppleSearchAdsRow = buildAppleSearchAdsRow({
+      appleReport: adaptyAppleSearchAdsReport,
+      fallbackRows: appleSearchAdsRow
+        ? [appleSearchAdsRow]
+        : superwallAppleRows,
+      rawLabel: "adapty_apple_search_ads",
+      totalRevenue: periodMetric.total,
+    });
+    let appleRows = adaptyAppleSearchAdsRow
+      ? [adaptyAppleSearchAdsRow]
+      : appleSearchAdsRow
+        ? [appleSearchAdsRow]
+        : superwallAppleRows;
     let sourceProvider: RevenueAttributionReport["sourceProvider"] = "none";
     let appleSourceProvider: RevenueAttributionReport["appleSourceProvider"] =
-      appleRows.length > 0 ? "superwall" : "none";
+      adaptyAppleSearchAdsRow
+        ? "adapty"
+        : appleRows.length > 0
+          ? "superwall"
+          : "none";
     let sourceRows: RevenueAttributionSourceRow[] = [];
     const totalRevenue = periodMetric.total;
     const newProceedsRevenue = Math.min(
@@ -1741,19 +1822,34 @@ export async function getRevenueAttributionReport(args: {
       appleSearchAdsRow = buildAppleSearchAdsRow({
         appleReport: appleSearchAdsReport,
         fallbackRows: [...superwallAppleRows, ...singularAppleRows],
+        rawLabel: "superwall_apple_search_ads",
         totalRevenue: periodMetric.total,
       });
-      appleRows = appleSearchAdsRow
-        ? [appleSearchAdsRow]
-        : superwallAppleRows.length > 0
-          ? superwallAppleRows
-          : singularAppleRows;
+      adaptyAppleSearchAdsRow = buildAppleSearchAdsRow({
+        appleReport: adaptyAppleSearchAdsReport,
+        fallbackRows: appleSearchAdsRow
+          ? [appleSearchAdsRow]
+          : superwallAppleRows.length > 0
+            ? superwallAppleRows
+            : singularAppleRows,
+        rawLabel: "adapty_apple_search_ads",
+        totalRevenue: periodMetric.total,
+      });
+      appleRows = adaptyAppleSearchAdsRow
+        ? [adaptyAppleSearchAdsRow]
+        : appleSearchAdsRow
+          ? [appleSearchAdsRow]
+          : superwallAppleRows.length > 0
+            ? superwallAppleRows
+            : singularAppleRows;
       appleSourceProvider =
-        appleSearchAdsRow || superwallAppleRows.length > 0
-          ? "superwall"
-          : singularAppleRows.length > 0
-            ? "singular"
-            : "none";
+        adaptyAppleSearchAdsRow
+          ? "adapty"
+          : appleSearchAdsRow || superwallAppleRows.length > 0
+            ? "superwall"
+            : singularAppleRows.length > 0
+              ? "singular"
+              : "none";
       sourceRows = rebuildOrganicSourceRow({
         rows: [
           ...singularRows.filter(
@@ -1940,7 +2036,10 @@ export async function getRevenueAttributionReport(args: {
             "Singular is still preparing the source proceeds report, so organic / UGC proceeds are hidden until the paid-source split is ready.",
           ]
         : []),
-      ...appleSearchAdsReport.warnings,
+      ...adaptyAppleSearchAdsReport.warnings,
+      ...(appleSourceProvider === "adapty"
+        ? []
+        : appleSearchAdsReport.warnings),
       ...getTimezoneWarnings({
         singularRows: singularSourceReport.configured
           ? singularSourceReport.rows
@@ -1951,6 +2050,13 @@ export async function getRevenueAttributionReport(args: {
       appleSearchAdsReport.revenueBasis !== "proceeds"
         ? [
             `Superwall did not return Apple Search Ads proceeds, so ${appleSearchAdsReport.revenueBasis} revenue is being used for Apple Search Ads.`,
+          ]
+        : []),
+      ...(appleSourceProvider === "adapty" &&
+      adaptyAppleSearchAdsReport.revenueBasis &&
+      adaptyAppleSearchAdsReport.revenueBasis !== "proceeds"
+        ? [
+            `Adapty Ads Manager did not return Apple Search Ads proceeds, so ${adaptyAppleSearchAdsReport.revenueBasis} revenue is being used for Apple Search Ads.`,
           ]
         : []),
       ...(appleSourceProvider === "superwall" && !hasAppleSpend
@@ -2015,8 +2121,12 @@ export async function getRevenueAttributionReport(args: {
       singularPending: singularSourceReport.isPending,
       sourceProvider,
       appleSourceProvider,
-      appleAdsDashboardConfigured: appleSearchAdsReport.configured,
-      appleAdsDashboardRowCount: appleSearchAdsReport.rowCount,
+      appleAdsDashboardConfigured:
+        adaptyAppleSearchAdsReport.configured || appleSearchAdsReport.configured,
+      appleAdsDashboardRowCount:
+        appleSourceProvider === "adapty"
+          ? adaptyAppleSearchAdsReport.rowCount
+          : appleSearchAdsReport.rowCount,
       sourceRows,
       startDate: args.startDate,
       timeZone: REVENUE_REPORT_TIME_ZONE,

@@ -15,6 +15,8 @@ const SINGULAR_LIVE_REPORT_CACHE_TTL_MS = 2 * 60 * 1_000;
 const SINGULAR_PENDING_REPORT_TTL_MS = 30 * 60 * 1_000;
 const SINGULAR_STATUS_POLL_INTERVAL_MS = 3_000;
 const SINGULAR_INITIAL_REPORT_WAIT_MS = 6_000;
+const SINGULAR_SOURCE_REVENUE_CREATE_TIMEOUT_MS = 8_000;
+const SINGULAR_SOURCE_REVENUE_STATUS_TIMEOUT_MS = 5_000;
 const SINGULAR_REPORT_DIMENSIONS = [
   "app",
   "source",
@@ -196,7 +198,7 @@ function getEmptyTikTokSingularOverlay(args?: {
   return {
     configured: args?.configured ?? false,
     isPending: args?.isPending ?? false,
-    cohortPeriod: args?.cohortPeriod ?? "7d",
+    cohortPeriod: args?.cohortPeriod ?? "actual",
     sourceNames: args?.sourceNames ?? [],
     rowCount: 0,
     rows: [],
@@ -214,13 +216,50 @@ function getEmptySingularSourceRevenueReport(args?: {
   return {
     configured: args?.configured ?? false,
     isPending: args?.isPending ?? false,
-    cohortPeriod: args?.cohortPeriod ?? "7d",
+    cohortPeriod: args?.cohortPeriod ?? "actual",
     cohortMetric: args?.cohortMetric ?? SINGULAR_SOURCE_REVENUE_COHORT_METRIC,
     rowCount: 0,
     totalRevenue: 0,
     rows: [],
     warnings: args?.warnings ?? [],
   };
+}
+
+function getPendingSingularSourceRevenueReport(args: {
+  cohortPeriod: string;
+  cohortMetric: string;
+  warnings: string[];
+}) {
+  return getEmptySingularSourceRevenueReport({
+    configured: true,
+    isPending: true,
+    cohortPeriod: args.cohortPeriod,
+    cohortMetric: args.cohortMetric,
+    warnings: args.warnings,
+  });
+}
+
+function isAbortError(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "AbortError"
+  );
+}
+
+async function withTimeoutSignal<T>(
+  timeoutMs: number,
+  callback: (signal: AbortSignal) => Promise<T>,
+) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await callback(controller.signal);
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function splitCommaSeparatedList(value: string | undefined) {
@@ -1211,7 +1250,14 @@ async function getSingularSourceRevenueReportForRange(args: {
   });
 
   try {
-    const reportId = await singularClient.createAsyncReport(query);
+    const reportId = await withTimeoutSignal(
+      SINGULAR_SOURCE_REVENUE_CREATE_TIMEOUT_MS,
+      (signal) =>
+        singularClient.createAsyncReport({
+          ...query,
+          signal,
+        }),
+    );
     const pendingEntry: SingularSourceRevenuePendingCacheEntry = {
       kind: "pending",
       cacheable,
@@ -1226,14 +1272,25 @@ async function getSingularSourceRevenueReportForRange(args: {
 
     singularSourceRevenueReportCache.set(cacheKey, pendingEntry);
 
-    await sleep(SINGULAR_INITIAL_REPORT_WAIT_MS);
-
-    return pollPendingSourceRevenueReport(cacheKey, {
-      ...pendingEntry,
-      lastPolledAt: 0,
+    return getPendingSingularSourceRevenueReport({
+      cohortPeriod: args.cohortPeriod,
+      cohortMetric: args.cohortMetric,
+      warnings: [
+        "Singular source proceeds report was requested and is still preparing. Refresh again to reuse the export once it is ready.",
+      ],
     });
   } catch (error) {
     singularSourceRevenueReportCache.delete(cacheKey);
+
+    if (isAbortError(error)) {
+      return getPendingSingularSourceRevenueReport({
+        cohortPeriod: args.cohortPeriod,
+        cohortMetric: args.cohortMetric,
+        warnings: [
+          "Starting the Singular source proceeds report is taking longer than expected. Refresh again to retry without blocking this page load.",
+        ],
+      });
+    }
 
     return getEmptySingularSourceRevenueReport({
       configured: true,
@@ -1284,7 +1341,31 @@ async function pollPendingSourceRevenueReport(
     });
   }
 
-  const status = await singularClient.getReportStatus(entry.reportId);
+  let status;
+
+  try {
+    status = await withTimeoutSignal(
+      SINGULAR_SOURCE_REVENUE_STATUS_TIMEOUT_MS,
+      (signal) => singularClient.getReportStatus(entry.reportId, signal),
+    );
+  } catch (error) {
+    if (isAbortError(error)) {
+      singularSourceRevenueReportCache.set(cacheKey, {
+        ...entry,
+        lastPolledAt: Date.now(),
+      });
+
+      return getPendingSingularSourceRevenueReport({
+        cohortPeriod: entry.cohortPeriod,
+        cohortMetric: entry.cohortMetric,
+        warnings: [
+          "Singular source proceeds report status is still taking longer than expected. Refresh again to reuse the export once it is ready.",
+        ],
+      });
+    }
+
+    throw error;
+  }
 
   if (status.status === "DONE" && status.download_url) {
     const payload = await singularClient.downloadReport(status.download_url);
@@ -1305,15 +1386,16 @@ async function pollPendingSourceRevenueReport(
             row.conversions > 0,
         ),
     );
+    const cohortRevenueReady = rows.some((row) => row.revenueAvailable);
     const report: SingularSourceRevenueReport = {
       configured: true,
-      isPending: false,
+      isPending: rows.length > 0 && !cohortRevenueReady,
       cohortPeriod: entry.cohortPeriod,
       cohortMetric: entry.cohortMetric,
       rowCount: rows.length,
       totalRevenue: rows.reduce((total, row) => total + row.revenue, 0),
       rows,
-      warnings: rows.some((row) => row.revenueAvailable)
+      warnings: cohortRevenueReady || rows.length === 0
         ? []
         : [
             `Singular returned source rows, but ${entry.cohortPeriod} ${entry.cohortMetric} is not ready for this date window yet.`,
@@ -1467,6 +1549,6 @@ export async function getTikTokSingularOverlay(args: {
 export function getDefaultTikTokSingularOverlay() {
   return getEmptyTikTokSingularOverlay({
     configured: hasSingularEnv(),
-    cohortPeriod: process.env.SINGULAR_COHORT_PERIOD || "7d",
+    cohortPeriod: process.env.SINGULAR_COHORT_PERIOD || "actual",
   });
 }

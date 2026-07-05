@@ -50,8 +50,29 @@ export type UgcPayVideoAmountResult = {
   viewCapReached: boolean;
 };
 
+export const NON_TALKING_VIDEO_CPM_AMOUNT = 0.5;
+
 export function normalizeMoney(value: number) {
   return Number(value.toFixed(2));
+}
+
+export function applyUgcPayVideoContentTypeCpm<
+  TDeal extends UgcPayCalculationDeal,
+>(
+  deal: TDeal,
+  args: {
+    isTalking: boolean;
+    hasVideoDealOverride: boolean;
+  },
+): TDeal {
+  if (args.isTalking || args.hasVideoDealOverride) {
+    return deal;
+  }
+
+  return {
+    ...deal,
+    cpmAmount: NON_TALKING_VIDEO_CPM_AMOUNT,
+  };
 }
 
 export function applyUgcPayVideoDealOverride<TDeal extends UgcPayCalculationDeal>(

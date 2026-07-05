@@ -15,17 +15,6 @@ function toDateOnlyString(value: Date) {
   return value.toISOString().slice(0, 10);
 }
 
-function addDateOnlyMonths(value: string, months: number) {
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-
-  parsed.setUTCMonth(parsed.getUTCMonth() + months);
-  return toDateOnlyString(parsed);
-}
-
 function addDateOnlyDays(value: string, days: number) {
   const parsed = new Date(`${value}T00:00:00.000Z`);
 
@@ -63,7 +52,7 @@ export function getRevenueUgcPaySearchParams(args: {
     startDate: args.startDate,
     videoWindowStartDate:
       getSearchParamValue(args.searchParams, "videoWindowStartDate") ??
-      addDateOnlyMonths(args.startDate, -1),
+      addDateOnlyDays(args.startDate, -6),
     viewWindowMode: "first-days",
   };
 }

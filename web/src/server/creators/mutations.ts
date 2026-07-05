@@ -10,7 +10,7 @@ import { revalidatePath } from "next/cache";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { prisma } from "@/lib/db";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
-import { canManageOrganization } from "@/server/auth/roles";
+import { canManageCreatorDeals, canManageOrganization } from "@/server/auth/roles";
 import { getAccessibleCampaignOptionsForMembership } from "@/server/campaigns/queries";
 import {
   ViralAppApiError,
@@ -23,6 +23,7 @@ import {
 } from "@/server/messaging/mutations";
 
 import {
+  addCreatorToCampaignSchema,
   createCreatorSchema,
   createPlatformAccountSchema,
   setCreatorStatusSchema,
@@ -77,6 +78,7 @@ function revalidateCreatorWorkspace(organizationSlug: string) {
     `/org/${organizationSlug}`,
     `/org/${organizationSlug}/campaigns`,
     `/org/${organizationSlug}/creators`,
+    `/org/${organizationSlug}/ugc-pay`,
     `/org/${organizationSlug}/videos`,
     `/org/${organizationSlug}/payouts`,
     `/org/${organizationSlug}/view-tally`,
@@ -790,6 +792,119 @@ async function upsertTrackedTikTokAccountLocally(args: {
     handle: account.handle,
     sourceAccountId: account.sourceAccountId ?? null,
   };
+}
+
+export async function addCreatorToCampaignForOrganization(args: {
+  organizationSlug: string;
+  input: unknown;
+}) {
+  const membership = await requireOrganizationMembership(args.organizationSlug);
+  const values = addCreatorToCampaignSchema.parse(args.input);
+
+  if (!canManageCreatorDeals(membership.role)) {
+    throw new Error("You do not have permission to add creators.");
+  }
+
+  const accessibleCampaigns = await getAccessibleCampaignOptionsForMembership(
+    membership,
+  );
+  const accessibleCampaignIds = new Set(
+    accessibleCampaigns.map((campaign) => campaign.id),
+  );
+
+  if (!accessibleCampaignIds.has(values.campaignId)) {
+    throw new Error("Choose a campaign you can access.");
+  }
+
+  const profileUrl = buildProfileUrl("tiktok", values.tiktokHandle);
+  const displayName =
+    values.displayName && values.displayName.length > 0
+      ? values.displayName
+      : `@${values.tiktokHandle}`;
+
+  const result = await prisma.$transaction(async (tx) => {
+    const existingAccount = await tx.creatorPlatformAccount.findFirst({
+      where: {
+        platform: Platform.TIKTOK,
+        handle: {
+          equals: values.tiktokHandle,
+          mode: "insensitive",
+        },
+        creator: {
+          organizationId: membership.organizationId,
+        },
+      },
+      select: {
+        creatorId: true,
+        id: true,
+      },
+    });
+
+    const creator =
+      existingAccount == null
+        ? await tx.creator.create({
+            data: createCreatorSchema.parse({
+              organizationId: membership.organizationId,
+              displayName,
+              internalStatus: CreatorStatus.NEW,
+            }),
+            select: {
+              id: true,
+            },
+          })
+        : await tx.creator.update({
+            where: {
+              id: existingAccount.creatorId,
+            },
+            data: {
+              internalStatus: CreatorStatus.NEW,
+            },
+            select: {
+              id: true,
+            },
+          });
+
+    const account =
+      existingAccount ??
+      (await tx.creatorPlatformAccount.create({
+        data: createPlatformAccountSchema.parse({
+          creatorId: creator.id,
+          platform: Platform.TIKTOK,
+          handle: values.tiktokHandle,
+          profileUrl,
+        }),
+        select: {
+          creatorId: true,
+          id: true,
+        },
+      }));
+
+    const campaignCreator = await tx.campaignCreator.upsert({
+      where: {
+        campaignId_creatorId: {
+          campaignId: values.campaignId,
+          creatorId: account.creatorId,
+        },
+      },
+      update: {},
+      create: {
+        campaignId: values.campaignId,
+        creatorId: account.creatorId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    return {
+      campaignCreatorId: campaignCreator.id,
+      creatorId: account.creatorId,
+    };
+  });
+
+  revalidateCreatorWorkspace(args.organizationSlug);
+
+  return result;
 }
 
 export async function trackCreatorAccountForOrganization(

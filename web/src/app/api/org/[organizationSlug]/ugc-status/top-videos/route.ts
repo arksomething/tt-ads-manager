@@ -33,9 +33,9 @@ function getDateParam(searchParams: URLSearchParams, key: string) {
 }
 
 function getLimitParam(searchParams: URLSearchParams) {
-  const value = Number(searchParams.get("limit") ?? 5);
+  const value = Number(searchParams.get("limit") ?? 12);
 
-  return Number.isInteger(value) && value >= 1 && value <= 25 ? value : 5;
+  return Number.isInteger(value) && value >= 1 && value <= 25 ? value : 12;
 }
 
 async function getOrganizationSlug(context: RouteContext) {

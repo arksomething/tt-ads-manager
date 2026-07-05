@@ -8,14 +8,24 @@ import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/db";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
-import { canManageOrganization } from "@/server/auth/roles";
-import { getAccessibleCampaignOptionsForMembership } from "@/server/campaigns/queries";
+import {
+  canManageOrganization,
+  canReadOrganizationCampaignData,
+} from "@/server/auth/roles";
+import {
+  getAccessibleCampaignOptionsForMembership,
+  getCampaignAccess,
+} from "@/server/campaigns/queries";
 import {
   ViralAppApiError,
   viralAppClient,
 } from "@/server/data-provider/viral-app-client";
 
-import { setVideoReviewSchema, trackVideoSchema } from "./schemas";
+import {
+  setVideoReviewSchema,
+  setVideoTalkingStatusSchema,
+  trackVideoSchema,
+} from "./schemas";
 
 const MAX_INT = 2_147_483_647;
 
@@ -35,7 +45,11 @@ function revalidateVideoWorkspace(organizationSlug: string, campaignId?: string)
   revalidatePath("/app");
   revalidatePath(`/org/${organizationSlug}`);
   revalidatePath(`/org/${organizationSlug}/videos`);
+  revalidatePath(`/org/${organizationSlug}/video-manager`);
   revalidatePath(`/org/${organizationSlug}/review`);
+  revalidatePath(`/org/${organizationSlug}/ugc-pay`);
+  revalidatePath(`/org/${organizationSlug}/ugc-status`);
+  revalidatePath(`/org/${organizationSlug}/blazie`);
   revalidatePath(`/org/${organizationSlug}/campaigns`);
 
   if (campaignId) {
@@ -819,5 +833,119 @@ export async function setVideoReviewForOrganization(args: {
   return {
     reviewed: values.action === "mark-reviewed",
     videoId: video.id,
+  };
+}
+
+export async function setVideoTalkingStatusForOrganization(args: {
+  organizationSlug: string;
+  input: unknown;
+}) {
+  const { organizationSlug, input } = args;
+  const membership = await requireOrganizationMembership(organizationSlug);
+  const values = setVideoTalkingStatusSchema.parse(input);
+  const isTalking = values.action === "mark-talking";
+  const video = values.videoId
+    ? await prisma.video.findFirst({
+        where: {
+          id: values.videoId,
+          creator: {
+            organizationId: membership.organizationId,
+          },
+        },
+        select: {
+          id: true,
+          campaignId: true,
+          platform: true,
+          sourceVideoId: true,
+        },
+      })
+    : values.sourceVideoId
+      ? await prisma.video.findFirst({
+          where: {
+            platform: values.platform,
+            sourceVideoId: values.sourceVideoId,
+            creator: {
+              organizationId: membership.organizationId,
+            },
+          },
+          select: {
+            id: true,
+            campaignId: true,
+            platform: true,
+            sourceVideoId: true,
+          },
+        })
+      : null;
+
+  if (!canReadOrganizationCampaignData(membership.role)) {
+    if (!video?.campaignId) {
+      throw new Error("Video edit access denied.");
+    }
+
+    const campaignAccess = await getCampaignAccess(
+      organizationSlug,
+      video.campaignId,
+    );
+
+    if (!campaignAccess.canManageCampaign) {
+      throw new Error("Video edit access denied.");
+    }
+  }
+
+  const sourceVideoId = values.sourceVideoId ?? video?.sourceVideoId;
+
+  if (!sourceVideoId) {
+    throw new Error("Video source id is required.");
+  }
+
+  await prisma.videoContentClassification.upsert({
+    where: {
+      organizationId_platform_sourceVideoId: {
+        organizationId: membership.organizationId,
+        platform: values.platform,
+        sourceVideoId,
+      },
+    },
+    update: {
+      isTalking,
+    },
+    create: {
+      organizationId: membership.organizationId,
+      platform: values.platform,
+      sourceVideoId,
+      isTalking,
+    },
+  });
+
+  if (video) {
+    await prisma.video.update({
+      where: {
+        id: video.id,
+      },
+      data: {
+        isTalking,
+      },
+    });
+  } else {
+    await prisma.video.updateMany({
+      where: {
+        platform: values.platform,
+        sourceVideoId,
+        creator: {
+          organizationId: membership.organizationId,
+        },
+      },
+      data: {
+        isTalking,
+      },
+    });
+  }
+
+  revalidateVideoWorkspace(organizationSlug, video?.campaignId ?? undefined);
+
+  return {
+    isTalking,
+    sourceVideoId,
+    videoId: video?.id ?? null,
   };
 }

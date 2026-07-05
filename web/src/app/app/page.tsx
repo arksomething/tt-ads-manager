@@ -3,6 +3,7 @@ import { Cormorant_Garamond } from "next/font/google";
 import { redirect } from "next/navigation";
 
 import { AppAccountMenu } from "@/components/app-account-menu";
+import { getDashboardWorkspaceEntryHref } from "@/components/org-dashboard/mock-data";
 import { isWorkspaceSchemaAvailable } from "@/lib/db";
 import { publicEnv } from "@/lib/env";
 import { isAuthDisabled } from "@/lib/server-env";
@@ -70,7 +71,7 @@ export default async function AppHomePage({
   }
 
   if (organizations.length === 1 && !manageMode) {
-    redirect(`/org/${organizations[0].organization.slug}`);
+    redirect(getDashboardWorkspaceEntryHref(organizations[0]));
   }
 
   const canCreateWorkspaces = Boolean(user?.id) && !publicAccessEnabled;
@@ -224,6 +225,10 @@ export default async function AppHomePage({
                       {orderedOrganizations.map(({ organization, role }) => {
                         const isCurrentWorkspace =
                           organization.slug === currentWorkspaceSlug;
+                        const workspaceHref = getDashboardWorkspaceEntryHref({
+                          organization,
+                          role,
+                        });
 
                         return (
                           <div
@@ -252,7 +257,7 @@ export default async function AppHomePage({
                             <div className="mt-5 flex flex-wrap gap-2">
                               <Link
                                 className="inline-flex items-center rounded-full border border-white/[0.1] bg-white/[0.04] px-3.5 py-2 text-sm text-foreground transition hover:border-white/[0.16] hover:bg-white/[0.08]"
-                                href={`/org/${organization.slug}`}
+                                href={workspaceHref}
                               >
                                 {isCurrentWorkspace
                                   ? "Return to workspace"
@@ -397,23 +402,30 @@ export default async function AppHomePage({
               </div>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                {organizations.map(({ organization, role }) => (
-                  <Link
-                    key={organization.id}
-                    className="rounded-[1.4rem] border border-white/[0.08] bg-black/[0.18] p-5 text-left transition hover:border-white/[0.14] hover:bg-white/[0.04]"
-                    href={`/org/${organization.slug}`}
-                  >
-                    <p className="text-[0.62rem] uppercase tracking-[0.24em] text-muted-foreground">
-                      {role}
-                    </p>
-                    <h2 className="mt-3 text-xl font-medium tracking-[-0.03em] text-foreground">
-                      {organization.name}
-                    </h2>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      Open workspace
-                    </p>
-                  </Link>
-                ))}
+                {organizations.map(({ organization, role }) => {
+                  const workspaceHref = getDashboardWorkspaceEntryHref({
+                    organization,
+                    role,
+                  });
+
+                  return (
+                    <Link
+                      key={organization.id}
+                      className="rounded-[1.4rem] border border-white/[0.08] bg-black/[0.18] p-5 text-left transition hover:border-white/[0.14] hover:bg-white/[0.04]"
+                      href={workspaceHref}
+                    >
+                      <p className="text-[0.62rem] uppercase tracking-[0.24em] text-muted-foreground">
+                        {role}
+                      </p>
+                      <h2 className="mt-3 text-xl font-medium tracking-[-0.03em] text-foreground">
+                        {organization.name}
+                      </h2>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        Open workspace
+                      </p>
+                    </Link>
+                  );
+                })}
               </div>
             </section>
           ) : null}

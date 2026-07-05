@@ -275,6 +275,128 @@ test("does not allocate partial source spend into days with missing spend", asyn
   assert.equal(reconciled[1].tiktokSpend, null);
 });
 
+test("does not push incomplete daily spend into complete days", async () => {
+  const { reconcileRevenueDailyRowsToTotals } = await import(
+    "../src/server/revenue/revenue.ts"
+  );
+  const reconciled = reconcileRevenueDailyRowsToTotals({
+    includeSourceBreakdown: true,
+    rows: [
+      {
+        apple: 0,
+        date: "2026-05-14",
+        newProceeds: 100,
+        organic: 0,
+        paid: 100,
+        paidSpend: 950,
+        renewal: 0,
+        tiktok: 100,
+        tiktokSpend: 450,
+        total: 100,
+      },
+      {
+        apple: 0,
+        date: "2026-05-15",
+        newProceeds: 100,
+        organic: 0,
+        paid: 100,
+        paidSpend: null,
+        renewal: 0,
+        tiktok: 100,
+        tiktokSpend: null,
+        total: 100,
+      },
+      {
+        apple: 0,
+        date: "2026-05-16",
+        newProceeds: 100,
+        organic: 0,
+        paid: 100,
+        paidSpend: 800,
+        renewal: 0,
+        tiktok: 100,
+        tiktokSpend: 120,
+        total: 100,
+      },
+    ],
+    totals: {
+      apple: 0,
+      newProceeds: 300,
+      organic: 0,
+      paid: 300,
+      paidSpend: 4_000,
+      renewal: 0,
+      tiktok: 300,
+      tiktokSpend: 900,
+      total: 300,
+    },
+  });
+
+  assert.equal(reconciled[0].paidSpend, 950);
+  assert.equal(reconciled[0].tiktokSpend, 450);
+  assert.equal(reconciled[1].paidSpend, null);
+  assert.equal(reconciled[1].tiktokSpend, null);
+  assert.equal(reconciled[2].paidSpend, 800);
+  assert.equal(reconciled[2].tiktokSpend, 120);
+});
+
+test("preserves known spend on partial days instead of marking them unavailable", async () => {
+  const { reconcileRevenueDailyRowsToTotals } = await import(
+    "../src/server/revenue/revenue.ts"
+  );
+  const reconciled = reconcileRevenueDailyRowsToTotals({
+    includeSourceBreakdown: true,
+    rows: [
+      {
+        apple: 0,
+        date: "2026-05-16",
+        newProceeds: 100,
+        organic: 0,
+        paid: 100,
+        paidSpend: 600.55,
+        paidSpendStatus: "partial",
+        renewal: 0,
+        tiktok: 100,
+        tiktokSpend: 77.73,
+        tiktokSpendStatus: "complete",
+        total: 100,
+      },
+      {
+        apple: 0,
+        date: "2026-05-20",
+        newProceeds: 100,
+        organic: 0,
+        paid: 100,
+        paidSpend: null,
+        paidSpendStatus: "unavailable",
+        renewal: 0,
+        tiktok: 100,
+        tiktokSpend: null,
+        tiktokSpendStatus: "unavailable",
+        total: 100,
+      },
+    ],
+    totals: {
+      apple: 0,
+      newProceeds: 200,
+      organic: 0,
+      paid: 200,
+      paidSpend: 1_500,
+      renewal: 0,
+      tiktok: 200,
+      tiktokSpend: 500,
+      total: 200,
+    },
+  });
+
+  assert.equal(reconciled[0].paidSpend, 600.55);
+  assert.equal(reconciled[0].paidSpendStatus, "partial");
+  assert.equal(reconciled[0].tiktokSpend, 77.73);
+  assert.equal(reconciled[0].tiktokSpendStatus, "complete");
+  assert.equal(reconciled[1].paidSpend, null);
+  assert.equal(reconciled[1].paidSpendStatus, "unavailable");
+});
+
 test("uses provider total series instead of summing total plus period components", async () => {
   const { getRevenueTotalPointMap, normalizeMetricSeries } = await import(
     "../src/server/revenue/revenue.ts"

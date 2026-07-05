@@ -2,7 +2,7 @@ import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/db";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
-import { canManageOrganization } from "@/server/auth/roles";
+import { canManageCreatorDeals } from "@/server/auth/roles";
 import { getCampaignAccess } from "@/server/campaigns/queries";
 
 import {
@@ -18,6 +18,7 @@ function revalidatePayoutWorkspace(organizationSlug: string) {
   revalidatePath(`/org/${organizationSlug}/payouts`);
   revalidatePath(`/org/${organizationSlug}/creators`);
   revalidatePath(`/org/${organizationSlug}/ugc-pay`);
+  revalidatePath(`/org/${organizationSlug}/blazie`);
   revalidatePath(`/org/${organizationSlug}/campaigns`);
 }
 
@@ -47,10 +48,7 @@ async function assertDealWriteAccess(args: {
     campaignCreator.campaignId,
   );
 
-  if (
-    !canManageOrganization(membership.role) &&
-    !campaignAccess.canManageCampaign
-  ) {
+  if (!canManageCreatorDeals(membership.role) && !campaignAccess.canManageCampaign) {
     throw new Error("Deal edit access denied.");
   }
 

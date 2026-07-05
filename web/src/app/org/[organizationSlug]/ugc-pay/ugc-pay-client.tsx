@@ -20,10 +20,12 @@ import {
 } from "@/server/ugc-pay/queries";
 
 import {
+  addCreatorToUgcPay,
   clearCreatorDeal,
   clearVideoDeal,
   saveCreatorDeal,
   saveVideoDeal,
+  setUgcPayVideoTalkingStatus,
 } from "./actions";
 
 type UgcPaySummary = {
@@ -49,6 +51,7 @@ type UgcPayClientProps = {
   emptyCreatorLabel: string;
   organizationSlug: string;
   payMode: UgcPayMode;
+  selectedCampaignId: string | null;
   startDate: string;
   endDate: string;
   summary: UgcPaySummary;
@@ -185,11 +188,85 @@ function SummaryCard({
   );
 }
 
+function ActionStatusBanner({
+  message,
+  tone,
+}: {
+  message: string;
+  tone: "error" | "success";
+}) {
+  return (
+    <section
+      className={`rounded-[1rem] border px-4 py-3 text-sm ${
+        tone === "success"
+          ? "border-[#90FF4D]/20 bg-[#90FF4D]/[0.08] text-[#D8FFC7]"
+          : "border-[#FF7E54]/20 bg-[#FF7E54]/[0.08] text-[#FFD3C5]"
+      }`}
+    >
+      {message}
+    </section>
+  );
+}
+
 function EmptyState({ label }: { label: string }) {
   return (
     <div className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.18] px-4 py-10 text-sm text-muted-foreground">
       {label}
     </div>
+  );
+}
+
+function AddCreatorForm({
+  errorMessage,
+  isSaving,
+  onAddCreator,
+  selectedCampaignId,
+}: {
+  errorMessage: string | null;
+  isSaving: boolean;
+  onAddCreator: (formData: FormData) => void;
+  selectedCampaignId: string | null;
+}) {
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onAddCreator(new FormData(event.currentTarget));
+    event.currentTarget.reset();
+  }
+
+  return (
+    <form
+      className="rounded-[1rem] border border-white/[0.08] bg-black/[0.16] p-3"
+      onSubmit={handleSubmit}
+    >
+      <input name="campaignId" type="hidden" value={selectedCampaignId ?? ""} />
+      <div className="grid gap-2 lg:grid-cols-[minmax(10rem,1fr)_minmax(10rem,1fr)_auto] lg:items-end">
+        <FieldLabel label="TikTok Handle" tip="Use @handle, handle, or a TikTok profile URL.">
+          <input
+            className={dealInputClassName}
+            name="tiktokHandle"
+            placeholder="@creator"
+            required
+          />
+        </FieldLabel>
+        <FieldLabel label="Display Name" tip="Optional. Defaults to the TikTok handle.">
+          <input
+            className={dealInputClassName}
+            name="displayName"
+            placeholder="Creator name"
+          />
+        </FieldLabel>
+        <button
+          className="inline-flex min-h-9 items-center justify-center rounded-[0.8rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-3 text-xs font-medium text-black transition hover:bg-[#A4FF68] disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={!selectedCampaignId || isSaving}
+          type="submit"
+        >
+          {isSaving ? "Adding creator..." : "Add creator"}
+        </button>
+      </div>
+      {errorMessage ? (
+        <p className="mt-2 text-xs text-[#FFD3C5]">{errorMessage}</p>
+      ) : null}
+    </form>
   );
 }
 
@@ -671,18 +748,30 @@ function VideoDealEditor({
 function VideoTableRow({
   errorMessage,
   isClearing,
+  isClassifying,
   isSaving,
   onClearVideoDeal,
+  onClassifyVideo,
   onSaveVideoDeal,
   video,
 }: {
   errorMessage: string | null;
   isClearing: boolean;
+  isClassifying: boolean;
   isSaving: boolean;
   onClearVideoDeal: (video: UgcPayVideoRow, formData: FormData) => void;
+  onClassifyVideo: (video: UgcPayVideoRow, formData: FormData) => void;
   onSaveVideoDeal: (video: UgcPayVideoRow, formData: FormData) => void;
   video: UgcPayVideoRow;
 }) {
+  function submitClassification(action: "mark-talking" | "mark-non-talking") {
+    const formData = new FormData();
+    formData.set("action", action);
+    formData.set("platform", "TIKTOK");
+    formData.set("sourceVideoId", video.sourceVideoId);
+    onClassifyVideo(video, formData);
+  }
+
   return (
     <tr className="border-b border-white/[0.05] align-top last:border-b-0">
       <td className="max-w-[24rem] px-3 py-3">
@@ -708,6 +797,9 @@ function VideoTableRow({
         <p className="mt-1 text-xs text-muted-foreground">
           {formatDateLabel(video.publishedAt ?? video.createdAt)}
         </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {video.isTalking ? "Talking" : "Non-talking · $0.50 CPM"}
+        </p>
       </td>
       <td className="px-3 py-3 text-foreground">
         {formatMetricValue(video.grossViews, true)}
@@ -728,14 +820,42 @@ function VideoTableRow({
         {formatMoney(video.videoPay, video.currency)}
       </td>
       <td className="px-3 py-3">
-        <VideoDealEditor
-          errorMessage={errorMessage}
-          isClearing={isClearing}
-          isSaving={isSaving}
-          onClear={(formData) => onClearVideoDeal(video, formData)}
-          onSave={(formData) => onSaveVideoDeal(video, formData)}
-          video={video}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            aria-pressed={video.isTalking}
+            className={`inline-flex min-h-8 items-center rounded-[0.75rem] border px-2.5 text-xs transition disabled:cursor-not-allowed disabled:opacity-60 ${
+              video.isTalking
+                ? "border-[#90FF4D]/24 bg-[#90FF4D]/12 text-[#D8FFC7]"
+                : "border-white/[0.1] bg-white/[0.05] text-foreground hover:border-white/[0.18] hover:bg-white/[0.08]"
+            }`}
+            disabled={isClassifying || video.isTalking}
+            onClick={() => submitClassification("mark-talking")}
+            type="button"
+          >
+            {isClassifying && !video.isTalking ? "Updating..." : "Talking"}
+          </button>
+          <button
+            aria-pressed={!video.isTalking}
+            className={`inline-flex min-h-8 items-center rounded-[0.75rem] border px-2.5 text-xs transition disabled:cursor-not-allowed disabled:opacity-60 ${
+              !video.isTalking
+                ? "border-[#90FF4D]/24 bg-[#90FF4D]/12 text-[#D8FFC7]"
+                : "border-white/[0.1] bg-white/[0.05] text-foreground hover:border-white/[0.18] hover:bg-white/[0.08]"
+            }`}
+            disabled={isClassifying || !video.isTalking}
+            onClick={() => submitClassification("mark-non-talking")}
+            type="button"
+          >
+            {isClassifying && video.isTalking ? "Updating..." : "Non-talking"}
+          </button>
+          <VideoDealEditor
+            errorMessage={errorMessage}
+            isClearing={isClearing}
+            isSaving={isSaving}
+            onClear={(formData) => onClearVideoDeal(video, formData)}
+            onSave={(formData) => onSaveVideoDeal(video, formData)}
+            video={video}
+          />
+        </div>
       </td>
       <td className="px-3 py-3">
         <span
@@ -760,6 +880,7 @@ function CreatorPayRow({
   creator,
   onClearCreatorDeal,
   onClearVideoDeal,
+  onClassifyVideo,
   onSaveCreatorDeal,
   onSaveVideoDeal,
 }: {
@@ -770,6 +891,7 @@ function CreatorPayRow({
   creator: UgcPayCreatorRow;
   onClearCreatorDeal: (creator: UgcPayCreatorRow, formData: FormData) => void;
   onClearVideoDeal: (video: UgcPayVideoRow, formData: FormData) => void;
+  onClassifyVideo: (video: UgcPayVideoRow, formData: FormData) => void;
   onSaveCreatorDeal: (creator: UgcPayCreatorRow, formData: FormData) => void;
   onSaveVideoDeal: (video: UgcPayVideoRow, formData: FormData) => void;
 }) {
@@ -891,6 +1013,15 @@ function CreatorPayRow({
 
         {creator.videos.length > 0 ? (
           <div className="mt-4 overflow-x-auto rounded-[1rem] border border-white/[0.08] bg-black/[0.16]">
+            <div className="border-b border-white/[0.08] px-3 py-3">
+              <p className="text-[0.62rem] uppercase text-muted-foreground">
+                Video classification
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Set talking videos to use creator CPM terms, or non-talking videos to
+                use the $0.50 CPM default.
+              </p>
+            </div>
             <table className="w-full min-w-[980px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-white/[0.08] text-[0.62rem] uppercase text-muted-foreground">
@@ -901,7 +1032,7 @@ function CreatorPayRow({
                   <th className="px-3 py-3 font-medium">Fixed</th>
                   <th className="px-3 py-3 font-medium">CPM</th>
                   <th className="px-3 py-3 font-medium">Pay</th>
-                  <th className="px-3 py-3 font-medium">Deal</th>
+                  <th className="px-3 py-3 font-medium">Classify / Deal</th>
                   <th className="px-3 py-3 font-medium">Status</th>
                 </tr>
               </thead>
@@ -917,9 +1048,11 @@ function CreatorPayRow({
                     <VideoTableRow
                       errorMessage={videoError}
                       isClearing={pendingVideoKey === `clear:${videoKey}`}
+                      isClassifying={pendingVideoKey === `classify:${videoKey}`}
                       isSaving={pendingVideoKey === `save:${videoKey}`}
                       key={`${video.sourceVideoId}-${video.campaignCreatorId}`}
                       onClearVideoDeal={onClearVideoDeal}
+                      onClassifyVideo={onClassifyVideo}
                       onSaveVideoDeal={onSaveVideoDeal}
                       video={video}
                     />
@@ -940,6 +1073,7 @@ export function UgcPayClient({
   endDate,
   organizationSlug,
   payMode,
+  selectedCampaignId,
   startDate,
   summary: initialSummary,
 }: UgcPayClientProps) {
@@ -951,6 +1085,7 @@ export function UgcPayClient({
     key: string;
     message: string;
   } | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const recalculateOptions = useMemo(
     () => ({
       startDate,
@@ -990,6 +1125,7 @@ export function UgcPayClient({
   ) {
     const pendingKey = `save:${creator.campaignCreatorId}`;
     setActionError(null);
+    setActionSuccess(null);
     setPendingCreatorKey(pendingKey);
 
     const result = await saveCreatorDeal(organizationSlug, formData);
@@ -1003,6 +1139,7 @@ export function UgcPayClient({
       return;
     }
 
+    setActionSuccess(`${creator.creatorName} deal saved.`);
     router.refresh();
   }
 
@@ -1012,6 +1149,7 @@ export function UgcPayClient({
   ) {
     const pendingKey = `clear:${creator.campaignCreatorId}`;
     setActionError(null);
+    setActionSuccess(null);
     setPendingCreatorKey(pendingKey);
 
     const result = await clearCreatorDeal(organizationSlug, formData);
@@ -1025,6 +1163,7 @@ export function UgcPayClient({
       return;
     }
 
+    setActionSuccess(`${creator.creatorName} deal override removed.`);
     router.refresh();
   }
 
@@ -1032,6 +1171,7 @@ export function UgcPayClient({
     const nextVideoDeal = getVideoDealOverrideFromForm(video, formData);
     const videoKey = `${video.campaignCreatorId}:${video.sourceVideoId}`;
     setActionError(null);
+    setActionSuccess(null);
     setPendingVideoKey(`save:${videoKey}`);
 
     const result = await saveVideoDeal(organizationSlug, formData);
@@ -1057,11 +1197,13 @@ export function UgcPayClient({
           : creator,
       ),
     );
+    setActionSuccess(`${getVideoTitle(video)} video deal saved.`);
   }
 
   async function handleClearVideoDeal(video: UgcPayVideoRow, formData: FormData) {
     const videoKey = `${video.campaignCreatorId}:${video.sourceVideoId}`;
     setActionError(null);
+    setActionSuccess(null);
     setPendingVideoKey(`clear:${videoKey}`);
 
     const result = await clearVideoDeal(organizationSlug, formData);
@@ -1087,6 +1229,52 @@ export function UgcPayClient({
           : creator,
       ),
     );
+    setActionSuccess(`${getVideoTitle(video)} video override removed.`);
+  }
+
+  async function handleAddCreator(formData: FormData) {
+    setActionError(null);
+    setActionSuccess(null);
+    setPendingCreatorKey("add");
+    const handle = String(formData.get("tiktokHandle") ?? "").trim();
+
+    const result = await addCreatorToUgcPay(organizationSlug, formData);
+    setPendingCreatorKey(null);
+
+    if (!result.ok) {
+      setActionError({
+        key: "add-creator",
+        message: result.error,
+      });
+      return;
+    }
+
+    setActionSuccess(`${handle || "Creator"} added to this campaign.`);
+    router.refresh();
+  }
+
+  async function handleClassifyVideo(video: UgcPayVideoRow, formData: FormData) {
+    const videoKey = `${video.campaignCreatorId}:${video.sourceVideoId}`;
+    const action = String(formData.get("action") ?? "");
+    setActionError(null);
+    setActionSuccess(null);
+    setPendingVideoKey(`classify:${videoKey}`);
+
+    const result = await setUgcPayVideoTalkingStatus(organizationSlug, formData);
+    setPendingVideoKey(null);
+
+    if (!result.ok) {
+      setActionError({
+        key: `video:${videoKey}`,
+        message: result.error,
+      });
+      return;
+    }
+
+    setActionSuccess(
+      `${getVideoTitle(video)} marked ${action === "mark-non-talking" ? "non-talking" : "talking"}.`,
+    );
+    router.refresh();
   }
 
   return (
@@ -1132,6 +1320,16 @@ export function UgcPayClient({
             {formatMetricValue(summary.videos)} video rows
           </p>
         </div>
+        <div className="mt-4">
+          <AddCreatorForm
+            errorMessage={
+              actionError?.key === "add-creator" ? actionError.message : null
+            }
+            isSaving={pendingCreatorKey === "add"}
+            onAddCreator={handleAddCreator}
+            selectedCampaignId={selectedCampaignId}
+          />
+        </div>
 
         <div className="mt-5 overflow-hidden rounded-[1.2rem] border border-white/[0.08] bg-black/[0.18]">
           {creators.length > 0 ? (
@@ -1148,6 +1346,7 @@ export function UgcPayClient({
                 key={creator.campaignCreatorId}
                 onClearCreatorDeal={handleClearCreatorDeal}
                 onClearVideoDeal={handleClearVideoDeal}
+                onClassifyVideo={handleClassifyVideo}
                 onSaveCreatorDeal={handleSaveCreatorDeal}
                 onSaveVideoDeal={handleSaveVideoDeal}
                 pendingVideoKey={pendingVideoKey}
@@ -1160,6 +1359,13 @@ export function UgcPayClient({
           )}
         </div>
       </section>
+
+      {actionSuccess ? (
+        <ActionStatusBanner message={actionSuccess} tone="success" />
+      ) : null}
+      {actionError && actionError.key !== "add-creator" ? (
+        <ActionStatusBanner message={actionError.message} tone="error" />
+      ) : null}
 
       <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -1220,6 +1426,9 @@ export function UgcPayClient({
                       </a>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {formatDateLabel(video.publishedAt ?? video.createdAt)}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {video.isTalking ? "Talking" : "Non-talking · $0.50 CPM"}
                       </p>
                     </td>
                     <td className="px-3 py-3 text-muted-foreground">
