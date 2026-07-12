@@ -1,5 +1,6 @@
 export type CreatorPortalDirectoryAccess = {
   id: string;
+  linkPath?: string | null;
   revokedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -35,15 +36,56 @@ export type CreatorPortalDirectorySummary = {
   campaigns: number;
 };
 
+export type CreatorPortalDirectoryDateDefaults = {
+  endDate?: string | null;
+  payMode?: string | null;
+  startDate?: string | null;
+  viewWindowMode?: string | null;
+};
+
+function appendCreatorPortalDateDefaults(
+  href: string,
+  defaults?: CreatorPortalDirectoryDateDefaults,
+) {
+  if (!defaults) {
+    return href;
+  }
+
+  const [pathname, query = ""] = href.split("?");
+  const searchParams = new URLSearchParams(query);
+
+  for (const [key, value] of Object.entries(defaults)) {
+    const trimmedValue = value?.trim();
+
+    if (trimmedValue) {
+      searchParams.set(key, trimmedValue);
+    }
+  }
+
+  const nextQuery = searchParams.toString();
+  return nextQuery ? `${pathname}?${nextQuery}` : pathname;
+}
+
+export function buildCreatorPortalDirectoryLinkHref(
+  linkPath: string,
+  defaults?: CreatorPortalDirectoryDateDefaults,
+) {
+  return appendCreatorPortalDateDefaults(linkPath, defaults);
+}
+
 export function buildCreatorPortalDirectoryOpenHref(
   organizationSlug: string,
   campaignCreatorId: string,
+  defaults?: CreatorPortalDirectoryDateDefaults,
 ) {
   const searchParams = new URLSearchParams({
     campaignCreatorId,
   });
 
-  return `/org/${organizationSlug}/ugc-pay/open?${searchParams.toString()}`;
+  return appendCreatorPortalDateDefaults(
+    `/org/${organizationSlug}/ugc-pay/open?${searchParams.toString()}`,
+    defaults,
+  );
 }
 
 export function getLatestActiveCreatorPortalAccess(

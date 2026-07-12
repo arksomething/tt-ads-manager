@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useMemo,
   useState,
   useTransition,
@@ -141,7 +142,7 @@ function getVideoFormula(video: CreatorLedgerVideo) {
 }
 
 const dealInputClassName =
-  "mt-2 w-full rounded-[0.75rem] border border-white/[0.08] bg-black/25 px-3 py-2 text-sm text-foreground";
+  "mt-2 h-12 w-full rounded-[0.75rem] border border-white/[0.1] bg-black/25 px-3 text-base text-foreground";
 
 function FieldLabel({
   children,
@@ -152,7 +153,7 @@ function FieldLabel({
 }) {
   return (
     <label className="block">
-      <span className="text-[0.65rem] uppercase tracking-[0.16em] text-muted-foreground">
+      <span className="text-xs font-medium text-muted-foreground">
         {label}
       </span>
       {children}
@@ -213,7 +214,7 @@ function CreatorDealEditor({
           <FieldLabel label="Deal start">
             <input
               className={dealInputClassName}
-              defaultValue={formatDateInputValue(creator.deal.effectiveStartDate)}
+              defaultValue=""
               name="effectiveStartDate"
               type="date"
             />
@@ -389,11 +390,11 @@ function VideoDealEditor({ video }: { video: CreatorLedgerVideo }) {
   }
 
   return (
-    <details className="mt-3">
-      <summary className="cursor-pointer text-xs font-medium text-[#D4FFB2]">
-        Edit video CPM/fixed
+    <details className="rounded-[1rem] border border-[#90FF4D]/15 bg-[#90FF4D]/[0.04] p-4">
+      <summary className="cursor-pointer text-base font-semibold text-[#D4FFB2]">
+        Edit video deal
       </summary>
-      <form className="mt-3 space-y-3" onSubmit={handleSubmit}>
+      <form className="mt-4 space-y-4" onSubmit={handleSubmit}>
         <input
           name="campaignCreatorId"
           type="hidden"
@@ -421,7 +422,7 @@ function VideoDealEditor({ video }: { video: CreatorLedgerVideo }) {
           value={video.perVideoCapScope}
         />
         <input name="notes" type="hidden" value={video.videoDealNotes ?? ""} />
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-3">
           <FieldLabel label="Fixed / video">
             <input
               className={dealInputClassName}
@@ -457,7 +458,7 @@ function VideoDealEditor({ video }: { video: CreatorLedgerVideo }) {
           <p className="text-xs text-[#D4FFB2]">{successMessage}</p>
         ) : null}
         <button
-          className="rounded-[0.75rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-3 py-2 text-xs font-medium text-black transition hover:bg-[#A4FF68] disabled:cursor-not-allowed disabled:opacity-60"
+          className="min-h-11 rounded-[0.85rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-semibold text-black transition hover:bg-[#A4FF68] disabled:cursor-not-allowed disabled:opacity-60"
           disabled={isPending}
           type="submit"
         >
@@ -518,59 +519,67 @@ export function CreatorLedgerClient({
           </thead>
           <tbody className="divide-y divide-white/[0.06]">
             {sortedVideos.map((video) => (
-              <tr key={`${video.campaignCreatorId}-${video.sourceVideoId}`}>
-                <td className="max-w-[24rem] px-4 py-4">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <a
-                      aria-label={video.titleOrCaption || "Open TikTok video"}
-                      className="flex h-16 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md border border-white/[0.08] bg-white/[0.04] transition hover:border-[#90FF4D]/60"
-                      href={video.videoUrl}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      {video.thumbnailUrl ? (
-                        <img
-                          alt=""
-                          className="h-full w-full object-cover"
-                          loading="lazy"
-                          src={video.thumbnailUrl}
-                        />
-                      ) : (
-                        <span className="block h-0 w-0 border-y-[6px] border-l-[9px] border-y-transparent border-l-muted-foreground/70" />
-                      )}
-                    </a>
-                    <div className="min-w-0">
+              <Fragment key={`${video.campaignCreatorId}-${video.sourceVideoId}`}>
+                <tr>
+                  <td className="max-w-[24rem] px-4 py-4">
+                    <div className="flex min-w-0 items-center gap-3">
                       <a
-                        className="line-clamp-2 font-medium text-foreground transition hover:text-[#90FF4D]"
+                        aria-label={video.titleOrCaption || "Open TikTok video"}
+                        className="flex h-16 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md border border-white/[0.08] bg-white/[0.04] transition hover:border-[#90FF4D]/60"
                         href={video.videoUrl}
                         rel="noreferrer"
                         target="_blank"
                       >
-                        {video.titleOrCaption || "TikTok video"}
+                        {video.thumbnailUrl ? (
+                          <img
+                            alt=""
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                            src={video.thumbnailUrl}
+                          />
+                        ) : (
+                          <span className="block h-0 w-0 border-y-[6px] border-l-[9px] border-y-transparent border-l-muted-foreground/70" />
+                        )}
                       </a>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {video.isTalking ? "Talking" : "Non-talking"} · {video.paidStatus}
-                      </p>
-                      {canEditDeals ? <VideoDealEditor video={video} /> : null}
+                      <div className="min-w-0">
+                        <a
+                          className="line-clamp-2 font-medium text-foreground transition hover:text-[#90FF4D]"
+                          href={video.videoUrl}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          {video.titleOrCaption || "TikTok video"}
+                        </a>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {video.paidStatus}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                </td>
-                <td className="px-4 py-4 text-muted-foreground">
-                  {formatDate(video.publishedAt ?? video.createdAt)}
-                </td>
-                <td className="px-4 py-4 text-muted-foreground">
-                  {formatNumber(video.grossViews)}
-                </td>
-                <td className="px-4 py-4 text-muted-foreground">
-                  {formatNumber(video.payableViews)}
-                </td>
-                <td className="min-w-[24rem] px-4 py-4 font-mono text-xs leading-5 text-muted-foreground">
-                  {getVideoFormula(video)}
-                </td>
-                <td className="px-4 py-4 text-right font-semibold text-foreground">
-                  {formatMoney(video.videoPay, video.currency)}
-                </td>
-              </tr>
+                  </td>
+                  <td className="px-4 py-4 text-muted-foreground">
+                    {formatDate(video.publishedAt ?? video.createdAt)}
+                  </td>
+                  <td className="px-4 py-4 text-muted-foreground">
+                    {formatNumber(video.grossViews)}
+                  </td>
+                  <td className="px-4 py-4 text-muted-foreground">
+                    {formatNumber(video.payableViews)}
+                  </td>
+                  <td className="min-w-[24rem] px-4 py-4 font-mono text-xs leading-5 text-muted-foreground">
+                    {getVideoFormula(video)}
+                  </td>
+                  <td className="px-4 py-4 text-right font-semibold text-foreground">
+                    {formatMoney(video.videoPay, video.currency)}
+                  </td>
+                </tr>
+                {canEditDeals ? (
+                  <tr>
+                    <td className="px-4 pb-5 pt-0" colSpan={6}>
+                      <VideoDealEditor video={video} />
+                    </td>
+                  </tr>
+                ) : null}
+              </Fragment>
             ))}
             {sortedVideos.length === 0 ? (
               <tr>

@@ -32,6 +32,9 @@ type CreatorPortalWorkspaceAccess = {
   encryptedLinkToken?: string | null;
   revokedAt?: Date | null;
 };
+type CreatorPortalWorkspaceAccessWithLink = CreatorPortalWorkspaceAccess & {
+  linkPath: string | null;
+};
 
 function getCreatorPortalCookieSecret() {
   const secret = process.env.CREATOR_PORTAL_SECRET ?? process.env.AUTH_SECRET;
@@ -163,23 +166,60 @@ export async function getCreatorPortalLinksWorkspace(organizationSlug: string) {
     ],
   });
 
+  const campaignCreatorsWithLinks = await Promise.all(
+    campaignCreators.map(async (campaignCreator) => {
+      const portalAccesses: CreatorPortalWorkspaceAccessWithLink[] =
+        campaignCreator.portalAccesses.map(
+        (access: CreatorPortalWorkspaceAccess) => {
+          const linkToken = access.revokedAt
+            ? null
+            : decryptLinkToken(access.encryptedLinkToken);
+
+          return {
+            ...access,
+            linkPath: linkToken ? buildCreatorPortalLinkPath(linkToken) : null,
+          };
+        },
+      );
+
+      const hasRecoverableActiveLink = portalAccesses.some(
+        (access) => !access.revokedAt && access.linkPath,
+      );
+
+      if (hasRecoverableActiveLink) {
+        return {
+          ...campaignCreator,
+          portalAccesses,
+        };
+      }
+
+      const createdAccess = await createCreatorPortalAccessRecord({
+        campaignCreatorId: campaignCreator.id,
+        creatorId: campaignCreator.creatorId,
+        organizationId: membership.organizationId,
+        organizationSlug,
+      });
+      const now = new Date();
+
+      return {
+        ...campaignCreator,
+        portalAccesses: [
+          {
+            id: createdAccess.accessId,
+            linkPath: createdAccess.linkPath,
+            revokedAt: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+          ...portalAccesses,
+        ],
+      };
+    }),
+  );
+
   return {
     organizationId: membership.organizationId,
-    campaignCreators: campaignCreators.map((campaignCreator) => ({
-      ...campaignCreator,
-      portalAccesses: campaignCreator.portalAccesses.map(
-        (access: CreatorPortalWorkspaceAccess) => {
-        const linkToken = access.revokedAt
-          ? null
-          : decryptLinkToken(access.encryptedLinkToken);
-
-        return {
-          ...access,
-          linkPath: linkToken ? buildCreatorPortalLinkPath(linkToken) : null,
-        };
-        },
-      ),
-    })),
+    campaignCreators: campaignCreatorsWithLinks,
   };
 }
 
@@ -243,6 +283,7 @@ async function createCreatorPortalAccessRecord(args: {
     },
     select: {
       id: true,
+      encryptedLinkToken: true,
     },
   });
 
@@ -278,11 +319,13 @@ export async function getOrCreateCreatorPortalAccessForOrganization(args: {
     },
   });
 
-  if (existingAccess?.id) {
+  const existingLinkToken = decryptLinkToken(existingAccess?.encryptedLinkToken);
+
+  if (existingAccess?.id && existingLinkToken) {
     return {
       accessId: existingAccess.id as string,
-      linkPath: null,
-      linkToken: null,
+      linkPath: buildCreatorPortalLinkPath(existingLinkToken),
+      linkToken: existingLinkToken,
     };
   }
 
@@ -366,6 +409,7 @@ export async function revokeCreatorPortalAccessForOrganization(args: {
 function getCreatorPortalAccessSelect() {
   return {
     id: true,
+    encryptedLinkToken: true,
     organizationId: true,
     creatorId: true,
     campaignCreatorId: true,
@@ -443,6 +487,29 @@ export async function getCurrentCreatorPortalAccess() {
     },
     select: getCreatorPortalAccessSelect(),
   });
+}
+
+export async function getCopyableCreatorPortalLinkPathForCurrentAccess(args: {
+  access: NonNullable<Awaited<ReturnType<typeof getCurrentCreatorPortalAccess>>>;
+}) {
+  const linkToken = decryptLinkToken(args.access.encryptedLinkToken);
+
+  if (linkToken) {
+    return buildCreatorPortalLinkPath(linkToken);
+  }
+
+  if (!args.access.campaignCreatorId) {
+    return null;
+  }
+
+  const createdAccess = await createCreatorPortalAccessRecord({
+    campaignCreatorId: args.access.campaignCreatorId as string,
+    creatorId: args.access.creatorId as string,
+    organizationId: args.access.organizationId as string,
+    organizationSlug: args.access.organization.slug,
+  });
+
+  return createdAccess.linkPath;
 }
 
 export async function canCurrentUserEditCreatorPortalDeals(args: {

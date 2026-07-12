@@ -872,198 +872,64 @@ function VideoTableRow({
   );
 }
 
-function CreatorPayRow({
-  actionError,
-  isCreatorClearing,
-  isCreatorSaving,
-  pendingVideoKey,
-  creator,
-  onClearCreatorDeal,
-  onClearVideoDeal,
-  onClassifyVideo,
-  onSaveCreatorDeal,
-  onSaveVideoDeal,
-}: {
-  actionError: { key: string; message: string } | null;
-  isCreatorClearing: boolean;
-  isCreatorSaving: boolean;
-  pendingVideoKey: string | null;
-  creator: UgcPayCreatorRow;
-  onClearCreatorDeal: (creator: UgcPayCreatorRow, formData: FormData) => void;
-  onClearVideoDeal: (video: UgcPayVideoRow, formData: FormData) => void;
-  onClassifyVideo: (video: UgcPayVideoRow, formData: FormData) => void;
-  onSaveCreatorDeal: (creator: UgcPayCreatorRow, formData: FormData) => void;
-  onSaveVideoDeal: (video: UgcPayVideoRow, formData: FormData) => void;
-}) {
-  const creatorError =
-    actionError?.key === `creator:${creator.campaignCreatorId}`
-      ? actionError.message
-      : null;
-
+function CreatorPayRow({ creator }: { creator: UgcPayCreatorRow }) {
   return (
-    <details className="group border-b border-white/[0.06] last:border-b-0">
-      <summary className="grid cursor-pointer list-none gap-3 px-4 py-4 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.85fr)_minmax(0,0.85fr)_minmax(0,0.75fr)_auto] md:items-center">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate text-sm font-semibold text-foreground">
-              {creator.creatorName}
-            </h3>
-            <span
-              className={`rounded-full border px-2 py-0.5 text-[0.62rem] uppercase ${
-                creator.hasCustomDeal
-                  ? "border-[#7BB2FF]/25 bg-[#7BB2FF]/10 text-[#D6E7FF]"
-                  : "border-white/[0.08] bg-white/[0.05] text-muted-foreground"
-              }`}
-            >
-              {creator.hasCustomDeal ? "custom" : "default"}
-            </span>
-            {creator.creatorTotalCapApplied || creator.videoCapReached ? (
-              <span className="rounded-full border border-[#FFD24D]/20 bg-[#FFD24D]/10 px-2 py-0.5 text-[0.62rem] uppercase text-[#FFE7A6]">
-                capped
-              </span>
-            ) : null}
-          </div>
-          <p className="mt-1 truncate text-xs text-muted-foreground">
-            {creator.tiktokHandle ? `@${creator.tiktokHandle}` : creator.campaignName}
-          </p>
-        </div>
-
-        <div>
-          <p className="text-[0.62rem] uppercase text-muted-foreground">
-            Pay
-          </p>
-          <p className="mt-1 text-sm font-semibold text-foreground">
-            {formatMoney(creator.totalPay, creator.currency)}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {formatMoney(creator.fixedPay, creator.currency)} fixed
-          </p>
-        </div>
-
-        <div>
-          <p className="text-[0.62rem] uppercase text-muted-foreground">
-            Views
-          </p>
-          <p className="mt-1 text-sm text-foreground">
-            {formatPayableViewsWithGross(creator)}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {formatMetricValue(creator.paidViewsDeducted, true)} paid impressions removed
-          </p>
-        </div>
-
-        <div>
-          <p className="text-[0.62rem] uppercase text-muted-foreground">
-            Videos
-          </p>
-          <p className="mt-1 text-sm text-foreground">
-            {formatMetricValue(creator.videoCount)}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {creator.exactPaidVideoCount} exact
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 md:justify-end">
-          <span className="inline-flex min-h-9 items-center gap-1.5 rounded-[0.85rem] border border-[#7BB2FF]/20 bg-[#7BB2FF]/10 px-3 text-xs text-[#D6E7FF]">
-            <DashboardIcon className="h-3.5 w-3.5" name="settings" />
-            Deal
+    <div className="grid gap-3 border-b border-white/[0.06] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.85fr)_minmax(0,0.85fr)_minmax(0,0.75fr)] md:items-center">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="truncate text-sm font-semibold text-foreground">
+            {creator.creatorName}
+          </h3>
+          <span
+            className={`rounded-full border px-2 py-0.5 text-[0.62rem] uppercase ${
+              creator.hasCustomDeal
+                ? "border-[#7BB2FF]/25 bg-[#7BB2FF]/10 text-[#D6E7FF]"
+                : "border-white/[0.08] bg-white/[0.05] text-muted-foreground"
+            }`}
+          >
+            {creator.hasCustomDeal ? "custom" : "default"}
           </span>
-          <span className="inline-flex h-9 w-9 items-center justify-center rounded-[0.85rem] border border-white/[0.1] bg-white/[0.05] transition group-open:border-white/[0.16] group-open:bg-white/[0.08]">
-            <DashboardIcon
-              className="h-4 w-4 text-foreground transition group-open:rotate-90"
-              name="chevronRight"
-            />
-          </span>
-        </div>
-      </summary>
-
-      <div className="border-t border-white/[0.06] px-4 py-4">
-        <CreatorDealEditor
-          creator={creator}
-          errorMessage={creatorError}
-          isClearing={isCreatorClearing}
-          isSaving={isCreatorSaving}
-          onClear={(formData) => onClearCreatorDeal(creator, formData)}
-          onSave={(formData) => onSaveCreatorDeal(creator, formData)}
-        />
-
-        <div className="mt-3 flex flex-wrap gap-2 text-[0.62rem] uppercase">
-          <span className="rounded-full border border-white/[0.08] bg-white/[0.05] px-2.5 py-1 text-muted-foreground">
-            {formatDealLabel(creator)}
-          </span>
-          <span className="rounded-full border border-white/[0.08] bg-white/[0.05] px-2.5 py-1 text-muted-foreground">
-            {formatMoney(creator.videoPay, creator.currency)} video pay
-          </span>
-          <span className="rounded-full border border-white/[0.08] bg-white/[0.05] px-2.5 py-1 text-muted-foreground">
-            {formatMetricValue(creator.grossViews, true)} gross views
-          </span>
-          {creator.unknownPaidVideoCount > 0 ? (
-            <span className="rounded-full border border-[#FFD24D]/20 bg-[#FFD24D]/10 px-2.5 py-1 text-[#FFE7A6]">
-              {creator.unknownPaidVideoCount} unknown paid
-            </span>
-          ) : null}
-          {creator.videoDealOverrideCount > 0 ? (
-            <span className="rounded-full border border-[#90FF4D]/20 bg-[#90FF4D]/10 px-2.5 py-1 text-[#D4FFB2]">
-              {creator.videoDealOverrideCount} edited video
-              {creator.videoDealOverrideCount === 1 ? "" : "s"}
+          {creator.creatorTotalCapApplied || creator.videoCapReached ? (
+            <span className="rounded-full border border-[#FFD24D]/20 bg-[#FFD24D]/10 px-2 py-0.5 text-[0.62rem] uppercase text-[#FFE7A6]">
+              capped
             </span>
           ) : null}
         </div>
-
-        {creator.videos.length > 0 ? (
-          <div className="mt-4 overflow-x-auto rounded-[1rem] border border-white/[0.08] bg-black/[0.16]">
-            <div className="border-b border-white/[0.08] px-3 py-3">
-              <p className="text-[0.62rem] uppercase text-muted-foreground">
-                Video classification
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Set talking videos to use creator CPM terms, or non-talking videos to
-                use the $0.50 CPM default.
-              </p>
-            </div>
-            <table className="w-full min-w-[980px] border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-white/[0.08] text-[0.62rem] uppercase text-muted-foreground">
-                  <th className="px-3 py-3 font-medium">Video</th>
-                  <th className="px-3 py-3 font-medium">Gross</th>
-                  <th className="px-3 py-3 font-medium">Paid Impressions</th>
-                  <th className="px-3 py-3 font-medium">Payable</th>
-                  <th className="px-3 py-3 font-medium">Fixed</th>
-                  <th className="px-3 py-3 font-medium">CPM</th>
-                  <th className="px-3 py-3 font-medium">Pay</th>
-                  <th className="px-3 py-3 font-medium">Classify / Deal</th>
-                  <th className="px-3 py-3 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {creator.videos.map((video) => {
-                  const videoKey = `${video.campaignCreatorId}:${video.sourceVideoId}`;
-                  const videoError =
-                    actionError?.key === `video:${videoKey}`
-                      ? actionError.message
-                      : null;
-
-                  return (
-                    <VideoTableRow
-                      errorMessage={videoError}
-                      isClearing={pendingVideoKey === `clear:${videoKey}`}
-                      isClassifying={pendingVideoKey === `classify:${videoKey}`}
-                      isSaving={pendingVideoKey === `save:${videoKey}`}
-                      key={`${video.sourceVideoId}-${video.campaignCreatorId}`}
-                      onClearVideoDeal={onClearVideoDeal}
-                      onClassifyVideo={onClassifyVideo}
-                      onSaveVideoDeal={onSaveVideoDeal}
-                      video={video}
-                    />
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
+        <p className="mt-1 truncate text-xs text-muted-foreground">
+          {creator.tiktokHandle ? `@${creator.tiktokHandle}` : creator.campaignName}
+        </p>
       </div>
-    </details>
+
+      <div>
+        <p className="text-[0.62rem] uppercase text-muted-foreground">Pay</p>
+        <p className="mt-1 text-sm font-semibold text-foreground">
+          {formatMoney(creator.totalPay, creator.currency)}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {formatMoney(creator.fixedPay, creator.currency)} fixed
+        </p>
+      </div>
+
+      <div>
+        <p className="text-[0.62rem] uppercase text-muted-foreground">Views</p>
+        <p className="mt-1 text-sm text-foreground">
+          {formatPayableViewsWithGross(creator)}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {formatMetricValue(creator.paidViewsDeducted, true)} paid impressions removed
+        </p>
+      </div>
+
+      <div>
+        <p className="text-[0.62rem] uppercase text-muted-foreground">Videos</p>
+        <p className="mt-1 text-sm text-foreground">
+          {formatMetricValue(creator.videoCount)}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {creator.exactPaidVideoCount} exact
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -1320,36 +1186,12 @@ export function UgcPayClient({
             {formatMetricValue(summary.videos)} video rows
           </p>
         </div>
-        <div className="mt-4">
-          <AddCreatorForm
-            errorMessage={
-              actionError?.key === "add-creator" ? actionError.message : null
-            }
-            isSaving={pendingCreatorKey === "add"}
-            onAddCreator={handleAddCreator}
-            selectedCampaignId={selectedCampaignId}
-          />
-        </div>
-
         <div className="mt-5 overflow-hidden rounded-[1.2rem] border border-white/[0.08] bg-black/[0.18]">
           {creators.length > 0 ? (
             creators.map((creator) => (
               <CreatorPayRow
-                actionError={actionError}
                 creator={creator}
-                isCreatorClearing={
-                  pendingCreatorKey === `clear:${creator.campaignCreatorId}`
-                }
-                isCreatorSaving={
-                  pendingCreatorKey === `save:${creator.campaignCreatorId}`
-                }
                 key={creator.campaignCreatorId}
-                onClearCreatorDeal={handleClearCreatorDeal}
-                onClearVideoDeal={handleClearVideoDeal}
-                onClassifyVideo={handleClassifyVideo}
-                onSaveCreatorDeal={handleSaveCreatorDeal}
-                onSaveVideoDeal={handleSaveVideoDeal}
-                pendingVideoKey={pendingVideoKey}
               />
             ))
           ) : (
@@ -1363,109 +1205,9 @@ export function UgcPayClient({
       {actionSuccess ? (
         <ActionStatusBanner message={actionSuccess} tone="success" />
       ) : null}
-      {actionError && actionError.key !== "add-creator" ? (
+      {actionError ? (
         <ActionStatusBanner message={actionError.message} tone="error" />
       ) : null}
-
-      <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-xs uppercase text-muted-foreground">
-              Videos
-            </p>
-            <h2 className="mt-2 text-lg font-semibold tracking-normal text-foreground">
-              Video pay breakdown
-            </h2>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {formatMoney(summary.videoPay)} total video pay
-          </p>
-        </div>
-
-        {videos.length > 0 ? (
-          <div className="mt-5 overflow-x-auto rounded-[1.2rem] border border-white/[0.08] bg-black/[0.18]">
-            <table className="w-full min-w-[980px] border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-white/[0.08] text-[0.62rem] uppercase text-muted-foreground">
-                  <th className="px-3 py-3 font-medium">Video</th>
-                  <th className="px-3 py-3 font-medium">Creator</th>
-                  <th className="px-3 py-3 font-medium">Gross</th>
-                  <th className="px-3 py-3 font-medium">Paid Impressions</th>
-                  <th className="px-3 py-3 font-medium">Payable</th>
-                  <th className="px-3 py-3 font-medium">Fixed</th>
-                  <th className="px-3 py-3 font-medium">CPM Pay</th>
-                  <th className="px-3 py-3 font-medium">Pay</th>
-                  <th className="px-3 py-3 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {videos.map((video) => (
-                  <tr
-                    className="border-b border-white/[0.05] align-top last:border-b-0"
-                    key={`${video.sourceVideoId}-${video.campaignCreatorId}`}
-                  >
-                    <td className="max-w-[24rem] px-3 py-3">
-                      <a
-                        className="block truncate font-medium text-foreground transition hover:text-[#B9FF95]"
-                        href={video.videoUrl}
-                        rel="noreferrer"
-                        target="_blank"
-                        title={getVideoTitle(video)}
-                      >
-                        <span className="inline-flex min-w-0 items-center gap-2">
-                          {video.hasVideoDealOverride ? (
-                            <span
-                              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#90FF4D]/20 bg-[#90FF4D]/10 text-[#D4FFB2]"
-                              title="Video deal override"
-                            >
-                              <DashboardIcon className="h-3 w-3" name="settings" />
-                            </span>
-                          ) : null}
-                          <span className="truncate">{getVideoTitle(video)}</span>
-                        </span>
-                      </a>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {formatDateLabel(video.publishedAt ?? video.createdAt)}
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {video.isTalking ? "Talking" : "Non-talking · $0.50 CPM"}
-                      </p>
-                    </td>
-                    <td className="px-3 py-3 text-muted-foreground">
-                      {video.creatorName}
-                    </td>
-                    <td className="px-3 py-3 text-foreground">
-                      {formatMetricValue(video.grossViews, true)}
-                    </td>
-                    <td className="px-3 py-3 text-muted-foreground">
-                      {formatMetricValue(video.paidViewsDeducted, true)}
-                    </td>
-                    <td className="px-3 py-3 text-muted-foreground">
-                      {formatPayableViewsWithGross(video)}
-                    </td>
-                    <td className="px-3 py-3 text-muted-foreground">
-                      {formatMoney(video.fixedFeePerVideo, video.currency)}
-                    </td>
-                    <td className="px-3 py-3 text-muted-foreground">
-                      {formatMoney(video.cpmPay, video.currency)}
-                    </td>
-                    <td className="px-3 py-3 font-semibold text-foreground">
-                      {formatMoney(video.videoPay, video.currency)}
-                    </td>
-                    <td className="px-3 py-3 text-muted-foreground">
-                      {getPaidStatusLabel(video)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="mt-5">
-            <EmptyState label="No video pay rows for the selected campaign and date range." />
-          </div>
-        )}
-      </section>
     </>
   );
 }

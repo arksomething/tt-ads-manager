@@ -6,7 +6,7 @@ import { hasPendingCreatorPortalData } from "../src/server/creator-portal/pendin
 test("creator portal does not hide the ledger for bounded paid matching timeouts", () => {
   assert.equal(
     hasPendingCreatorPortalData([
-      "Paid traffic matching did not finish within 25 seconds, so paid delivery remains unknown for unmatched rows. Refresh this page to retry exact paid matching.",
+      "Paid traffic matching did not finish within 4 seconds, so paid delivery remains unknown for unmatched rows. Refresh this page to retry exact paid matching.",
     ]),
     false,
   );

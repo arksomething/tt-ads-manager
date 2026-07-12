@@ -37,6 +37,21 @@ function redirectTo(request: NextRequest, href: string) {
   return NextResponse.redirect(new URL(href, request.url));
 }
 
+function buildCreatorRedirectHref(request: NextRequest) {
+  const searchParams = new URLSearchParams();
+
+  for (const key of ["startDate", "endDate", "payMode", "viewWindowMode"]) {
+    const value = request.nextUrl.searchParams.get(key)?.trim();
+
+    if (value) {
+      searchParams.set(key, value);
+    }
+  }
+
+  const query = searchParams.toString();
+  return query ? `/creator?${query}` : "/creator";
+}
+
 export async function GET(request: NextRequest, context: RouteContext) {
   const organizationSlug = await getOrganizationSlug(context);
   const campaignCreatorId =
@@ -67,7 +82,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     );
   }
 
-  const response = redirectTo(request, "/creator");
+  const response = redirectTo(request, buildCreatorRedirectHref(request));
   const sessionCookie = getCreatorPortalSessionCookie(accessId);
   response.cookies.set(
     sessionCookie.name,

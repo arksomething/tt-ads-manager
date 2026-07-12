@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildCreatorPortalDirectoryLinkHref,
   buildCreatorPortalDirectoryOpenHref,
   buildCreatorPortalDirectoryRows,
   getCreatorPortalDirectorySummary,
@@ -40,12 +41,14 @@ test("creator portal directory keeps every campaign creator row visible", () => 
         },
         {
           id: "older_active_access",
+          linkPath: "/creator/link/older",
           revokedAt: null,
           createdAt: new Date("2026-05-03T00:00:00.000Z"),
           updatedAt: new Date("2026-05-03T00:00:00.000Z"),
         },
         {
           id: "newer_active_access",
+          linkPath: "/creator/link/newer",
           revokedAt: null,
           createdAt: new Date("2026-05-05T00:00:00.000Z"),
           updatedAt: new Date("2026-05-05T00:00:00.000Z"),
@@ -81,6 +84,7 @@ test("creator portal directory keeps every campaign creator row visible", () => 
     ["campaign_creator_1", "campaign_creator_2", "campaign_creator_3"],
   );
   assert.equal(rows[0].activeAccess?.id, "newer_active_access");
+  assert.equal(rows[0].activeAccess?.linkPath, "/creator/link/newer");
   assert.equal(rows[0].activeAccessCount, 2);
   assert.equal(rows[1].activeAccess, null);
   assert.deepEqual(summary, {
@@ -94,5 +98,23 @@ test("creator portal directory open buttons use a normal navigable URL", () => {
   assert.equal(
     buildCreatorPortalDirectoryOpenHref("gotall", "campaign creator 1"),
     "/org/gotall/ugc-pay/open?campaignCreatorId=campaign+creator+1",
+  );
+});
+
+test("creator portal directory links can carry creator page date defaults", () => {
+  const defaults = {
+    startDate: "2026-06-01",
+    endDate: "2026-06-30",
+    payMode: "posted",
+    viewWindowMode: "all",
+  };
+
+  assert.equal(
+    buildCreatorPortalDirectoryOpenHref("gotall", "campaign creator 1", defaults),
+    "/org/gotall/ugc-pay/open?campaignCreatorId=campaign+creator+1&startDate=2026-06-01&endDate=2026-06-30&payMode=posted&viewWindowMode=all",
+  );
+  assert.equal(
+    buildCreatorPortalDirectoryLinkHref("/creator/link/token", defaults),
+    "/creator/link/token?startDate=2026-06-01&endDate=2026-06-30&payMode=posted&viewWindowMode=all",
   );
 });

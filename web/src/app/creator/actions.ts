@@ -6,6 +6,7 @@ import {
   canCurrentUserEditCreatorPortalDeals,
   getCurrentCreatorPortalAccess,
 } from "@/server/creator-portal/access";
+import { getCreatorPortalCreatorDealInput } from "@/lib/creator-portal-deal-form";
 import {
   upsertCampaignCreatorDealForOrganization,
   upsertCampaignCreatorVideoDealForOrganization,
@@ -66,34 +67,7 @@ export async function saveCreatorPortalCreatorDeal(
 
     await upsertCampaignCreatorDealForOrganization({
       organizationSlug,
-      input: {
-        campaignCreatorId: getTrimmedFormValue(formData, "campaignCreatorId"),
-        dealId: getTrimmedFormValue(formData, "dealId") || undefined,
-        currency: getTrimmedFormValue(formData, "currency") || "USD",
-        effectiveStartDate: getTrimmedFormValue(formData, "effectiveStartDate"),
-        effectiveEndDate:
-          getTrimmedFormValue(formData, "effectiveEndDate") || undefined,
-        fixedFee: getTrimmedFormValue(formData, "fixedFee") || undefined,
-        fixedFeeRecognitionDate:
-          getTrimmedFormValue(formData, "fixedFeeRecognitionDate") || undefined,
-        fixedFeePerVideo:
-          getTrimmedFormValue(formData, "fixedFeePerVideo") || undefined,
-        cpmAmount: getTrimmedFormValue(formData, "cpmAmount") || undefined,
-        paidTrafficMetric:
-          getTrimmedFormValue(formData, "paidTrafficMetric") || undefined,
-        deductPaidTraffic: formData.get("deductPaidTraffic") === "on",
-        viewCapPerVideo:
-          getTrimmedFormValue(formData, "viewCapPerVideo") || undefined,
-        viewWindowDays:
-          getTrimmedFormValue(formData, "viewWindowDays") || undefined,
-        payoutCapPerVideo:
-          getTrimmedFormValue(formData, "payoutCapPerVideo") || undefined,
-        perVideoCapScope:
-          getTrimmedFormValue(formData, "perVideoCapScope") || undefined,
-        payoutCapTotal:
-          getTrimmedFormValue(formData, "payoutCapTotal") || undefined,
-        notes: getTrimmedFormValue(formData, "notes") || undefined,
-      },
+      input: getCreatorPortalCreatorDealInput(formData),
     });
 
     revalidatePath("/creator");

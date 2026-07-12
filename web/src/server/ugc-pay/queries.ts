@@ -53,7 +53,7 @@ const DEFAULT_REPORT_TIME_ZONE = "UTC";
 const VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD = 100;
 const GAINED_VIEW_CAP_CONTEXT_BATCH_SIZE = 150;
 const UGC_PAY_CREATOR_QUERY_CONCURRENCY = 2;
-const CREATOR_ACCESS_PAID_LOOKUP_TIMEOUT_MS = 25_000;
+const CREATOR_ACCESS_PAID_LOOKUP_TIMEOUT_MS = 4_000;
 const CREATOR_ACCESS_PAID_LOOKUP_CACHE_TTL_MS = 5 * 60 * 1_000;
 
 export type UgcPayMode = "posted" | "gained";
@@ -621,7 +621,7 @@ function getSelectedPayMode(searchParams: DashboardSearchParams | undefined): Ug
 }
 
 function getDefaultVideoWindowStartDate(startDate: string) {
-  return addDateOnlyDays(startDate, -6) ?? startDate;
+  return addDateOnlyDays(startDate, -7) ?? startDate;
 }
 
 function getSelectedVideoWindowStartDate(
@@ -1967,7 +1967,7 @@ async function getCreatorAccessLocalViewTallyData(args: {
 
       if (paidReport === "timeout") {
         warnings.push(
-          "Paid traffic matching did not finish within 25 seconds, so paid delivery remains unknown for unmatched rows. Refresh this page to retry exact paid matching.",
+          "Paid traffic matching did not finish within 4 seconds, so paid delivery remains unknown for unmatched rows. Refresh this page to retry exact paid matching.",
         );
       } else {
         paidRows = paidReport.rows;

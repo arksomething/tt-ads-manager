@@ -1,9 +1,13 @@
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 
+import { CopyLinkButton } from "@/app/org/[organizationSlug]/links/copy-link-button";
 import type { DashboardSearchParams } from "@/server/dashboard/filters";
+import { buildCreatorPortalDirectoryLinkHref } from "@/server/creator-portal/directory";
 import {
   canCurrentUserEditCreatorPortalDeals,
   clearCreatorPortalSessionCookie,
+  getCopyableCreatorPortalLinkPathForCurrentAccess,
   getCreatorPortalDefaultDateRange,
   getCurrentCreatorPortalAccess,
 } from "@/server/creator-portal/access";
@@ -12,6 +16,7 @@ import { getCreatorPortalFeedSort } from "@/lib/creator-portal-feed";
 import { getOrganizationUgcPayData } from "@/server/ugc-pay/queries";
 
 import { CreatorLedgerClient } from "./creator-ledger-client";
+import { CreatorRangeFields } from "./creator-range-fields";
 import { CreatorPortalPendingRefresh } from "./pending-refresh";
 
 export const dynamic = "force-dynamic";
@@ -30,6 +35,15 @@ const currencyFormatters = new Map<string, Intl.NumberFormat>();
 function getSearchParamValue(searchParams: DashboardSearchParams, key: string) {
   const value = searchParams[key];
   return Array.isArray(value) ? value[0] : value;
+}
+
+function getRequestOrigin(headerStore: Headers) {
+  const host = headerStore.get("x-forwarded-host") ?? headerStore.get("host");
+  const proto =
+    headerStore.get("x-forwarded-proto") ??
+    (process.env.NODE_ENV === "development" ? "http" : "https");
+
+  return host ? `${proto}://${host}` : "";
 }
 
 function formatMoney(value: number, currency = "USD") {
@@ -196,10 +210,13 @@ export default async function CreatorPortalPage({
   }
 
   const campaignId = access.campaignCreator?.campaignId as string | undefined;
-  const canEditDeals = await canCurrentUserEditCreatorPortalDeals({
-    campaignId,
-    organizationSlug: access.organization.slug,
-  });
+  const [canEditDeals, copyLinkPath] = await Promise.all([
+    canCurrentUserEditCreatorPortalDeals({
+      campaignId,
+      organizationSlug: access.organization.slug,
+    }),
+    getCopyableCreatorPortalLinkPathForCurrentAccess({ access }),
+  ]);
   const hasExplicitDateRange = Boolean(
     getSearchParamValue(resolvedSearchParams, "startDate") ||
       getSearchParamValue(resolvedSearchParams, "endDate"),
@@ -228,6 +245,16 @@ export default async function CreatorPortalPage({
     return <CreatorPortalPendingRefresh />;
   }
 
+  const origin = getRequestOrigin(await headers());
+  const copyLink =
+    origin && copyLinkPath
+      ? `${origin}${buildCreatorPortalDirectoryLinkHref(copyLinkPath, {
+          endDate: data.endDate,
+          payMode: data.payMode,
+          startDate: data.startDate,
+          viewWindowMode: "all",
+        })}`
+      : null;
   const creator = data.creators[0] ?? null;
   const feedSort = getCreatorPortalFeedSort(
     getSearchParamValue(resolvedSearchParams, "feedSort"),
@@ -269,63 +296,30 @@ export default async function CreatorPortalPage({
             </p>
           </div>
 
-          <form action={signOut}>
-            <button
-              className="rounded-[0.9rem] border border-white/[0.1] px-4 py-2 text-sm text-muted-foreground transition hover:border-white/[0.18] hover:text-foreground"
-              type="submit"
-            >
-              Sign out
-            </button>
-          </form>
+          <div className="flex flex-wrap items-center gap-2">
+            {copyLink ? (
+              <CopyLinkButton
+                className="rounded-[0.9rem] border border-white/[0.1] px-4 py-2 text-sm text-muted-foreground transition hover:border-white/[0.18] hover:text-foreground"
+                link={copyLink}
+              />
+            ) : null}
+            <form action={signOut}>
+              <button
+                className="rounded-[0.9rem] border border-white/[0.1] px-4 py-2 text-sm text-muted-foreground transition hover:border-white/[0.18] hover:text-foreground"
+                type="submit"
+              >
+                Sign out
+              </button>
+            </form>
+          </div>
         </header>
 
         <form className="grid gap-3 rounded-[1.25rem] border border-white/[0.08] bg-white/[0.03] p-4 sm:grid-cols-[repeat(4,minmax(0,1fr))_auto] sm:items-end">
-          <label>
-            <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-              Start
-            </span>
-            <input
-              className="mt-2 w-full rounded-[0.85rem] border border-white/[0.08] bg-black/25 px-3 py-2 text-sm text-foreground"
-              defaultValue={formatDateInputValue(data.startDate)}
-              name="startDate"
-              type="date"
-            />
-          </label>
-          <label>
-            <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-              End
-            </span>
-            <input
-              className="mt-2 w-full rounded-[0.85rem] border border-white/[0.08] bg-black/25 px-3 py-2 text-sm text-foreground"
-              defaultValue={formatDateInputValue(data.endDate)}
-              name="endDate"
-              type="date"
-            />
-          </label>
-          <input name="viewWindowMode" type="hidden" value="all" />
-          <label>
-            <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-              Pay basis
-            </span>
-            <select
-              className="mt-2 w-full rounded-[0.85rem] border border-white/[0.08] bg-black/25 px-3 py-2 text-sm text-foreground"
-              defaultValue={data.payMode}
-              name="payMode"
-            >
-              <option value="gained">Period views</option>
-              <option value="posted">Post date</option>
-            </select>
-          </label>
-          <div>
-            <span className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-              Included videos
-            </span>
-            <div className="mt-2 w-full rounded-[0.85rem] border border-white/[0.08] bg-black/25 px-3 py-2 text-sm text-foreground">
-              {data.payMode === "posted"
-                ? "Posted in selected range"
-                : "Posted or viewed in selected range"}
-            </div>
-          </div>
+          <CreatorRangeFields
+            endDate={formatDateInputValue(data.endDate)}
+            payMode={data.payMode}
+            startDate={formatDateInputValue(data.startDate)}
+          />
           <button
             className="rounded-[0.85rem] bg-white px-4 py-2 text-sm font-semibold text-black transition hover:bg-[#90FF4D]"
             type="submit"

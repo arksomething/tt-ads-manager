@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { Suspense, type ReactNode } from "react";
 
 import { DashboardIcon } from "@/components/org-dashboard/org-icons";
@@ -7,6 +8,17 @@ import {
   CreatorDealPerVideoCapScope,
 } from "@/lib/prisma-shim";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
+import { getCreatorPortalLinksWorkspace } from "@/server/creator-portal/access";
+import {
+  buildCreatorPortalDirectoryLinkHref,
+  buildCreatorPortalDirectoryOpenHref,
+  buildCreatorPortalDirectoryRows,
+  type CreatorPortalDirectoryDateDefaults,
+  getCreatorPortalDirectorySummary,
+  type CreatorPortalDirectoryCampaignCreator,
+  type CreatorPortalDirectoryRow,
+} from "@/server/creator-portal/directory";
+import { addCreatorToCampaignForOrganization } from "@/server/creators/mutations";
 import {
   deleteCampaignCreatorDealForOrganization,
   deleteCampaignCreatorVideoDealForOrganization,
@@ -22,6 +34,7 @@ import {
   type UgcPayVideoRow,
 } from "@/server/ugc-pay/queries";
 
+import { CopyLinkButton } from "../links/copy-link-button";
 import { UgcPayClient } from "./ugc-pay-client";
 import UgcPayLoading from "./loading";
 
@@ -50,6 +63,15 @@ const dealInputClassName =
   "w-full rounded-[0.75rem] border border-white/[0.08] bg-black/[0.18] px-2.5 py-2 text-xs text-foreground outline-none transition focus:border-white/[0.16]";
 
 type DealAction = (formData: FormData) => Promise<void>;
+
+function getRequestOrigin(headerStore: Headers) {
+  const host = headerStore.get("x-forwarded-host") ?? headerStore.get("host");
+  const proto =
+    headerStore.get("x-forwarded-proto") ??
+    (process.env.NODE_ENV === "development" ? "http" : "https");
+
+  return host ? `${proto}://${host}` : "";
+}
 
 function getSearchParamValue(searchParams: DashboardSearchParams, key: string) {
   const value = searchParams[key];
@@ -101,6 +123,8 @@ function buildUgcPayHref(args: {
 
 function getNoticeLabel(value: string | undefined) {
   switch (value) {
+    case "creator-added":
+      return "Creator added.";
     case "creator-deal-saved":
       return "Creator deal structure saved.";
     case "creator-deal-cleared":
@@ -336,6 +360,222 @@ function EmptyState({ label }: { label: string }) {
     <div className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.18] px-4 py-10 text-sm text-muted-foreground">
       {label}
     </div>
+  );
+}
+
+function getCreatorHandleLabel(
+  platformAccounts: Array<{
+    handle: string;
+  }>,
+) {
+  return platformAccounts.length > 0
+    ? platformAccounts
+        .map((account) => `@${account.handle.replace(/^@/, "")}`)
+        .join(", ")
+    : "No tracked handle";
+}
+
+function TopAddCreatorForm({
+  action,
+  selectedCampaignId,
+}: {
+  action: DealAction;
+  selectedCampaignId: string | null;
+}) {
+  return (
+    <section className="rounded-[1.35rem] border border-white/[0.08] bg-[#0D0E11] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.18)]">
+      <form
+        action={action}
+        className="grid gap-3 lg:grid-cols-[minmax(12rem,1fr)_minmax(12rem,1fr)_auto] lg:items-end"
+      >
+        <input name="campaignId" type="hidden" value={selectedCampaignId ?? ""} />
+        <label className="block">
+          <TooltipLabel
+            label="TikTok handle"
+            tip="Use @handle, handle, or a TikTok profile URL."
+          />
+          <input
+            className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
+            name="tiktokHandle"
+            placeholder="@creator"
+            required
+          />
+        </label>
+        <label className="block">
+          <TooltipLabel
+            label="Display name"
+            tip="Optional. Defaults to the TikTok handle."
+          />
+          <input
+            className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
+            name="displayName"
+            placeholder="Creator name"
+          />
+        </label>
+        <button
+          className="inline-flex min-h-11 items-center justify-center rounded-[0.95rem] border border-[#90FF4D]/20 bg-[#90FF4D]/90 px-4 text-sm font-medium text-black transition hover:bg-[#A4FF68] disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={!selectedCampaignId}
+          type="submit"
+        >
+          Add creator
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function CreatorDirectorySection({
+  dateDefaults,
+  directoryRows,
+  organizationSlug,
+  origin,
+  summary,
+}: {
+  dateDefaults: CreatorPortalDirectoryDateDefaults;
+  directoryRows: CreatorPortalDirectoryRow[];
+  organizationSlug: string;
+  origin: string;
+  summary: {
+    activeLinks: number;
+    campaigns: number;
+    creatorRows: number;
+  };
+}) {
+  return (
+    <section className="space-y-4">
+      <div className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs uppercase text-muted-foreground">
+              UGC Pay
+            </p>
+            <h1 className="mt-2 text-xl font-semibold tracking-normal text-foreground">
+              Creator directory
+            </h1>
+          </div>
+          <a
+            className="inline-flex min-h-9 items-center justify-center gap-2 rounded-[0.85rem] border border-white/[0.1] bg-white/[0.06] px-3 text-xs font-medium text-foreground transition hover:border-white/[0.18] hover:bg-white/[0.1]"
+            href={`/org/${organizationSlug}/ugc-pay/legacy`}
+          >
+            <DashboardIcon className="h-3.5 w-3.5" name="payouts" />
+            Legacy calculator
+          </a>
+        </div>
+
+        <div className="mt-5 grid gap-3 md:grid-cols-3">
+          <div className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.18] p-4">
+            <p className="text-2xl font-semibold text-foreground">
+              {formatMetricValue(summary.creatorRows)}
+            </p>
+            <p className="mt-2 text-[0.62rem] uppercase text-muted-foreground">
+              Creators
+            </p>
+          </div>
+          <div className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.18] p-4">
+            <p className="text-2xl font-semibold text-foreground">
+              {formatMetricValue(summary.activeLinks)}
+            </p>
+            <p className="mt-2 text-[0.62rem] uppercase text-muted-foreground">
+              Active links
+            </p>
+          </div>
+          <div className="rounded-[1.15rem] border border-white/[0.08] bg-black/[0.18] p-4">
+            <p className="text-2xl font-semibold text-foreground">
+              {formatMetricValue(summary.campaigns)}
+            </p>
+            <p className="mt-2 text-[0.62rem] uppercase text-muted-foreground">
+              Campaigns
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <section className="overflow-hidden rounded-[1.35rem] border border-white/[0.08] bg-[#0D0E11] shadow-[0_24px_70px_rgba(0,0,0,0.2)]">
+        <div className="border-b border-white/[0.08] px-4 py-4">
+          <h2 className="text-lg font-semibold tracking-normal text-foreground">
+            Creators
+          </h2>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[980px] border-collapse text-left text-sm">
+            <thead className="bg-white/[0.03] text-[0.62rem] uppercase text-muted-foreground">
+              <tr>
+                <th className="px-4 py-3 font-medium">Creator</th>
+                <th className="px-4 py-3 font-medium">Campaign</th>
+                <th className="px-4 py-3 font-medium">Link status</th>
+                <th className="px-4 py-3 font-medium">Created</th>
+                <th className="px-4 py-3 text-right font-medium">Open</th>
+              </tr>
+            </thead>
+            <tbody>
+              {directoryRows.map((row) => {
+                const activeAccess = row.activeAccess;
+                const portalLink =
+                  activeAccess?.linkPath && origin
+                    ? `${origin}${buildCreatorPortalDirectoryLinkHref(
+                        activeAccess.linkPath,
+                        dateDefaults,
+                      )}`
+                    : null;
+
+                return (
+                  <tr
+                    className="border-b border-white/[0.05] align-middle last:border-b-0"
+                    key={row.campaignCreator.id}
+                  >
+                    <td className="px-4 py-4">
+                      <p className="font-medium text-foreground">
+                        {row.campaignCreator.creator.displayName}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {getCreatorHandleLabel(
+                          row.campaignCreator.creator.platformAccounts,
+                        )}
+                      </p>
+                    </td>
+                    <td className="px-4 py-4 text-muted-foreground">
+                      {row.campaignCreator.campaign.name}
+                    </td>
+                    <td className="px-4 py-4">
+                      <span
+                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs ${
+                          activeAccess
+                            ? "border-[#90FF4D]/25 bg-[#90FF4D]/10 text-[#B8FF86]"
+                            : "border-white/[0.08] bg-white/[0.05] text-muted-foreground"
+                        }`}
+                      >
+                        {activeAccess ? "Active link" : "No active link"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-4 text-muted-foreground">
+                      {formatDateLabel(
+                        activeAccess?.createdAt ?? row.campaignCreator.createdAt,
+                      )}
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="flex justify-end gap-2">
+                        {portalLink ? <CopyLinkButton link={portalLink} /> : null}
+                        <a
+                          className="inline-flex min-h-8 items-center justify-center gap-1.5 rounded-[0.8rem] border border-white/[0.1] bg-white/[0.06] px-3 text-xs font-medium text-foreground transition hover:border-white/[0.18] hover:bg-white/[0.1]"
+                          href={buildCreatorPortalDirectoryOpenHref(
+                            organizationSlug,
+                            row.campaignCreator.id,
+                            dateDefaults,
+                          )}
+                        >
+                          <DashboardIcon className="h-3.5 w-3.5" name="externalLink" />
+                          Open portal
+                        </a>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
   );
 }
 
@@ -938,6 +1178,17 @@ async function UgcPayPageReport({
     organizationSlug,
     searchParams: resolvedSearchParams,
   });
+  const [creatorLinksWorkspace, headerStore] = await Promise.all([
+    getCreatorPortalLinksWorkspace(organizationSlug),
+    headers(),
+  ]);
+  const directoryCampaignCreators =
+    creatorLinksWorkspace.campaignCreators as CreatorPortalDirectoryCampaignCreator[];
+  const directoryRows = buildCreatorPortalDirectoryRows(directoryCampaignCreators);
+  const directorySummary = getCreatorPortalDirectorySummary(
+    directoryCampaignCreators,
+  );
+  const origin = getRequestOrigin(headerStore);
   const notice = getNoticeLabel(getSearchParamValue(resolvedSearchParams, "notice"));
   const error = getErrorLabel(getSearchParamValue(resolvedSearchParams, "error"));
   const isGainedViewMode = data.payMode === "gained";
@@ -1119,8 +1370,59 @@ async function UgcPayPageReport({
     }
   }
 
+  async function addCreatorAction(formData: FormData) {
+    "use server";
+
+    try {
+      await addCreatorToCampaignForOrganization({
+        organizationSlug,
+        input: {
+          campaignId: getTrimmedFormValue(formData, "campaignId"),
+          displayName: getTrimmedFormValue(formData, "displayName") || undefined,
+          tiktokHandle: getTrimmedFormValue(formData, "tiktokHandle"),
+        },
+      });
+
+      redirect(
+        buildUgcPayHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          notice: "creator-added",
+        }),
+      );
+    } catch (addError) {
+      redirect(
+        buildUgcPayHref({
+          organizationSlug,
+          searchParams: resolvedSearchParams,
+          error: getActionErrorMessage(addError),
+        }),
+      );
+    }
+  }
+
+  const creatorPortalDateDefaults = {
+    endDate: data.endDate,
+    payMode: data.payMode,
+    startDate: data.startDate,
+    viewWindowMode: data.viewWindowMode,
+  };
+
   return (
     <div className="space-y-4">
+      <TopAddCreatorForm
+        action={addCreatorAction}
+        selectedCampaignId={data.selectedCampaignId}
+      />
+
+      <CreatorDirectorySection
+        dateDefaults={creatorPortalDateDefaults}
+        directoryRows={directoryRows}
+        organizationSlug={organizationSlug}
+        origin={origin}
+        summary={directorySummary}
+      />
+
       <section className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
