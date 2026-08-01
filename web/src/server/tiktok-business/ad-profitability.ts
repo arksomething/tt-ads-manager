@@ -1,3 +1,4 @@
+import { fetchPagesWithReplay } from "@/lib/paged-fetch";
 import {
   getTikTokSingularOverlay,
   type TikTokSingularOverlay,
@@ -5,11 +6,16 @@ import {
 } from "@/server/singular/reporting";
 
 import { requestTikTokBusinessApi } from "./client";
+import {
+  readResolvedPostsFromStore,
+  writeResolvedPostsToStore,
+} from "./resolved-post-store";
 
 const MAX_REPORT_PAGES = 20;
 const MAX_LIST_PAGES = 20;
 const REPORT_PAGE_SIZE = 1_000;
 const LIST_PAGE_SIZE = 100;
+const LIST_PAGE_FETCH_CONCURRENCY = 3;
 const AD_GET_FIELDS_CANDIDATES: Array<readonly string[] | undefined> = [
   [
     "ad_id",
@@ -34,8 +40,8 @@ const AD_GET_FIELDS_CANDIDATES: Array<readonly string[] | undefined> = [
   undefined,
 ] as const;
 const MAX_VIDEO_INFO_LOOKUPS = 20;
-const VIDEO_INFO_LOOKUP_BATCH_SIZE = 2;
-const VIDEO_INFO_LOOKUP_BATCH_DELAY_MS = 500;
+const VIDEO_INFO_LOOKUP_BATCH_SIZE = 4;
+const VIDEO_INFO_LOOKUP_BATCH_DELAY_MS = 250;
 const METADATA_CACHE_TTL_MS = 5 * 60 * 1_000;
 const RESOLVED_POST_CACHE_TTL_MS = 15 * 60 * 1_000;
 const SUPPORTED_VIDEO_INFO_IDENTITY_TYPES = new Set([
@@ -216,7 +222,18 @@ const advertiserAdsCache = new Map<
     warnings: string[];
   }>
 >();
+const pendingAdvertiserAdsCache = new Map<
+  string,
+  Promise<{
+    ads: TikTokAdRecord[];
+    warnings: string[];
+  }>
+>();
 const resolvedPostCache = new Map<string, CachedValue<TikTokResolvedPost | null>>();
+const pendingResolvedPostLookups = new Map<
+  string,
+  Promise<TikTokResolvedPost | null>
+>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -784,37 +801,45 @@ async function fetchAdvertiserAdsWithFields(args: {
   accessToken: string;
   fields?: readonly string[];
 }) {
-  const ads: TikTokAdRecord[] = [];
-  let totalPages = 1;
-
-  for (let page = 1; page <= totalPages && page <= MAX_LIST_PAGES; page += 1) {
-    const payload = await requestTikTokBusinessApi<TikTokListData>({
-      accessToken: args.accessToken,
-      method: "GET",
-      path: "/open_api/v1.3/ad/get/",
-      query: {
-        advertiser_id: args.advertiserId,
-        page,
-        page_size: LIST_PAGE_SIZE,
-        ...(args.fields ? { fields: args.fields } : {}),
-      },
-    });
-
-    const pageAds = getRecordArray(payload, ["list"])
+  const getPageAds = (payload: TikTokListData) =>
+    getRecordArray(payload, ["list"])
       .map(normalizeAdRecord)
       .filter((ad): ad is TikTokAdRecord => Boolean(ad));
 
-    ads.push(...pageAds);
-    totalPages = getTotalPages({
-      payload,
-      currentRows: pageAds.length,
-      pageSize: LIST_PAGE_SIZE,
-      maxPages: MAX_LIST_PAGES,
-    });
+  const { pages } = await fetchPagesWithReplay({
+    fetchPage: (page) =>
+      requestTikTokBusinessApi<TikTokListData>({
+        accessToken: args.accessToken,
+        method: "GET",
+        path: "/open_api/v1.3/ad/get/",
+        query: {
+          advertiser_id: args.advertiserId,
+          page,
+          page_size: LIST_PAGE_SIZE,
+          ...(args.fields ? { fields: args.fields } : {}),
+        },
+      }),
+    getPageInfo: (payload) => {
+      const pageAds = getPageAds(payload);
+      return {
+        rowCount: pageAds.length,
+        totalPages: getTotalPages({
+          payload,
+          currentRows: pageAds.length,
+          pageSize: LIST_PAGE_SIZE,
+          maxPages: MAX_LIST_PAGES,
+        }),
+      };
+    },
+    pageSize: LIST_PAGE_SIZE,
+    maxPages: MAX_LIST_PAGES,
+    concurrency: LIST_PAGE_FETCH_CONCURRENCY,
+  });
 
-    if (pageAds.length < LIST_PAGE_SIZE) {
-      break;
-    }
+  const ads: TikTokAdRecord[] = [];
+
+  for (const payload of pages) {
+    ads.push(...getPageAds(payload));
   }
 
   return ads;
@@ -831,36 +856,52 @@ async function fetchAdvertiserAds(args: {
     return cached.value;
   }
 
-  let lastError: unknown = null;
+  const pending = pendingAdvertiserAdsCache.get(cacheKey);
 
-  for (const [index, fields] of AD_GET_FIELDS_CANDIDATES.entries()) {
-    try {
-      const ads = await fetchAdvertiserAdsWithFields({
-        advertiserId: args.advertiserId,
-        accessToken: args.accessToken,
-        fields,
-      });
-
-      const result = {
-        ads,
-        warnings:
-          index > 0
-            ? [
-                "TikTok rejected the richer ad field set, so the app fell back to a simpler ad lookup response.",
-              ]
-            : [],
-      };
-
-      writeCachedValue(advertiserAdsCache, cacheKey, result, METADATA_CACHE_TTL_MS);
-      return result;
-    } catch (error) {
-      lastError = error;
-    }
+  if (pending) {
+    return pending;
   }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Could not load TikTok ads for this advertiser.");
+  const requestPromise = (async () => {
+    let lastError: unknown = null;
+
+    for (const [index, fields] of AD_GET_FIELDS_CANDIDATES.entries()) {
+      try {
+        const ads = await fetchAdvertiserAdsWithFields({
+          advertiserId: args.advertiserId,
+          accessToken: args.accessToken,
+          fields,
+        });
+
+        const result = {
+          ads,
+          warnings:
+            index > 0
+              ? [
+                  "TikTok rejected the richer ad field set, so the app fell back to a simpler ad lookup response.",
+                ]
+              : [],
+        };
+
+        writeCachedValue(advertiserAdsCache, cacheKey, result, METADATA_CACHE_TTL_MS);
+        return result;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("Could not load TikTok ads for this advertiser.");
+  })();
+
+  pendingAdvertiserAdsCache.set(cacheKey, requestPromise);
+
+  try {
+    return await requestPromise;
+  } finally {
+    pendingAdvertiserAdsCache.delete(cacheKey);
+  }
 }
 
 async function fetchMatchedAdsByIdsBestEffort(args: {
@@ -991,27 +1032,53 @@ async function fetchIdentityVideoInfo(args: {
     return cached.value;
   }
 
-  const payload = await requestTikTokBusinessApi<Record<string, unknown> | null>({
-    accessToken: args.accessToken,
-    method: "GET",
-    path: "/open_api/v1.3/identity/video/info/",
-    query: {
-      advertiser_id: args.advertiserId,
-      identity_type: args.identityType,
-      identity_id: args.identityId,
-      video_id: args.itemId,
-      item_id: args.itemId,
-      ...(args.identityType === "BC_AUTH_TT" && args.identityAuthorizedBcId
-        ? {
-            identity_authorized_bc_id: args.identityAuthorizedBcId,
-          }
-        : {}),
-    },
-  });
+  const pending = pendingResolvedPostLookups.get(cacheKey);
 
-  const resolvedPost = normalizeResolvedPost(isRecord(payload) ? payload : {}, args.itemId);
-  writeCachedValue(resolvedPostCache, cacheKey, resolvedPost, RESOLVED_POST_CACHE_TTL_MS);
-  return resolvedPost;
+  if (pending) {
+    return pending;
+  }
+
+  const requestPromise = (async () => {
+    const payload = await requestTikTokBusinessApi<Record<string, unknown> | null>({
+      accessToken: args.accessToken,
+      method: "GET",
+      path: "/open_api/v1.3/identity/video/info/",
+      query: {
+        advertiser_id: args.advertiserId,
+        identity_type: args.identityType,
+        identity_id: args.identityId,
+        video_id: args.itemId,
+        item_id: args.itemId,
+        ...(args.identityType === "BC_AUTH_TT" && args.identityAuthorizedBcId
+          ? {
+              identity_authorized_bc_id: args.identityAuthorizedBcId,
+            }
+          : {}),
+      },
+    });
+
+    const resolvedPost = normalizeResolvedPost(isRecord(payload) ? payload : {}, args.itemId);
+    writeCachedValue(resolvedPostCache, cacheKey, resolvedPost, RESOLVED_POST_CACHE_TTL_MS);
+
+    if (resolvedPost) {
+      void writeResolvedPostsToStore([
+        {
+          cacheKey,
+          payload: resolvedPost as unknown as Record<string, unknown>,
+        },
+      ]);
+    }
+
+    return resolvedPost;
+  })();
+
+  pendingResolvedPostLookups.set(cacheKey, requestPromise);
+
+  try {
+    return await requestPromise;
+  } finally {
+    pendingResolvedPostLookups.delete(cacheKey);
+  }
 }
 
 async function fetchResolvedPostsForAds(args: {
@@ -1075,6 +1142,47 @@ async function fetchResolvedPostsForAds(args: {
     }
 
     pendingContexts.push(context);
+  }
+
+  // Check the durable store before paying for live TikTok lookups: resolved
+  // posts are immutable, so hits are as valid as a live response.
+  if (pendingContexts.length > 0) {
+    const contextCacheKeys = pendingContexts.map((context) =>
+      buildResolvedPostCacheKey({
+        advertiserId: args.advertiserId,
+        itemId: context.itemId,
+        identityId: context.identityId,
+        identityType: context.identityType,
+        identityAuthorizedBcId: context.identityAuthorizedBcId,
+      }),
+    );
+    const storedPosts = await readResolvedPostsFromStore(contextCacheKeys);
+
+    if (storedPosts.size > 0) {
+      const stillPendingContexts: TikTokVideoLookupContext[] = [];
+
+      for (const [index, context] of pendingContexts.entries()) {
+        const cacheKey = contextCacheKeys[index]!;
+        const storedPost = storedPosts.get(cacheKey);
+
+        if (storedPost) {
+          const resolvedPost = storedPost as unknown as TikTokResolvedPost;
+          resolvedPostsByItemId.set(context.itemId, resolvedPost);
+          writeCachedValue(
+            resolvedPostCache,
+            cacheKey,
+            resolvedPost,
+            RESOLVED_POST_CACHE_TTL_MS,
+          );
+          continue;
+        }
+
+        stillPendingContexts.push(context);
+      }
+
+      pendingContexts.length = 0;
+      pendingContexts.push(...stillPendingContexts);
+    }
   }
 
   for (

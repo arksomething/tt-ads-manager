@@ -1,6 +1,11 @@
+import { cache as reactCache } from "react";
+
 import { Platform, SparkAuthorizationStatus } from "@/lib/prisma-shim";
 
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { prisma } from "@/lib/db";
+import { fetchPagesWithReplay } from "@/lib/paged-fetch";
+import { logServerTiming } from "@/lib/server-timing";
 import {
   canUseSingularCreativeIdAsVideoSignal,
   getSingularRowsForTikTokAdGroup,
@@ -23,6 +28,8 @@ import { requestTikTokBusinessApi } from "./client";
 
 const MAX_REPORT_PAGES = 20;
 const REPORT_PAGE_SIZE = 1_000;
+const REPORT_WINDOW_FETCH_CONCURRENCY = 2;
+const REPORT_PAGE_FETCH_CONCURRENCY = 3;
 const MAX_LIST_PAGES = 20;
 const LIST_PAGE_SIZE = 100;
 const MAX_CAMPAIGN_POST_LINK_LOOKUPS = 20;
@@ -1587,7 +1594,9 @@ function isMissingOrgTikTokAccountError(error: unknown) {
   );
 }
 
-async function getOrgTikTokAccount(organizationId: string) {
+// Request-scoped memoization (same pattern as getOrganizationMembership):
+// dozens of per-creator lookups in one page load share these invariant reads.
+const getOrgTikTokAccount = reactCache(async (organizationId: string) => {
   const activeAccount = await prisma.organizationTikTokAccount.findFirst({
     where: {
       organizationId,
@@ -1634,38 +1643,44 @@ async function getOrgTikTokAccount(organizationId: string) {
       `Using the latest TikTok account even though its status is ${latestAccount.status}.`,
     ],
   };
-}
+});
+
+const resolveCreatorByIdCached = reactCache(
+  async (organizationId: string, creatorId: string): Promise<CreatorLookupRecord> => {
+    const creator = await prisma.creator.findFirst({
+      where: {
+        id: creatorId,
+        organizationId,
+      },
+      select: {
+        id: true,
+        displayName: true,
+        platformAccounts: {
+          where: {
+            platform: Platform.TIKTOK,
+          },
+          select: {
+            platform: true,
+            handle: true,
+          },
+          orderBy: [{ handle: "asc" }],
+        },
+      },
+    });
+
+    if (!creator) {
+      throw new Error("Creator not found in this organization.");
+    }
+
+    return creator;
+  },
+);
 
 async function resolveCreatorById(args: {
   organizationId: string;
   creatorId: string;
 }): Promise<CreatorLookupRecord> {
-  const creator = await prisma.creator.findFirst({
-    where: {
-      id: args.creatorId,
-      organizationId: args.organizationId,
-    },
-    select: {
-      id: true,
-      displayName: true,
-      platformAccounts: {
-        where: {
-          platform: Platform.TIKTOK,
-        },
-        select: {
-          platform: true,
-          handle: true,
-        },
-        orderBy: [{ handle: "asc" }],
-      },
-    },
-  });
-
-  if (!creator) {
-    throw new Error("Creator not found in this organization.");
-  }
-
-  return creator;
+  return resolveCreatorByIdCached(args.organizationId, args.creatorId);
 }
 
 async function resolveCreatorByName(args: {
@@ -1981,6 +1996,7 @@ async function fetchPaidReportRowsForMetrics(args: {
 
     const startBoundary = parseDateInput(args.startDate, "start date");
     const endBoundary = parseDateInput(args.endDate, "end date");
+    const reportWindows: Array<{ windowStart: Date; windowEnd: Date }> = [];
     let windowStart = startBoundary;
 
     while (windowStart <= endBoundary) {
@@ -1988,48 +2004,61 @@ async function fetchPaidReportRowsForMetrics(args: {
         addUtcDays(windowStart, 29) < endBoundary
           ? addUtcDays(windowStart, 29)
           : endBoundary;
-      let totalPages = 1;
+      reportWindows.push({ windowStart, windowEnd });
+      windowStart = addUtcDays(windowEnd, 1);
+    }
 
-      for (
-        let page = 1;
-        page <= totalPages && page <= MAX_REPORT_PAGES;
-        page += 1
-      ) {
-        const payload = await requestTikTokBusinessApi<TikTokIntegratedReportData>({
-          accessToken: args.accessToken,
-          method: "GET",
-          path: "/open_api/v1.3/report/integrated/get/",
-          query: {
-            report_type: "BASIC",
-            advertiser_id: args.advertiserId,
-            data_level: "AUCTION_AD",
-            dimensions,
-            metrics: apiMetrics,
-            start_date: toDateOnlyString(windowStart),
-            end_date: toDateOnlyString(windowEnd),
-            page,
-            page_size: REPORT_PAGE_SIZE,
+    const windowResults = await mapWithConcurrency(
+      reportWindows,
+      REPORT_WINDOW_FETCH_CONCURRENCY,
+      async (reportWindow) => {
+        const { pages, totalPages } = await fetchPagesWithReplay({
+          fetchPage: (page) =>
+            requestTikTokBusinessApi<TikTokIntegratedReportData>({
+              accessToken: args.accessToken,
+              method: "GET",
+              path: "/open_api/v1.3/report/integrated/get/",
+              query: {
+                report_type: "BASIC",
+                advertiser_id: args.advertiserId,
+                data_level: "AUCTION_AD",
+                dimensions,
+                metrics: apiMetrics,
+                start_date: toDateOnlyString(reportWindow.windowStart),
+                end_date: toDateOnlyString(reportWindow.windowEnd),
+                page,
+                page_size: REPORT_PAGE_SIZE,
+              },
+            }),
+          getPageInfo: (payload) => {
+            const pageRows = getReportRows(payload);
+            return {
+              rowCount: pageRows.length,
+              totalPages: getTotalPages(payload, pageRows.length),
+            };
           },
+          pageSize: REPORT_PAGE_SIZE,
+          maxPages: MAX_REPORT_PAGES,
+          concurrency: REPORT_PAGE_FETCH_CONCURRENCY,
         });
 
-        const pageRows = getReportRows(payload);
-        rows.push(...pageRows);
-        totalPages = getTotalPages(payload, pageRows.length);
+        return {
+          rows: pages.flatMap((payload) => getReportRows(payload)),
+          warnings:
+            totalPages > MAX_REPORT_PAGES
+              ? [
+                  `TikTok reporting returned more than ${MAX_REPORT_PAGES} pages for ${toDateOnlyString(
+                    reportWindow.windowStart,
+                  )} to ${toDateOnlyString(reportWindow.windowEnd)}. The result may be truncated.`,
+                ]
+              : [],
+        };
+      },
+    );
 
-        if (pageRows.length < REPORT_PAGE_SIZE) {
-          break;
-        }
-      }
-
-      if (totalPages > MAX_REPORT_PAGES) {
-        warnings.push(
-          `TikTok reporting returned more than ${MAX_REPORT_PAGES} pages for ${toDateOnlyString(
-            windowStart,
-          )} to ${toDateOnlyString(windowEnd)}. The result may be truncated.`,
-        );
-      }
-
-      windowStart = addUtcDays(windowEnd, 1);
+    for (const windowResult of windowResults) {
+      rows.push(...windowResult.rows);
+      warnings.push(...windowResult.warnings);
     }
 
     const result: PaidReportMetricsFetchResult = {
@@ -3480,6 +3509,57 @@ export async function getPaidViewsForItemIdsForOrganization(args: {
   }
 }
 
+// Fire-and-forget prefetch of the advertiser-wide paid-view resolution chain
+// (report -> ad metadata -> Singular creative fallback). It mirrors the exact
+// gating of the per-creator lookups and every underlying fetch is cached or
+// in-flight-deduped, so the later real lookups coalesce onto these requests
+// instead of paying the full serial chain after the rest of the page loaded.
+export async function warmTikTokPaidViewResolution(args: {
+  organizationId: string;
+  startDate: string;
+  endDate: string;
+  metric?: TikTokPaidViewMetric;
+}) {
+  try {
+    const accountLookup = await getOrgTikTokAccount(args.organizationId);
+    const advertiserId = accountLookup.account.advertiserId;
+    const accessToken = accountLookup.account.accessToken;
+
+    if (!advertiserId || !accessToken) {
+      return;
+    }
+
+    const metric = args.metric ?? "impressions";
+    const report = await fetchPaidReportRows({
+      advertiserId,
+      accessToken,
+      startDate: args.startDate,
+      endDate: args.endDate,
+      metric,
+    });
+    const normalizedRows = report.rows.map((row) =>
+      normalizeReportRow(row, report.apiMetricName),
+    );
+
+    if (!normalizedRows.some((row) => row.adId !== null)) {
+      return;
+    }
+
+    await resolveExactItemIdsFromAdMetadata({
+      advertiserId,
+      accessToken,
+      itemIds: [],
+      startDate: args.startDate,
+      endDate: args.endDate,
+      rows: normalizedRows,
+      singularMatchMode: "exact-ad-id-only",
+    });
+  } catch {
+    // Warming is best-effort; the real lookups repeat these calls with
+    // identical caching semantics.
+  }
+}
+
 export async function getPaidViewsForSourceVideosForCreatorForOrganization(args: {
   organizationSlug: string;
   organizationId?: string;
@@ -3489,6 +3569,24 @@ export async function getPaidViewsForSourceVideosForCreatorForOrganization(args:
   endDate: QueryDateInput;
   metric?: TikTokPaidViewMetric;
 }): Promise<TikTokSourceVideoPaidViewsResult> {
+  const paidViewsStartedAt = Date.now();
+  const paidViewsSteps: string[] = [];
+  let paidViewsLastMarkAt = paidViewsStartedAt;
+  const markPaidViewsStep = (label: string) => {
+    const now = Date.now();
+    paidViewsSteps.push(`${label}=${now - paidViewsLastMarkAt}ms`);
+    paidViewsLastMarkAt = now;
+  };
+  const logPaidViewsTiming = () => {
+    logServerTiming(
+      "tiktok.paid-views-for-creator",
+      Date.now() - paidViewsStartedAt,
+      {
+        creatorId: args.creatorId,
+        steps: paidViewsSteps.join(" "),
+      },
+    );
+  };
   const organizationId =
     args.organizationId ??
     (await requireOrganizationMembership(args.organizationSlug)).organizationId;
@@ -3496,6 +3594,7 @@ export async function getPaidViewsForSourceVideosForCreatorForOrganization(args:
     organizationId,
     creatorId: args.creatorId,
   });
+  markPaidViewsStep("auth-creator");
   const startDate = parseDateInput(args.startDate, "start date");
   const endDate = parseDateInput(args.endDate, "end date");
 
@@ -3575,6 +3674,7 @@ export async function getPaidViewsForSourceVideosForCreatorForOrganization(args:
     startDate,
     endDate,
   });
+  markPaidViewsStep("spark-items");
   const candidateItemIdsBySourceVideoId = new Map(
     sourceVideoIds.map((sourceVideoId) => [
       sourceVideoId,
@@ -3592,6 +3692,7 @@ export async function getPaidViewsForSourceVideosForCreatorForOrganization(args:
     endDate: toDateOnlyString(endDate),
     metric,
   });
+  markPaidViewsStep("report");
   const normalizedRows = report.rows.map((row) =>
     normalizeReportRow(row, report.apiMetricName),
   );
@@ -3615,6 +3716,8 @@ export async function getPaidViewsForSourceVideosForCreatorForOrganization(args:
           singularMatchMode: "exact-ad-id-only",
         })
     : getEmptyExactItemIdFallbackResult();
+  markPaidViewsStep("metadata-singular-fallback");
+  logPaidViewsTiming();
 
   if (rowsIncludeItemIds) {
     for (const row of normalizedRows) {

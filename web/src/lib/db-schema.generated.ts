@@ -5399,6 +5399,36 @@ export const modelSchema = {
         ]
       }
     }
+  },
+  "TikTokResolvedPostCache": {
+    "table": "TikTokResolvedPostCache",
+    "fields": {
+      "cacheKey": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "payload": {
+        "kind": "scalar",
+        "type": "Json",
+        "isList": false,
+        "isOptional": false
+      },
+      "createdAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "updatedAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      }
+    },
+    "relations": {}
   }
 } as const;
 

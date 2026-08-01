@@ -580,3 +580,57 @@ export async function clearCreatorPortalSessionCookie() {
   const cookieStore = await cookies();
   cookieStore.delete(CREATOR_PORTAL_COOKIE_NAME);
 }
+
+const LAST_POST_LOOKUP_PAGE_SIZE = 1000;
+
+// Scalar-only where/select/orderBy keeps this query on the Supabase pushdown
+// path, so it never falls back to a full Video table download.
+export async function getCreatorLastPostAtByCreatorId(
+  creatorIds: readonly string[],
+) {
+  const lastPostAtByCreatorId = new Map<string, Date>();
+  const uniqueCreatorIds = [...new Set(creatorIds)].filter(
+    (creatorId) => typeof creatorId === "string" && creatorId.length > 0,
+  );
+
+  if (uniqueCreatorIds.length === 0) {
+    return lastPostAtByCreatorId;
+  }
+
+  for (let skip = 0; ; skip += LAST_POST_LOOKUP_PAGE_SIZE) {
+    const videos = await prisma.video.findMany({
+      where: {
+        creatorId: { in: uniqueCreatorIds },
+      },
+      select: {
+        creatorId: true,
+        publishedAt: true,
+        createdAt: true,
+      },
+      orderBy: { id: "asc" },
+      take: LAST_POST_LOOKUP_PAGE_SIZE,
+      skip,
+    });
+
+    for (const video of videos) {
+      const creatorId = video.creatorId as string | null;
+      const postedAt = (video.publishedAt ?? video.createdAt) as Date | null;
+
+      if (!creatorId || !postedAt) {
+        continue;
+      }
+
+      const existing = lastPostAtByCreatorId.get(creatorId);
+
+      if (!existing || postedAt > existing) {
+        lastPostAtByCreatorId.set(creatorId, postedAt);
+      }
+    }
+
+    if (videos.length < LAST_POST_LOOKUP_PAGE_SIZE) {
+      break;
+    }
+  }
+
+  return lastPostAtByCreatorId;
+}

@@ -769,6 +769,13 @@ export interface ViralPostEnrichment {
   updatedAt: Date;
 }
 
+export interface TikTokResolvedPostCache {
+  cacheKey: string;
+  payload: Prisma.JsonValue | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export namespace Prisma {
   export type JsonObject = { [key: string]: JsonValue };
   export type JsonArray = JsonValue[];
@@ -990,6 +997,11 @@ export namespace Prisma {
   export type ViralPostEnrichmentSelect = GenericSelect;
   export type ViralPostEnrichmentCreateInput = GenericInput;
   export type ViralPostEnrichmentUpdateInput = GenericInput;
+  export type TikTokResolvedPostCacheWhereInput = GenericWhereInput;
+  export type TikTokResolvedPostCacheOrderByWithRelationInput = GenericOrderByInput;
+  export type TikTokResolvedPostCacheSelect = GenericSelect;
+  export type TikTokResolvedPostCacheCreateInput = GenericInput;
+  export type TikTokResolvedPostCacheUpdateInput = GenericInput;
   export const ModelName = {
     User: "User",
     Account: "Account",
@@ -1032,5 +1044,6 @@ export namespace Prisma {
     ExternalSyncJob: "ExternalSyncJob",
     SourceMapping: "SourceMapping",
     ViralPostEnrichment: "ViralPostEnrichment",
+    TikTokResolvedPostCache: "TikTokResolvedPostCache",
   } as const;
 }

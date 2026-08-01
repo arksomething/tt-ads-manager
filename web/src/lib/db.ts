@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { createClient, type PostgrestError, type SupabaseClient } from "@supabase/supabase-js";
 
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { modelSchema, type ModelName } from "@/lib/db-schema.generated";
 import { getSupabaseDatabaseEnv } from "@/lib/server-env";
 
@@ -30,6 +31,7 @@ type QueryArgs = {
 
 type QueryContext = {
   rowCache: Map<ModelName, Promise<RecordValue[]>>;
+  relationIndexCache: Map<string, Promise<Map<string, RecordValue[]>>>;
   tableStatus: Map<ModelName, "ready" | "missing">;
 };
 
@@ -126,6 +128,14 @@ type CachedTableRows = {
 };
 
 const TABLE_ROWS_CACHE_TTL_MS = 10_000;
+const TABLE_PAGE_FETCH_CONCURRENCY = 8;
+
+class TableMissingDuringLoadSignal extends Error {
+  constructor() {
+    super("Table went missing while loading rows.");
+    this.name = "TableMissingDuringLoadSignal";
+  }
+}
 const tableRowsCache =
   globalForDb.supabaseDbTableRowsCache ?? new Map<ModelName, CachedTableRows>();
 
@@ -146,6 +156,7 @@ function isSupabaseMissingTableError(error: PostgrestError | null | undefined) {
 function createQueryContext(): QueryContext {
   return {
     rowCache: new Map<ModelName, Promise<RecordValue[]>>(),
+    relationIndexCache: new Map<string, Promise<Map<string, RecordValue[]>>>(),
     tableStatus: new Map<ModelName, "ready" | "missing">(),
   };
 }
@@ -714,47 +725,118 @@ async function loadRows(modelName: ModelName, context: QueryContext): Promise<Re
       };
     }
 
-    const rows: RecordValue[] = [];
+    const table = getModelMeta(modelName).table;
     const pageSize = 1000;
 
-    for (let from = 0; ; from += pageSize) {
+    const fetchPage = async (from: number) => {
       const { data, error } = await client
-        .from(getModelMeta(modelName).table)
+        .from(table)
         .select("*")
         .range(from, from + pageSize - 1);
 
       if (error) {
         if (isSupabaseMissingTableError(error)) {
+          throw new TableMissingDuringLoadSignal();
+        }
+
+        throw new Error(`Failed to read ${modelName}: ${error.message}`);
+      }
+
+      return (data ?? []).map((row) => normalizeRow(modelName, row as RecordValue));
+    };
+
+    try {
+      const firstPage = await client
+        .from(table)
+        .select("*", { count: "exact" })
+        .range(0, pageSize - 1);
+
+      if (firstPage.error) {
+        if (isSupabaseMissingTableError(firstPage.error)) {
           return {
             rows: [],
             status: "missing",
           };
         }
 
-        throw new Error(`Failed to read ${modelName}: ${error.message}`);
+        throw new Error(`Failed to read ${modelName}: ${firstPage.error.message}`);
       }
 
-      const normalizedRows = (data ?? []).map((row) => normalizeRow(modelName, row as RecordValue));
-      rows.push(...normalizedRows);
+      const rows = (firstPage.data ?? []).map((row) =>
+        normalizeRow(modelName, row as RecordValue),
+      );
 
-      if (normalizedRows.length < pageSize) {
-        break;
+      if (rows.length < pageSize) {
+        return {
+          rows,
+          status: "ready",
+        };
       }
+
+      const extraPageCount =
+        typeof firstPage.count === "number"
+          ? Math.max(Math.ceil(firstPage.count / pageSize) - 1, 0)
+          : 0;
+
+      if (extraPageCount > 0) {
+        const pageResults = await mapWithConcurrency(
+          Array.from({ length: extraPageCount }, (_, index) => index + 1),
+          TABLE_PAGE_FETCH_CONCURRENCY,
+          (pageIndex) => fetchPage(pageIndex * pageSize),
+        );
+
+        for (const pageRows of pageResults) {
+          rows.push(...pageRows);
+        }
+      }
+
+      // Rows appended between the count snapshot and the page fetches can spill
+      // past the last computed page, so keep paging until a short page.
+      let lastPageLength = extraPageCount > 0 ? rows.length % pageSize || pageSize : pageSize;
+
+      for (
+        let from = (extraPageCount + 1) * pageSize;
+        lastPageLength === pageSize;
+        from += pageSize
+      ) {
+        const pageRows = await fetchPage(from);
+        rows.push(...pageRows);
+        lastPageLength = pageRows.length;
+      }
+
+      return {
+        rows,
+        status: "ready",
+      };
+    } catch (error) {
+      if (error instanceof TableMissingDuringLoadSignal) {
+        return {
+          rows: [],
+          status: "missing",
+        };
+      }
+
+      throw error;
     }
+  })();
 
-    return {
-      rows,
-      status: "ready",
-    };
-  })().catch((error) => {
-    tableRowsCache.delete(modelName);
-    throw error;
-  });
-
-  tableRowsCache.set(modelName, {
-    expiresAt: now + TABLE_ROWS_CACHE_TTL_MS,
+  const cacheEntry: CachedTableRows = {
+    expiresAt: Number.POSITIVE_INFINITY,
     promise: loadPromise,
-  });
+  };
+
+  tableRowsCache.set(modelName, cacheEntry);
+
+  loadPromise.then(
+    () => {
+      cacheEntry.expiresAt = Date.now() + TABLE_ROWS_CACHE_TTL_MS;
+    },
+    () => {
+      if (tableRowsCache.get(modelName) === cacheEntry) {
+        tableRowsCache.delete(modelName);
+      }
+    },
+  );
 
   const contextRowsPromise = loadPromise.then((result) => {
     context.tableStatus.set(modelName, result.status);
@@ -775,6 +857,83 @@ async function ensureTableAvailable(modelName: ModelName, context: QueryContext)
   }
 }
 
+// Join-key equality below must mirror areValuesEqual exactly. Date, Json, and
+// Bytes fields have coercing/structural equality there, so joins touching them
+// fall back to the linear scan instead of the hash index.
+const INDEXABLE_JOIN_FIELD_TYPES = new Set([
+  "String",
+  "Int",
+  "Float",
+  "Decimal",
+  "BigInt",
+  "Boolean",
+]);
+
+function isIndexableJoinField(field: FieldMeta | undefined) {
+  return Boolean(
+    field &&
+      !field.isList &&
+      (field.kind === "enum" || INDEXABLE_JOIN_FIELD_TYPES.has(field.type)),
+  );
+}
+
+function canIndexRelation(modelName: ModelName, relation: RelationMeta) {
+  return relation.localFields.every((localField, index) => {
+    const remoteField = relation.remoteFields[index] ?? relation.remoteFields[0];
+
+    return (
+      isIndexableJoinField(getFieldMeta(modelName, localField)) &&
+      isIndexableJoinField(getFieldMeta(relation.model, remoteField))
+    );
+  });
+}
+
+function buildJoinKey(values: unknown[]) {
+  return values
+    .map((value) =>
+      value === null || value === undefined
+        ? `${String(value)}:`
+        : `${typeof value}:${JSON.stringify(value)}`,
+    )
+    .join("\u0001");
+}
+
+function getRelationIndex(relation: RelationMeta, context: QueryContext) {
+  const cacheKey = `${relation.model} ${relation.localFields
+    .map((_, index) => relation.remoteFields[index] ?? relation.remoteFields[0])
+    .join("\u0001")}`;
+  const cachedIndex = context.relationIndexCache.get(cacheKey);
+
+  if (cachedIndex) {
+    return cachedIndex;
+  }
+
+  const indexPromise = loadRows(relation.model, context).then((relatedRows) => {
+    const index = new Map<string, RecordValue[]>();
+
+    for (const candidate of relatedRows) {
+      const key = buildJoinKey(
+        relation.localFields.map(
+          (_, fieldIndex) =>
+            candidate[relation.remoteFields[fieldIndex] ?? relation.remoteFields[0]],
+        ),
+      );
+      const bucket = index.get(key);
+
+      if (bucket) {
+        bucket.push(candidate);
+      } else {
+        index.set(key, [candidate]);
+      }
+    }
+
+    return index;
+  });
+
+  context.relationIndexCache.set(cacheKey, indexPromise);
+  return indexPromise;
+}
+
 async function resolveRelation(
   modelName: ModelName,
   row: RecordValue,
@@ -785,6 +944,14 @@ async function resolveRelation(
 
   if (!relation) {
     return null;
+  }
+
+  if (canIndexRelation(modelName, relation)) {
+    const index = await getRelationIndex(relation, context);
+    const matches =
+      index.get(buildJoinKey(relation.localFields.map((localField) => row[localField]))) ?? [];
+
+    return relation.isList ? [...matches] : (matches[0] ?? null);
   }
 
   const relatedRows = await loadRows(relation.model, context);

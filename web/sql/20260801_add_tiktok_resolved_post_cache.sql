@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS "TikTokResolvedPostCache" (
+  "cacheKey" TEXT PRIMARY KEY,
+  "payload" JSONB NOT NULL,
+  "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

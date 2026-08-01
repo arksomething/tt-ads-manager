@@ -7,7 +7,7 @@ import {
 import { unstable_cache } from "next/cache";
 
 import { prisma } from "@/lib/db";
-import { timeAsync, timeSync } from "@/lib/server-timing";
+import { logServerTiming, timeAsync, timeSync } from "@/lib/server-timing";
 import {
   canManageOrganization,
   canReadOrganizationCampaignData,
@@ -24,6 +24,7 @@ import { getOrganizationDashboardShellData } from "@/server/dashboard/org-shell"
 import {
   getAdSpendForOrganization,
   getPaidViewsForSourceVideosForCreatorForOrganization,
+  warmTikTokPaidViewResolution,
   type TikTokAdSpendRow,
   type TikTokVideoPaidAttributionSource,
   type TikTokVideoPaidStatus,
@@ -33,6 +34,7 @@ import { getVideoDataSourceLabel } from "@/server/viewsbase/shared";
 
 export const IMPORTED_VIDEOS_PAGE_SIZE = 50;
 const PROVIDER_PAGINATION_CONCURRENCY = 3;
+const PAID_LOOKUP_CREATOR_RESOLUTION_CONCURRENCY = 12;
 export const reviewWindowOptions = [
   { id: "24h", label: "Last 24 hours" },
   { id: "3d", label: "Last 3 days" },
@@ -266,6 +268,7 @@ type TrackedTikTokAccountRecord = {
   username: string | null;
   displayName: string | null;
   totalVideosTracked?: number | null;
+  latestVideoPublishedAt?: string | null;
 };
 
 type TrackedTikTokVideoRecord = {
@@ -993,8 +996,32 @@ async function getTrackedTikTokAccountsUncached() {
         normalizeProviderText(record.initialUsername),
       displayName: normalizeProviderText(record.displayName),
       totalVideosTracked: normalizeProviderNumber(record.totalVideosTracked),
+      latestVideoPublishedAt: normalizeProviderText(record.latestVideoPublishedAt),
     }))
     .filter((record) => record.id.length > 0);
+}
+
+// Live "last post" dates straight from viral.app tracked accounts — the local
+// Video table only reflects synced videos and can lag far behind reality.
+export async function getTrackedTikTokAccountLatestPosts() {
+  try {
+    const accounts = await getTrackedTikTokAccounts();
+
+    return accounts.map((account) => {
+      const parsed = account.latestVideoPublishedAt
+        ? new Date(account.latestVideoPublishedAt)
+        : null;
+
+      return {
+        username: account.username,
+        displayName: account.displayName,
+        latestVideoPublishedAt:
+          parsed && !Number.isNaN(parsed.getTime()) ? parsed : null,
+      };
+    });
+  } catch {
+    return [];
+  }
 }
 
 const getTrackedTikTokAccounts = unstable_cache(
@@ -1991,6 +2018,17 @@ export async function getOrganizationViewTallyData(args: {
   const { startDate, endDate } = getViewTallyDateRange(args.searchParams);
   const topLimit = getSelectedViewTallyTopLimit(args.searchParams);
 
+  if (args.includePaidViews !== false) {
+    // Start the advertiser-wide TikTok report / ad-metadata / Singular chain
+    // now so it overlaps the viral.app fetches below. The per-creator lookups
+    // later coalesce onto these same cached/pending requests.
+    void warmTikTokPaidViewResolution({
+      organizationId,
+      startDate,
+      endDate,
+    });
+  }
+
   if (!isAllCreatorsSelected && !selectedCreator) {
     return {
       creatorOptions,
@@ -2317,19 +2355,45 @@ export async function getOrganizationViewTallyData(args: {
       paidLookupGroups.set(video.selectedCreator.id, existingGroup);
     }
 
-    const paidLookupResults = await mapWithConcurrency(
-      [...paidLookupGroups.values()],
-      4,
+    const paidLookupStartedAt = Date.now();
+    const paidLookupGroupList = [...paidLookupGroups.values()];
+    // Creator resolution is Supabase-bound, so it can fan out wider than the
+    // TikTok-bound lookups below without changing any external call rates.
+    const paidLookupCreatorResolutions = await mapWithConcurrency(
+      paidLookupGroupList,
+      PAID_LOOKUP_CREATOR_RESOLUTION_CONCURRENCY,
       async (group) => {
         try {
+          return {
+            creatorId: await resolveViewTallyPaidLookupCreatorId({
+              organizationId,
+              selectedCreator: group.selectedCreator,
+              selectedTrackedAccount: group.selectedTrackedAccount,
+              selectedCreatorUsername: group.selectedCreatorUsername,
+              sourceVideoIds: [...new Set(group.sourceVideoIds)],
+            }),
+            error: null as unknown,
+          };
+        } catch (error) {
+          return { creatorId: null, error };
+        }
+      },
+    );
+    const paidLookupResults = await mapWithConcurrency(
+      paidLookupGroupList.map((group, groupIndex) => ({
+        group,
+        creatorResolution: paidLookupCreatorResolutions[groupIndex],
+      })),
+      4,
+      async ({ group, creatorResolution }) => {
+        try {
           const sourceVideoIds = [...new Set(group.sourceVideoIds)];
-          const paidLookupCreatorId = await resolveViewTallyPaidLookupCreatorId({
-            organizationId,
-            selectedCreator: group.selectedCreator,
-            selectedTrackedAccount: group.selectedTrackedAccount,
-            selectedCreatorUsername: group.selectedCreatorUsername,
-            sourceVideoIds,
-          });
+
+          if (creatorResolution.error != null) {
+            throw creatorResolution.error;
+          }
+
+          const paidLookupCreatorId = creatorResolution.creatorId;
 
           if (!paidLookupCreatorId) {
             return {
@@ -2385,6 +2449,15 @@ export async function getOrganizationViewTallyData(args: {
             warnings: [],
           };
         }
+      },
+    );
+
+    logServerTiming(
+      "view-tally.paid-view-lookups",
+      Date.now() - paidLookupStartedAt,
+      {
+        organizationSlug: args.organizationSlug,
+        groupCount: paidLookupGroups.size,
       },
     );
 

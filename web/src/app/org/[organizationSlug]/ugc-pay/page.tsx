@@ -8,13 +8,20 @@ import {
   CreatorDealPerVideoCapScope,
 } from "@/lib/prisma-shim";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
-import { getCreatorPortalLinksWorkspace } from "@/server/creator-portal/access";
+import {
+  getCreatorLastPostAtByCreatorId,
+  getCreatorPortalLinksWorkspace,
+} from "@/server/creator-portal/access";
 import {
   buildCreatorPortalDirectoryLinkHref,
   buildCreatorPortalDirectoryOpenHref,
   buildCreatorPortalDirectoryRows,
+  buildCreatorPortalLastPostAtByCreatorId,
+  CREATOR_PORTAL_DIRECTORY_POSTED_WITHIN_MONTH_OPTIONS,
   type CreatorPortalDirectoryDateDefaults,
   getCreatorPortalDirectorySummary,
+  parseCreatorPortalDirectoryPostedWithinMonths,
+  resolveCreatorPortalDirectoryLastPostView,
   type CreatorPortalDirectoryCampaignCreator,
   type CreatorPortalDirectoryRow,
 } from "@/server/creator-portal/directory";
@@ -25,6 +32,7 @@ import {
   upsertCampaignCreatorDealForOrganization,
   upsertCampaignCreatorVideoDealForOrganization,
 } from "@/server/payouts/mutations";
+import { getTrackedTikTokAccountLatestPosts } from "@/server/videos/queries";
 import {
   getOrganizationUgcPayData,
   type UgcPayMode,
@@ -427,12 +435,21 @@ function TopAddCreatorForm({
 function CreatorDirectorySection({
   dateDefaults,
   directoryRows,
+  lastPostAtByCreatorId,
+  lastPostControls,
   organizationSlug,
   origin,
   summary,
 }: {
   dateDefaults: CreatorPortalDirectoryDateDefaults;
   directoryRows: CreatorPortalDirectoryRow[];
+  lastPostAtByCreatorId: Map<string, Date>;
+  lastPostControls: {
+    postedWithinMonths: number | null;
+    fallbackNotice: string | null;
+    sortByLastPost: boolean;
+    buildHref: (nextMonths: number | null, nextSort: boolean) => string;
+  };
   organizationSlug: string;
   origin: string;
   summary: {
@@ -441,8 +458,15 @@ function CreatorDirectorySection({
     creatorRows: number;
   };
 }) {
+  const filterPillClassName = (isActive: boolean) =>
+    `inline-flex min-h-7 items-center justify-center rounded-full border px-2.5 text-xs transition ${
+      isActive
+        ? "border-[#90FF4D]/25 bg-[#90FF4D]/10 text-[#B8FF86]"
+        : "border-white/[0.08] bg-white/[0.05] text-muted-foreground hover:border-white/[0.18] hover:text-foreground"
+    }`;
+
   return (
-    <section className="space-y-4">
+    <section className="space-y-4" id="creator-directory">
       <div className="rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -491,25 +515,84 @@ function CreatorDirectorySection({
       </div>
 
       <section className="overflow-hidden rounded-[1.35rem] border border-white/[0.08] bg-[#0D0E11] shadow-[0_24px_70px_rgba(0,0,0,0.2)]">
-        <div className="border-b border-white/[0.08] px-4 py-4">
+        <div className="flex flex-col gap-3 border-b border-white/[0.08] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg font-semibold tracking-normal text-foreground">
             Creators
           </h2>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[0.62rem] uppercase text-muted-foreground">
+              Posted in last
+            </span>
+            {CREATOR_PORTAL_DIRECTORY_POSTED_WITHIN_MONTH_OPTIONS.map(
+              (monthsOption) => (
+                <a
+                  className={filterPillClassName(
+                    lastPostControls.postedWithinMonths === monthsOption,
+                  )}
+                  href={lastPostControls.buildHref(
+                    monthsOption,
+                    lastPostControls.sortByLastPost,
+                  )}
+                  key={monthsOption}
+                >
+                  {monthsOption}m
+                </a>
+              ),
+            )}
+            <a
+              className={filterPillClassName(
+                lastPostControls.postedWithinMonths == null,
+              )}
+              href={lastPostControls.buildHref(
+                null,
+                lastPostControls.sortByLastPost,
+              )}
+            >
+              All
+            </a>
+          </div>
         </div>
+        {lastPostControls.fallbackNotice ? (
+          <p className="border-b border-white/[0.08] bg-[#FFD24D]/[0.06] px-4 py-2.5 text-xs text-[#FFE7A6]">
+            {lastPostControls.fallbackNotice}
+          </p>
+        ) : null}
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[1080px] border-collapse text-left text-sm">
             <thead className="bg-white/[0.03] text-[0.62rem] uppercase text-muted-foreground">
               <tr>
                 <th className="px-4 py-3 font-medium">Creator</th>
                 <th className="px-4 py-3 font-medium">Campaign</th>
                 <th className="px-4 py-3 font-medium">Link status</th>
+                <th className="px-4 py-3 font-medium">
+                  <a
+                    className="transition hover:text-foreground"
+                    href={lastPostControls.buildHref(
+                      lastPostControls.postedWithinMonths,
+                      !lastPostControls.sortByLastPost,
+                    )}
+                    title="Sort by last post date"
+                  >
+                    Last post{lastPostControls.sortByLastPost ? " ↓" : ""}
+                  </a>
+                </th>
                 <th className="px-4 py-3 font-medium">Created</th>
                 <th className="px-4 py-3 text-right font-medium">Open</th>
               </tr>
             </thead>
             <tbody>
+              {directoryRows.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-6 text-muted-foreground" colSpan={6}>
+                    No creators match the current last-post filter.
+                  </td>
+                </tr>
+              ) : null}
               {directoryRows.map((row) => {
                 const activeAccess = row.activeAccess;
+                const lastPostAt =
+                  lastPostAtByCreatorId.get(row.campaignCreator.creatorId) ??
+                  null;
                 const portalLink =
                   activeAccess?.linkPath && origin
                     ? `${origin}${buildCreatorPortalDirectoryLinkHref(
@@ -546,6 +629,9 @@ function CreatorDirectorySection({
                       >
                         {activeAccess ? "Active link" : "No active link"}
                       </span>
+                    </td>
+                    <td className="px-4 py-4 text-muted-foreground">
+                      {lastPostAt ? formatDateLabel(lastPostAt) : "No posts"}
                     </td>
                     <td className="px-4 py-4 text-muted-foreground">
                       {formatDateLabel(
@@ -1174,19 +1260,55 @@ async function UgcPayPageReport({
   organizationSlug: string;
   resolvedSearchParams: DashboardSearchParams;
 }) {
-  const data = await getOrganizationUgcPayData({
-    organizationSlug,
-    searchParams: resolvedSearchParams,
-  });
-  const [creatorLinksWorkspace, headerStore] = await Promise.all([
+  const [data, creatorLinksWorkspace, headerStore] = await Promise.all([
+    getOrganizationUgcPayData({
+      organizationSlug,
+      searchParams: resolvedSearchParams,
+    }),
     getCreatorPortalLinksWorkspace(organizationSlug),
     headers(),
   ]);
   const directoryCampaignCreators =
     creatorLinksWorkspace.campaignCreators as CreatorPortalDirectoryCampaignCreator[];
-  const directoryRows = buildCreatorPortalDirectoryRows(directoryCampaignCreators);
+  const postedWithinMonthsParam = getSearchParamValue(
+    resolvedSearchParams,
+    "postedWithinMonths",
+  );
+  const requestedPostedWithinMonths =
+    parseCreatorPortalDirectoryPostedWithinMonths(postedWithinMonthsParam);
+  const sortByLastPost =
+    getSearchParamValue(resolvedSearchParams, "directorySort") === "last-post";
+  const [localLastPostAtByCreatorId, trackedAccountLastPosts] =
+    await Promise.all([
+      getCreatorLastPostAtByCreatorId(
+        directoryCampaignCreators.map(
+          (campaignCreator) => campaignCreator.creatorId,
+        ),
+      ),
+      getTrackedTikTokAccountLatestPosts(),
+    ]);
+  const lastPostAtByCreatorId = buildCreatorPortalLastPostAtByCreatorId({
+    creators: directoryCampaignCreators.map((campaignCreator) => ({
+      creatorId: campaignCreator.creatorId,
+      displayName: campaignCreator.creator.displayName,
+      handles: campaignCreator.creator.platformAccounts.map(
+        (account) => account.handle,
+      ),
+    })),
+    localLastPostAtByCreatorId,
+    trackedAccounts: trackedAccountLastPosts,
+  });
+  const directoryView = resolveCreatorPortalDirectoryLastPostView({
+    rows: buildCreatorPortalDirectoryRows(directoryCampaignCreators),
+    lastPostAtByCreatorId,
+    requestedMonths: requestedPostedWithinMonths,
+    isExplicit: postedWithinMonthsParam != null,
+    sortByLastPost,
+  });
+  const directoryRows = directoryView.rows;
+  const postedWithinMonths = directoryView.effectiveMonths;
   const directorySummary = getCreatorPortalDirectorySummary(
-    directoryCampaignCreators,
+    directoryRows.map((row) => row.campaignCreator),
   );
   const origin = getRequestOrigin(headerStore);
   const notice = getNoticeLabel(getSearchParamValue(resolvedSearchParams, "notice"));
@@ -1418,6 +1540,24 @@ async function UgcPayPageReport({
       <CreatorDirectorySection
         dateDefaults={creatorPortalDateDefaults}
         directoryRows={directoryRows}
+        lastPostAtByCreatorId={lastPostAtByCreatorId}
+        lastPostControls={{
+          postedWithinMonths,
+          fallbackNotice: directoryView.fallbackApplied
+            ? `No creators have a recorded post in the last ${requestedPostedWithinMonths} months, so all creators are shown.`
+            : null,
+          sortByLastPost,
+          buildHref: (nextMonths, nextSort) =>
+            `${buildUgcPayHref({
+              organizationSlug,
+              searchParams: {
+                ...resolvedSearchParams,
+                postedWithinMonths:
+                  nextMonths == null ? "all" : String(nextMonths),
+                directorySort: nextSort ? "last-post" : undefined,
+              },
+            })}#creator-directory`,
+        }}
         organizationSlug={organizationSlug}
         origin={origin}
         summary={directorySummary}

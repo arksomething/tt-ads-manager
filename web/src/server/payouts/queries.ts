@@ -7,7 +7,9 @@ import {
   Platform,
 } from "@/lib/prisma-shim";
 
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { prisma } from "@/lib/db";
+import { fetchPagesWithReplay } from "@/lib/paged-fetch";
 import { type DashboardSearchParams } from "@/server/dashboard/filters";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
 import { canManageCampaign, canManageOrganization } from "@/server/auth/roles";
@@ -30,6 +32,7 @@ import {
 
 const AD_REPORT_PAGE_SIZE = 1_000;
 const MAX_AD_REPORT_PAGES = 20;
+const AD_REPORT_PAGE_FETCH_CONCURRENCY = 3;
 const DEFAULT_DEAL_CURRENCY = "USD";
 const DEFAULT_DEAL_CPM_AMOUNT = 1;
 const DEFAULT_DEAL_VIEW_WINDOW_DAYS = 7;
@@ -37,6 +40,7 @@ const DEFAULT_DEAL_PAYOUT_CAP_PER_VIDEO = 100;
 const VIDEO_METRICS_SNAPSHOT_BATCH_SIZE = 150;
 const MAX_EXACT_PAID_TIMELINE_CREATORS = 20;
 const MAX_EXACT_PAID_TIMELINE_SOURCE_VIDEOS = 250;
+const PAID_TIMELINE_LOOKUP_CONCURRENCY = 4;
 const DAILY_AD_METRIC_CANDIDATES = [
   {
     spendMetric: "spend",
@@ -572,35 +576,42 @@ async function getDailyAdMetricsForOrganization(args: {
   for (const candidate of DAILY_AD_METRIC_CANDIDATES) {
     try {
       const rows: DailyAdMetricRow[] = [];
-      let totalPages = 1;
 
-      for (
-        let page = 1;
-        page <= totalPages && page <= MAX_AD_REPORT_PAGES;
-        page += 1
-      ) {
-        const payload = await requestTikTokBusinessApi<TikTokIntegratedReportData>({
-          accessToken: account.accessToken,
-          method: "GET",
-          path: "/open_api/v1.3/report/integrated/get/",
-          query: {
-            report_type: "BASIC",
-            advertiser_id: account.advertiserId,
-            data_level: "AUCTION_AD",
-            dimensions: ["stat_time_day", "ad_id"],
-            metrics: [
-              candidate.spendMetric,
-              "impressions",
-            ],
-            start_date: args.startDate,
-            end_date: args.endDate,
-            page,
-            page_size: AD_REPORT_PAGE_SIZE,
-          },
-        });
+      const { pages } = await fetchPagesWithReplay({
+        fetchPage: (page) =>
+          requestTikTokBusinessApi<TikTokIntegratedReportData>({
+            accessToken: account.accessToken,
+            method: "GET",
+            path: "/open_api/v1.3/report/integrated/get/",
+            query: {
+              report_type: "BASIC",
+              advertiser_id: account.advertiserId,
+              data_level: "AUCTION_AD",
+              dimensions: ["stat_time_day", "ad_id"],
+              metrics: [
+                candidate.spendMetric,
+                "impressions",
+              ],
+              start_date: args.startDate,
+              end_date: args.endDate,
+              page,
+              page_size: AD_REPORT_PAGE_SIZE,
+            },
+          }),
+        getPageInfo: (payload) => {
+          const pageRows = getDailyAdReportRows(payload);
+          return {
+            rowCount: pageRows.length,
+            totalPages: getDailyAdReportTotalPages(payload, pageRows.length),
+          };
+        },
+        pageSize: AD_REPORT_PAGE_SIZE,
+        maxPages: MAX_AD_REPORT_PAGES,
+        concurrency: AD_REPORT_PAGE_FETCH_CONCURRENCY,
+      });
 
+      for (const payload of pages) {
         const pageRows = getDailyAdReportRows(payload);
-        totalPages = getDailyAdReportTotalPages(payload, pageRows.length);
 
         for (const row of pageRows) {
           const dimensions = isRecord(row.dimensions) ? row.dimensions : null;
@@ -617,10 +628,6 @@ async function getDailyAdMetricsForOrganization(args: {
             spend: getFirstNumber([metrics, row], [...candidate.spendKeys]),
             impressions: getFirstNumber([metrics, row], ["impressions"]),
           });
-        }
-
-        if (pageRows.length < AD_REPORT_PAGE_SIZE) {
-          break;
         }
       }
 
@@ -1145,33 +1152,115 @@ export async function getOrganizationPayoutDashboardData(args: {
   const creatorRows: CreatorCostRow[] = [];
   const videoRows: VideoCostRow[] = [];
 
-  for (const campaignCreator of campaignCreators) {
-      const campaignVideos =
-        videosByCampaignCreatorKey.get(
-          `${campaignCreator.campaignId}::${campaignCreator.creatorId}`,
-        ) ?? [];
+  const creatorComputations = campaignCreators.map((campaignCreator) => {
+    const campaignVideos =
+      videosByCampaignCreatorKey.get(
+        `${campaignCreator.campaignId}::${campaignCreator.creatorId}`,
+      ) ?? [];
+    const activeDeal = getCampaignCreatorDealActiveInRange(
+      campaignCreator.deals,
+      start,
+      end,
+    );
+    const resolvedDeal = resolveCampaignCreatorDeal(activeDeal, start);
+    const termStart = activeDeal
+      ? startOfUtcDay(resolvedDeal.effectiveStartDate)
+      : addUtcDays(start, -(resolvedDeal.viewWindowDays - 1));
+    const dealEffectiveEnd = resolvedDeal.effectiveEndDate
+      ? startOfUtcDay(resolvedDeal.effectiveEndDate)
+      : null;
+    const termEnd =
+      dealEffectiveEnd && dealEffectiveEnd < end ? dealEffectiveEnd : end;
+    const termDateKeys =
+      termEnd >= termStart ? buildDateKeys(termStart, termEnd) : ([] as string[]);
+    const tiktokSourceVideoIds = campaignVideos
+      .filter(
+        (video) =>
+          video.platform === Platform.TIKTOK &&
+          typeof video.sourceVideoId === "string" &&
+          video.sourceVideoId.length > 0,
+      )
+      .map((video) => video.sourceVideoId as string);
+
+    return {
+      campaignCreator,
+      campaignVideos,
+      activeDeal,
+      resolvedDeal,
+      termStart,
+      termEnd,
+      termDateKeys,
+      tiktokSourceVideoIds,
+    };
+  });
+
+  const paidTimelineOutcomes = new Map<
+    string,
+    {
+      result: TikTokSourceVideoPaidViewsTimelineResult | null;
+      error: unknown;
+    }
+  >();
+  const paidTimelineTargets = creatorComputations.filter(
+    (computation) =>
+      hasAnyAdDelivery &&
+      !shouldSkipExactPaidDeductions &&
+      computation.termDateKeys.length > 0 &&
+      computation.tiktokSourceVideoIds.length > 0,
+  );
+  const loadPaidTimeline = async (
+    computation: (typeof creatorComputations)[number],
+  ) => {
+    try {
+      const result =
+        await getPaidViewTimelineForSourceVideosForCreatorForOrganization({
+          organizationSlug: args.organizationSlug,
+          creatorId: computation.campaignCreator.creatorId,
+          sourceVideoIds: computation.tiktokSourceVideoIds,
+          startDate: computation.termStart,
+          endDate: computation.termEnd,
+          metric: getPaidMetricForDeal(),
+        });
+
+      paidTimelineOutcomes.set(computation.campaignCreator.id, {
+        result,
+        error: null,
+      });
+    } catch (error) {
+      paidTimelineOutcomes.set(computation.campaignCreator.id, {
+        result: null,
+        error,
+      });
+    }
+  };
+
+  // The first lookup runs alone so it warms the advertiser-wide report and ad
+  // metadata caches; the remaining lookups then fan out against warm caches.
+  if (paidTimelineTargets.length > 0) {
+    await loadPaidTimeline(paidTimelineTargets[0]);
+    await mapWithConcurrency(
+      paidTimelineTargets.slice(1),
+      PAID_TIMELINE_LOOKUP_CONCURRENCY,
+      loadPaidTimeline,
+    );
+  }
+
+  for (const computation of creatorComputations) {
+      const {
+        campaignCreator,
+        campaignVideos,
+        activeDeal,
+        resolvedDeal,
+        termStart,
+        termEnd,
+        termDateKeys,
+      } = computation;
       const canEditDeal =
         canManageOrganization(membership.role) ||
         campaignCreator.campaign.ownerUserId === membership.userId ||
         canManageCampaign(campaignCreator.campaign.memberships[0]?.role ?? CampaignRole.MEMBER);
-      const activeDeal = getCampaignCreatorDealActiveInRange(
-        campaignCreator.deals,
-        start,
-        end,
-      );
-      const resolvedDeal = resolveCampaignCreatorDeal(activeDeal, start);
       const currency = resolvedDeal.currency;
       const creatorWarnings = new Set<string>();
-      const termStart = activeDeal
-        ? startOfUtcDay(resolvedDeal.effectiveStartDate)
-        : addUtcDays(start, -(resolvedDeal.viewWindowDays - 1));
-      const dealEffectiveEnd = resolvedDeal.effectiveEndDate
-        ? startOfUtcDay(resolvedDeal.effectiveEndDate)
-        : null;
-      const termEnd =
-        dealEffectiveEnd && dealEffectiveEnd < end ? dealEffectiveEnd : end;
-      const termDateKeys =
-        termEnd >= termStart ? buildDateKeys(termStart, termEnd) : ([] as string[]);
       const creatorGrossViewsByDate = new Map(termDateKeys.map((dateKey) => [dateKey, 0]));
       const creatorPaidViewsByDate = new Map(termDateKeys.map((dateKey) => [dateKey, 0]));
       const creatorPayableViewsByDate = new Map(termDateKeys.map((dateKey) => [dateKey, 0]));
@@ -1188,38 +1277,19 @@ export async function getOrganizationPayoutDashboardData(args: {
               ),
             )
           : null;
-      const tiktokSourceVideoIds = campaignVideos
-        .filter(
-          (video) =>
-            video.platform === Platform.TIKTOK &&
-            typeof video.sourceVideoId === "string" &&
-            video.sourceVideoId.length > 0,
-        )
-        .map((video) => video.sourceVideoId as string);
 
       let paidTimelineResult: TikTokSourceVideoPaidViewsTimelineResult | null = null;
+      const paidTimelineOutcome = paidTimelineOutcomes.get(campaignCreator.id);
 
-      if (
-        hasAnyAdDelivery &&
-        !shouldSkipExactPaidDeductions &&
-        termDateKeys.length > 0 &&
-        tiktokSourceVideoIds.length > 0
-      ) {
-        try {
-          paidTimelineResult =
-            await getPaidViewTimelineForSourceVideosForCreatorForOrganization({
-              organizationSlug: args.organizationSlug,
-              creatorId: campaignCreator.creatorId,
-              sourceVideoIds: tiktokSourceVideoIds,
-              startDate: termStart,
-              endDate: termEnd,
-              metric: getPaidMetricForDeal(),
-            });
+      if (paidTimelineOutcome) {
+        if (paidTimelineOutcome.result) {
+          paidTimelineResult = paidTimelineOutcome.result;
 
           for (const warning of paidTimelineResult.warnings) {
             creatorWarnings.add(warning);
           }
-        } catch (error) {
+        } else {
+          const error = paidTimelineOutcome.error;
           creatorWarnings.add(
             error instanceof Error
               ? `Paid-impression deductions could not be loaded for ${campaignCreator.creator.displayName}, so the dashboard used 0 paid-impression deductions for this creator. ${error.message}`

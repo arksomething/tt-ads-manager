@@ -1048,3 +1048,10 @@ model ViralPostEnrichment {
   @@index([organizationId, status, nextAttemptAt])
   @@index([platform, platformVideoId])
 }
+
+model TikTokResolvedPostCache {
+  cacheKey  String   @id
+  payload   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

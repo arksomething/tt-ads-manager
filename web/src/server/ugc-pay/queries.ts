@@ -7,6 +7,7 @@ import {
 } from "@/lib/prisma-shim";
 
 import { prisma } from "@/lib/db";
+import { logServerTiming } from "@/lib/server-timing";
 import { getDefaultUgcPayStartDateForEndDate } from "@/lib/ugc-pay-date-defaults";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
 import {
@@ -2325,6 +2326,14 @@ export async function getOrganizationUgcPayData(args: {
   includePaidViews?: boolean;
   topVideoLimit?: number;
 }): Promise<OrganizationUgcPayData> {
+  const timingStartedAt = Date.now();
+  const stepTimings: string[] = [];
+  let lastTimingMarkAt = timingStartedAt;
+  const markTiming = (label: string) => {
+    const now = Date.now();
+    stepTimings.push(`${label}=${now - lastTimingMarkAt}ms`);
+    lastTimingMarkAt = now;
+  };
   const membership = args.creatorAccess
     ? null
     : await requireOrganizationMembership(args.organizationSlug);
@@ -2432,6 +2441,7 @@ export async function getOrganizationUgcPayData(args: {
     });
   }
 
+  markTiming("auth-and-campaigns");
   const campaignCreators = (await prisma.campaignCreator.findMany({
     where: {
       ...(args.creatorAccess?.campaignCreatorId
@@ -2555,6 +2565,7 @@ export async function getOrganizationUgcPayData(args: {
     }
   }
 
+  markTiming("db-creators-and-deals");
   const creatorAccessViewTallyCreatorId = null;
   const creatorAccessCampaignCreator = campaignCreators[0] ?? null;
   const viewTallyData = args.creatorAccess
@@ -2585,6 +2596,7 @@ export async function getOrganizationUgcPayData(args: {
         includeSummaryAnalytics: false,
         topVideoLimit: args.topVideoLimit,
       });
+  markTiming("view-tally");
   const warnings = [...viewTallyData.warnings];
   let viewTallyRows = viewTallyData.rows;
 
@@ -2691,6 +2703,7 @@ export async function getOrganizationUgcPayData(args: {
     });
   }
 
+  markTiming("windows-content-caps");
   const accumulators = new Map<string, CreatorAccumulator>();
   let missingGainedViewCapContextCount = 0;
 
@@ -2842,6 +2855,12 @@ export async function getOrganizationUgcPayData(args: {
   const videoPay = videos.reduce((total, video) => total + video.videoPay, 0);
   const videoFixedPay = getVideoFixedPay(videos);
   const cpmPay = normalizeMoney(videoPay - videoFixedPay);
+
+  markTiming("compute");
+  logServerTiming("ugc-pay.total", Date.now() - timingStartedAt, {
+    organizationSlug: args.organizationSlug,
+    steps: stepTimings.join(" "),
+  });
 
   return {
     campaignOptions,
