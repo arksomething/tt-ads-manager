@@ -2729,6 +2729,7 @@ export async function getOrganizationUgcPayData(args: {
         hasVideoDealOverride: videoDealOverride != null,
         isTalking: videoContentTypesBySourceVideoId.get(row.sourceVideoId) ?? campaignCreator.creator.isTalking,
         postedDateOnly: getVideoPostedDateOnly(row, reportTimeZone),
+        creatorIsTalking: campaignCreator.creator.isTalking,
       },
     );
     const includeFixedFeePerVideo =

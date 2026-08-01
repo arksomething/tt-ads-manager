@@ -69,9 +69,18 @@ export function applyUgcPayVideoContentTypeCpm<
     isTalking: boolean;
     hasVideoDealOverride: boolean;
     postedDateOnly?: string | null;
+    creatorIsTalking?: boolean;
   },
 ): TDeal {
-  if (args.isTalking || args.hasVideoDealOverride) {
+  // The non-talking downgrade reprices a mismatched video: a non-talking
+  // video paid under a talking creator's terms. Non-talking creators' deals
+  // already encode their non-talking pricing (which may be a negotiated
+  // special rate), so their videos always pay deal terms as-is.
+  if (
+    args.isTalking ||
+    args.hasVideoDealOverride ||
+    args.creatorIsTalking === false
+  ) {
     return deal;
   }
 

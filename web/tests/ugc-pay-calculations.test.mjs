@@ -181,6 +181,37 @@ test("non-talking videos posted on or after Jul 20 2026 also take the non-talkin
   assert.equal(overriddenAfterCutoff.payoutCapPerVideo, 300);
 });
 
+test("non-talking creators always pay their own deal terms without the downgrade", () => {
+  const specialNonTalkingDeal = deal({
+    cpmAmount: 0.75,
+    payoutCapPerVideo: 350,
+    perVideoCapScope: "CPM",
+  });
+
+  for (const postedDateOnly of ["2026-07-01", "2026-08-01"]) {
+    const result = applyUgcPayVideoContentTypeCpm(specialNonTalkingDeal, {
+      isTalking: false,
+      hasVideoDealOverride: false,
+      postedDateOnly,
+      creatorIsTalking: false,
+    });
+    assert.equal(result.cpmAmount, 0.75);
+    assert.equal(result.payoutCapPerVideo, 350);
+  }
+
+  const talkingCreatorResult = applyUgcPayVideoContentTypeCpm(
+    deal({ cpmAmount: 1, payoutCapPerVideo: 300, perVideoCapScope: "CPM" }),
+    {
+      isTalking: false,
+      hasVideoDealOverride: false,
+      postedDateOnly: "2026-08-01",
+      creatorIsTalking: true,
+    },
+  );
+  assert.equal(talkingCreatorResult.cpmAmount, 0.5);
+  assert.equal(talkingCreatorResult.payoutCapPerVideo, 100);
+});
+
 test("per-video fixed fee and total cap still use the overridden CPM", () => {
   const effectiveVideoDeal = applyUgcPayVideoDealOverride(
     deal({

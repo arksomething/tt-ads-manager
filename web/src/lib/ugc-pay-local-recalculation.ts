@@ -82,6 +82,7 @@ type UgcPayCreatorRow = {
   campaignName: string;
   creatorId: string;
   creatorName: string;
+  creatorIsTalking: boolean;
   tiktokHandle: string | null;
   hasCustomDeal: boolean;
   currency: string;
@@ -222,6 +223,7 @@ function getVideoOverrideFromRow(video: UgcPayVideoRow): UgcPayVideoDealOverride
 function recalculateVideo(args: {
   video: UgcPayVideoRow;
   creatorDeal: UgcPayDeal;
+  creatorIsTalking: boolean;
   videoOverride: UgcPayVideoDealOverride | null;
   payMode: UgcPayMode;
 }) {
@@ -251,6 +253,7 @@ function recalculateVideo(args: {
       hasVideoDealOverride: args.videoOverride != null,
       isTalking: args.video.isTalking,
       postedDateOnly: getVideoPostedDateOnly(args.video),
+      creatorIsTalking: args.creatorIsTalking,
     },
   );
   const fixedFeePerVideo = effectiveDeal.fixedFeePerVideo ?? 0;
@@ -475,6 +478,7 @@ export function recalculateCreatorWithDeal<TCreator extends UgcPayCreatorRow>(ar
     recalculateVideo({
       video,
       creatorDeal: args.deal,
+      creatorIsTalking: args.creator.creatorIsTalking,
       videoOverride: video.hasVideoDealOverride ? getVideoOverrideFromRow(video) : null,
       payMode: args.options.payMode,
     }),
@@ -500,6 +504,7 @@ export function recalculateCreatorWithVideoDeal<TCreator extends UgcPayCreatorRo
       ? recalculateVideo({
           video,
           creatorDeal: args.creator.deal,
+          creatorIsTalking: args.creator.creatorIsTalking,
           videoOverride: args.videoOverride,
           payMode: args.options.payMode,
         })
