@@ -313,6 +313,7 @@ export async function getOrCreateCreatorPortalAccessForOrganization(args: {
     },
     select: {
       id: true,
+      encryptedLinkToken: true,
     },
     orderBy: {
       createdAt: "desc",
@@ -480,13 +481,78 @@ export async function getCurrentCreatorPortalAccess() {
     return null;
   }
 
-  return prisma.creatorPortalAccess.findFirst({
+  // Scalar-only queries stay on the shim's Supabase pushdown path, so an
+  // access row created moments ago on another serverless instance is visible
+  // immediately. The nested-select variant falls back to cached table loads,
+  // which can lag fresh inserts by up to 10s and bounced brand-new sessions
+  // to the "use your private link" screen.
+  const access = await prisma.creatorPortalAccess.findFirst({
     where: {
       id: accessId,
       revokedAt: null,
     },
-    select: getCreatorPortalAccessSelect(),
+    select: {
+      id: true,
+      encryptedLinkToken: true,
+      organizationId: true,
+      creatorId: true,
+      campaignCreatorId: true,
+      revokedAt: true,
+    },
   });
+
+  if (!access) {
+    return null;
+  }
+
+  const [organization, creator, platformAccounts, campaignCreator] =
+    await Promise.all([
+      prisma.organization.findFirst({
+        where: { id: access.organizationId },
+        select: { id: true, name: true, slug: true },
+      }),
+      prisma.creator.findFirst({
+        where: { id: access.creatorId },
+        select: { id: true, displayName: true },
+      }),
+      prisma.creatorPlatformAccount.findMany({
+        where: { creatorId: access.creatorId },
+        select: { handle: true, platform: true },
+        orderBy: [{ platform: "asc" }, { createdAt: "asc" }],
+      }),
+      access.campaignCreatorId
+        ? prisma.campaignCreator.findFirst({
+            where: { id: access.campaignCreatorId },
+            select: { id: true, campaignId: true },
+          })
+        : Promise.resolve(null),
+    ]);
+
+  if (!organization || !creator) {
+    return null;
+  }
+
+  const campaign = campaignCreator
+    ? await prisma.campaign.findFirst({
+        where: { id: campaignCreator.campaignId },
+        select: { id: true, name: true },
+      })
+    : null;
+
+  return {
+    ...access,
+    organization,
+    creator: {
+      ...creator,
+      platformAccounts,
+    },
+    campaignCreator: campaignCreator
+      ? {
+          ...campaignCreator,
+          campaign,
+        }
+      : null,
+  };
 }
 
 export async function getCopyableCreatorPortalLinkPathForCurrentAccess(args: {

@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "gotall-discord": {
+      "command": "node",
+      "args": ["tools/discord-mcp/server.mjs"]
+    },
+    "whatsapp": {
+      "command": "/home/ark296/.local/bin/uv",
+      "args": [
+        "--directory",
+        "/home/ark296/projects/tools/whatsapp-mcp/whatsapp-mcp-server",
+        "run",
+        "main.py"
+      ]
+    }
+  }
+}

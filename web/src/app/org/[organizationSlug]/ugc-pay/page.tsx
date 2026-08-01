@@ -1575,6 +1575,29 @@ async function UgcPayPageReport({
             <p className="mt-2 text-sm text-muted-foreground">
               {data.selectedCampaignLabel ?? "No campaign selected"}
             </p>
+            <a
+              className="mt-3 inline-flex min-h-9 items-center justify-center gap-2 rounded-[0.85rem] border border-white/[0.1] bg-white/[0.06] px-3 text-xs font-medium text-foreground transition hover:border-white/[0.18] hover:bg-white/[0.1]"
+              href={`/org/${organizationSlug}/ugc-pay/receipt${(() => {
+                const receiptParams = new URLSearchParams();
+
+                for (const [key, value] of Object.entries(resolvedSearchParams)) {
+                  if (!value || key === "notice" || key === "error") {
+                    continue;
+                  }
+
+                  receiptParams.set(key, Array.isArray(value) ? value[0] : value);
+                }
+
+                receiptParams.set("startDate", data.startDate);
+                receiptParams.set("endDate", data.endDate);
+                const query = receiptParams.toString();
+                return query ? `?${query}` : "";
+              })()}`}
+              title="Download a CSV snapshot of every creator and video amount for this period"
+            >
+              <DashboardIcon className="h-3.5 w-3.5" name="payouts" />
+              Download receipt (CSV)
+            </a>
           </div>
 
           <div className="rounded-[1.1rem] border border-white/[0.08] bg-black/[0.2] px-4 py-3 text-sm text-muted-foreground">
