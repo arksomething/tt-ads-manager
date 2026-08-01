@@ -86,6 +86,11 @@ export const setCreatorStatusSchema = z.object({
   internalStatus: z.nativeEnum(CreatorStatus),
 });
 
+export const setCreatorTalkingStatusSchema = z.object({
+  creatorId: z.string().min(1).max(191),
+  action: z.enum(["mark-talking", "mark-non-talking"]),
+});
+
 export type CreateCreatorInput = z.infer<typeof createCreatorSchema>;
 export type AddCreatorToCampaignInput = z.infer<
   typeof addCreatorToCampaignSchema

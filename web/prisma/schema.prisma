@@ -384,6 +384,7 @@ model Creator {
   region                    String?
   language                  String?
   internalStatus            CreatorStatus              @default(NEW)
+  isTalking                 Boolean                    @default(true)
   notesSummary              String?
   contactEmail              String?
   customTags                String[]

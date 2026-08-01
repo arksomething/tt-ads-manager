@@ -11,6 +11,7 @@ import {
   upsertCampaignCreatorDealForOrganization,
   upsertCampaignCreatorVideoDealForOrganization,
 } from "@/server/payouts/mutations";
+import { setVideoTalkingStatusForOrganization } from "@/server/videos/mutations";
 
 type CreatorPortalDealActionResult =
   | {
@@ -68,6 +69,32 @@ export async function saveCreatorPortalCreatorDeal(
     await upsertCampaignCreatorDealForOrganization({
       organizationSlug,
       input: getCreatorPortalCreatorDealInput(formData),
+    });
+
+    revalidatePath("/creator");
+
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: getActionErrorMessage(error),
+    };
+  }
+}
+
+export async function setCreatorPortalVideoTalkingStatus(
+  formData: FormData,
+): Promise<CreatorPortalDealActionResult> {
+  try {
+    const { organizationSlug } = await requireCreatorPortalDealEditAccess(formData);
+    const action = getTrimmedFormValue(formData, "action");
+
+    await setVideoTalkingStatusForOrganization({
+      organizationSlug,
+      input: {
+        sourceVideoId: getTrimmedFormValue(formData, "sourceVideoId"),
+        action: action === "mark-talking" ? "mark-talking" : "mark-non-talking",
+      },
     });
 
     revalidatePath("/creator");

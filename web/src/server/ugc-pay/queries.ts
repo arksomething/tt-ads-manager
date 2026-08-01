@@ -134,6 +134,7 @@ type CampaignCreatorUgcPayRow = {
   creator: {
     id: string;
     displayName: string;
+    isTalking: boolean;
     platformAccounts: Array<{
       handle: string;
       platform: Platform;
@@ -230,11 +231,6 @@ type LocalVideoViewCapRow = {
   lastSyncedAt: Date | null;
 };
 
-type LocalVideoContentTypeRow = {
-  sourceVideoId: string | null;
-  isTalking: boolean;
-};
-
 type LocalVideoMetricsSnapshotRow = {
   videoId: string;
   capturedAt: Date;
@@ -296,6 +292,7 @@ export type UgcPayCreatorRow = {
   campaignName: string;
   creatorId: string;
   creatorName: string;
+  creatorIsTalking: boolean;
   tiktokHandle: string | null;
   hasCustomDeal: boolean;
   currency: string;
@@ -1447,54 +1444,24 @@ async function getLocalVideoContentTypes(args: {
     return new Map<string, boolean>();
   }
 
-  const [classifications, videos] = await Promise.all([
-    prisma.videoContentClassification.findMany({
-      where: {
-        organizationId: args.organizationId,
-        platform: Platform.TIKTOK,
-        sourceVideoId: {
-          in: sourceVideoIds,
-        },
+  // Only human classifications count here; the local Video.isTalking column
+  // defaults to true on sync, which would mask the creator-level default for
+  // videos nobody has actually reviewed. The classification table is written
+  // on every manual toggle, so it is the complete human record.
+  const classifications = await prisma.videoContentClassification.findMany({
+    where: {
+      organizationId: args.organizationId,
+      platform: Platform.TIKTOK,
+      sourceVideoId: {
+        in: sourceVideoIds,
       },
-      select: {
-        sourceVideoId: true,
-        isTalking: true,
-      },
-    }),
-    (async () => {
-      const localVideos: LocalVideoContentTypeRow[] = [];
-
-      for (const sourceVideoIdBatch of chunkArray(
-        sourceVideoIds,
-        GAINED_VIEW_CAP_CONTEXT_BATCH_SIZE,
-      )) {
-        localVideos.push(
-          ...((await prisma.video.findMany({
-            where: {
-              platform: Platform.TIKTOK,
-              sourceVideoId: {
-                in: sourceVideoIdBatch,
-              },
-              creator: {
-                organizationId: args.organizationId,
-              },
-            },
-            select: {
-              sourceVideoId: true,
-              isTalking: true,
-            },
-          })) as LocalVideoContentTypeRow[]),
-        );
-      }
-
-      return localVideos;
-    })(),
-  ]);
-  const statusBySourceVideoId = new Map(
-    videos
-      .filter((video) => video.sourceVideoId != null)
-      .map((video) => [video.sourceVideoId as string, video.isTalking]),
-  );
+    },
+    select: {
+      sourceVideoId: true,
+      isTalking: true,
+    },
+  });
+  const statusBySourceVideoId = new Map<string, boolean>();
 
   for (const classification of classifications) {
     statusBySourceVideoId.set(
@@ -2231,6 +2198,7 @@ function buildCreatorRow(accumulator: CreatorAccumulator): UgcPayCreatorRow {
     campaignName: accumulator.campaignCreator.campaign.name,
     creatorId: accumulator.campaignCreator.creatorId,
     creatorName: accumulator.campaignCreator.creator.displayName,
+    creatorIsTalking: accumulator.campaignCreator.creator.isTalking,
     tiktokHandle: getTikTokHandle(accumulator.campaignCreator),
     hasCustomDeal: accumulator.hasCustomDeal,
     currency: accumulator.deal.currency,
@@ -2474,6 +2442,7 @@ export async function getOrganizationUgcPayData(args: {
         select: {
           id: true,
           displayName: true,
+          isTalking: true,
           platformAccounts: {
             where: {
               platform: Platform.TIKTOK,
@@ -2758,7 +2727,7 @@ export async function getOrganizationUgcPayData(args: {
       applyUgcPayVideoDealOverride(baseVideoDeal, videoDealOverride),
       {
         hasVideoDealOverride: videoDealOverride != null,
-        isTalking: videoContentTypesBySourceVideoId.get(row.sourceVideoId) ?? true,
+        isTalking: videoContentTypesBySourceVideoId.get(row.sourceVideoId) ?? campaignCreator.creator.isTalking,
         postedDateOnly: getVideoPostedDateOnly(row, reportTimeZone),
       },
     );
@@ -2796,7 +2765,7 @@ export async function getOrganizationUgcPayData(args: {
       campaignCreator,
       deal: effectiveDeal,
       videoDealOverride,
-      isTalking: videoContentTypesBySourceVideoId.get(row.sourceVideoId) ?? true,
+      isTalking: videoContentTypesBySourceVideoId.get(row.sourceVideoId) ?? campaignCreator.creator.isTalking,
       includeFixedFeePerVideo,
       gainedViewCapContext,
       payMode,

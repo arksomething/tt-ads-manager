@@ -142,6 +142,8 @@ function getNoticeLabel(value: string | undefined) {
       return "Video deal override saved.";
     case "video-deal-cleared":
       return "Video deal override removed.";
+    case "creator-talking-updated":
+      return "Creator content type updated.";
     default:
       return undefined;
   }

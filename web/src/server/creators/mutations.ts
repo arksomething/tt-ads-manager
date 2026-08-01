@@ -27,6 +27,7 @@ import {
   createCreatorSchema,
   createPlatformAccountSchema,
   setCreatorStatusSchema,
+  setCreatorTalkingStatusSchema,
   trackCreatorAccountFormSchema,
 } from "./schemas";
 
@@ -1577,6 +1578,50 @@ export async function setCreatorStatusForOrganization(args: {
   return {
     creatorId: creator.id,
     internalStatus: values.internalStatus,
+  };
+}
+
+export async function setCreatorTalkingStatusForOrganization(args: {
+  organizationSlug: string;
+  input: unknown;
+}) {
+  const membership = await requireOrganizationMembership(args.organizationSlug);
+
+  if (!canManageCreatorDeals(membership.role)) {
+    throw new Error("Creator classification access denied.");
+  }
+
+  const values = setCreatorTalkingStatusSchema.parse(args.input);
+  const creator = await prisma.creator.findFirst({
+    where: {
+      id: values.creatorId,
+      organizationId: membership.organizationId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!creator) {
+    throw new Error("Creator not found in this organization.");
+  }
+
+  const isTalking = values.action === "mark-talking";
+
+  await prisma.creator.update({
+    where: {
+      id: creator.id,
+    },
+    data: {
+      isTalking,
+    },
+  });
+
+  revalidateCreatorWorkspace(args.organizationSlug);
+
+  return {
+    creatorId: creator.id,
+    isTalking,
   };
 }
 

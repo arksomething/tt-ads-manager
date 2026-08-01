@@ -1400,6 +1400,12 @@ export const modelSchema = {
         "isList": false,
         "isOptional": false
       },
+      "isTalking": {
+        "kind": "scalar",
+        "type": "Boolean",
+        "isList": false,
+        "isOptional": false
+      },
       "notesSummary": {
         "kind": "scalar",
         "type": "String",

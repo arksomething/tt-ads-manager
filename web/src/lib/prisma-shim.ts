@@ -302,6 +302,7 @@ export interface Creator {
   region: string | null;
   language: string | null;
   internalStatus: CreatorStatus;
+  isTalking: boolean;
   notesSummary: string | null;
   contactEmail: string | null;
   customTags: string[];

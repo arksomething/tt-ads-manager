@@ -25,6 +25,7 @@ import {
   clearVideoDeal,
   saveCreatorDeal,
   saveVideoDeal,
+  setUgcPayCreatorTalkingStatus,
   setUgcPayVideoTalkingStatus,
 } from "./actions";
 
@@ -872,7 +873,29 @@ function VideoTableRow({
   );
 }
 
-function CreatorPayRow({ creator }: { creator: UgcPayCreatorRow }) {
+function CreatorPayRow({
+  creator,
+  isClassifying,
+  onClassifyCreator,
+}: {
+  creator: UgcPayCreatorRow;
+  isClassifying: boolean;
+  onClassifyCreator: (creator: UgcPayCreatorRow, formData: FormData) => void;
+}) {
+  function submitClassification(action: "mark-talking" | "mark-non-talking") {
+    const formData = new FormData();
+    formData.set("creatorId", creator.creatorId);
+    formData.set("action", action);
+    onClassifyCreator(creator, formData);
+  }
+
+  const classificationPillClassName = (isActive: boolean) =>
+    `inline-flex min-h-6 items-center rounded-full border px-2 text-[0.62rem] uppercase transition disabled:cursor-default disabled:opacity-80 ${
+      isActive
+        ? "border-[#90FF4D]/30 bg-[#90FF4D]/10 text-[#B8FF86]"
+        : "border-white/[0.08] bg-white/[0.05] text-muted-foreground hover:border-white/[0.18] hover:text-foreground"
+    }`;
+
   return (
     <div className="grid gap-3 border-b border-white/[0.06] px-4 py-4 last:border-b-0 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.85fr)_minmax(0,0.85fr)_minmax(0,0.75fr)] md:items-center">
       <div className="min-w-0">
@@ -894,6 +917,28 @@ function CreatorPayRow({ creator }: { creator: UgcPayCreatorRow }) {
               capped
             </span>
           ) : null}
+          <span className="inline-flex items-center gap-1">
+            <button
+              aria-pressed={creator.creatorIsTalking}
+              className={classificationPillClassName(creator.creatorIsTalking)}
+              disabled={isClassifying || creator.creatorIsTalking}
+              onClick={() => submitClassification("mark-talking")}
+              title="New videos default to talking terms"
+              type="button"
+            >
+              {isClassifying && !creator.creatorIsTalking ? "..." : "Talking"}
+            </button>
+            <button
+              aria-pressed={!creator.creatorIsTalking}
+              className={classificationPillClassName(!creator.creatorIsTalking)}
+              disabled={isClassifying || !creator.creatorIsTalking}
+              onClick={() => submitClassification("mark-non-talking")}
+              title="New videos default to non-talking terms"
+              type="button"
+            >
+              {isClassifying && creator.creatorIsTalking ? "..." : "Non-talking"}
+            </button>
+          </span>
         </div>
         <p className="mt-1 truncate text-xs text-muted-foreground">
           {creator.tiktokHandle ? `@${creator.tiktokHandle}` : creator.campaignName}
@@ -1143,6 +1188,32 @@ export function UgcPayClient({
     router.refresh();
   }
 
+  async function handleClassifyCreator(
+    creator: UgcPayCreatorRow,
+    formData: FormData,
+  ) {
+    const action = String(formData.get("action") ?? "");
+    setActionError(null);
+    setActionSuccess(null);
+    setPendingVideoKey(`classify-creator:${creator.creatorId}`);
+
+    const result = await setUgcPayCreatorTalkingStatus(organizationSlug, formData);
+    setPendingVideoKey(null);
+
+    if (!result.ok) {
+      setActionError({
+        key: `creator:${creator.creatorId}`,
+        message: result.error,
+      });
+      return;
+    }
+
+    setActionSuccess(
+      `${creator.creatorName} now defaults to ${action === "mark-non-talking" ? "non-talking" : "talking"} videos.`,
+    );
+    router.refresh();
+  }
+
   return (
     <>
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -1191,7 +1262,11 @@ export function UgcPayClient({
             creators.map((creator) => (
               <CreatorPayRow
                 creator={creator}
+                isClassifying={
+                  pendingVideoKey === `classify-creator:${creator.creatorId}`
+                }
                 key={creator.campaignCreatorId}
+                onClassifyCreator={handleClassifyCreator}
               />
             ))
           ) : (

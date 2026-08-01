@@ -1,6 +1,9 @@
 "use server";
 
-import { addCreatorToCampaignForOrganization } from "@/server/creators/mutations";
+import {
+  addCreatorToCampaignForOrganization,
+  setCreatorTalkingStatusForOrganization,
+} from "@/server/creators/mutations";
 import {
   deleteCampaignCreatorDealForOrganization,
   deleteCampaignCreatorVideoDealForOrganization,
@@ -167,6 +170,28 @@ export async function addCreatorToUgcPay(
         campaignId: getTrimmedFormValue(formData, "campaignId"),
         displayName: getTrimmedFormValue(formData, "displayName") || undefined,
         tiktokHandle: getTrimmedFormValue(formData, "tiktokHandle"),
+      },
+    });
+
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: getActionErrorMessage(error),
+    };
+  }
+}
+
+export async function setUgcPayCreatorTalkingStatus(
+  organizationSlug: string,
+  formData: FormData,
+): Promise<UgcPayDealActionResult> {
+  try {
+    await setCreatorTalkingStatusForOrganization({
+      organizationSlug,
+      input: {
+        action: getTrimmedFormValue(formData, "action"),
+        creatorId: getTrimmedFormValue(formData, "creatorId"),
       },
     });
 

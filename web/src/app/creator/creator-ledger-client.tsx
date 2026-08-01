@@ -23,6 +23,7 @@ import type { UgcPayVideoRow } from "@/server/ugc-pay/queries";
 import {
   saveCreatorPortalCreatorDeal,
   saveCreatorPortalVideoDeal,
+  setCreatorPortalVideoTalkingStatus,
 } from "./actions";
 
 type CreatorLedgerVideo = Omit<UgcPayVideoRow, "createdAt" | "publishedAt"> & {
@@ -469,6 +470,66 @@ function VideoDealEditor({ video }: { video: CreatorLedgerVideo }) {
   );
 }
 
+function VideoTalkingToggle({ video }: { video: CreatorLedgerVideo }) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  function submit(action: "mark-talking" | "mark-non-talking") {
+    const formData = new FormData();
+    formData.set("campaignCreatorId", video.campaignCreatorId);
+    formData.set("sourceVideoId", video.sourceVideoId);
+    formData.set("action", action);
+    setErrorMessage(null);
+
+    startTransition(async () => {
+      const result = await setCreatorPortalVideoTalkingStatus(formData);
+
+      if (result.ok) {
+        router.refresh();
+        return;
+      }
+
+      setErrorMessage(result.error);
+    });
+  }
+
+  const pillClassName = (isActive: boolean) =>
+    `inline-flex min-h-7 items-center rounded-full border px-2.5 text-[0.66rem] uppercase transition disabled:cursor-not-allowed disabled:opacity-60 ${
+      isActive
+        ? "border-[#90FF4D]/30 bg-[#90FF4D]/10 text-[#B8FF86]"
+        : "border-white/[0.08] bg-white/[0.05] text-muted-foreground hover:border-white/[0.18] hover:text-foreground"
+    }`;
+
+  return (
+    <div className="mt-2">
+      <div className="flex items-center gap-1.5">
+        <button
+          aria-pressed={video.isTalking}
+          className={pillClassName(video.isTalking)}
+          disabled={isPending || video.isTalking}
+          onClick={() => submit("mark-talking")}
+          type="button"
+        >
+          {isPending && !video.isTalking ? "..." : "Talking"}
+        </button>
+        <button
+          aria-pressed={!video.isTalking}
+          className={pillClassName(!video.isTalking)}
+          disabled={isPending || !video.isTalking}
+          onClick={() => submit("mark-non-talking")}
+          type="button"
+        >
+          {isPending && video.isTalking ? "..." : "Non-talking"}
+        </button>
+      </div>
+      {errorMessage ? (
+        <p className="mt-1 text-xs text-[#FFD3C5]">{errorMessage}</p>
+      ) : null}
+    </div>
+  );
+}
+
 export function CreatorLedgerClient({
   canEditDeals,
   creator,
@@ -553,6 +614,9 @@ export function CreatorLedgerClient({
                         <p className="mt-1 text-xs text-muted-foreground">
                           {video.paidStatus}
                         </p>
+                        {canEditDeals ? (
+                          <VideoTalkingToggle video={video} />
+                        ) : null}
                       </div>
                     </div>
                   </td>
