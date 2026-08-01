@@ -278,13 +278,18 @@ test("creator portal view tally rows preserve thumbnails", () => {
   assert.equal(rows[1].thumbnailUrl, "https://cdn.example.com/local-2.jpg");
 });
 
-test("creator portal posted mode filters payable rows to post dates", () => {
+test("creator portal payable modes filter rows to the posted windows", () => {
   const rows = buildCreatorAccessViewTallyRows({
     videos: [
       video({
         id: "older-with-period-views",
         sourceVideoId: "older-with-period-views",
         publishedAt: new Date("2026-04-10T12:00:00.000Z"),
+      }),
+      video({
+        id: "posted-in-video-window",
+        sourceVideoId: "posted-in-video-window",
+        publishedAt: new Date("2026-05-22T12:00:00.000Z"),
       }),
       video({
         id: "posted-in-period",
@@ -296,6 +301,10 @@ test("creator portal posted mode filters payable rows to post dates", () => {
       {
         sourceVideoId: "older-with-period-views",
         views: 25,
+      },
+      {
+        sourceVideoId: "posted-in-video-window",
+        views: 50,
       },
       {
         sourceVideoId: "posted-in-period",
@@ -311,8 +320,18 @@ test("creator portal posted mode filters payable rows to post dates", () => {
       rows,
       periodStart: new Date("2026-05-25T00:00:00.000Z"),
       periodEndExclusive: new Date("2026-06-02T00:00:00.000Z"),
+      videoWindowStart: new Date("2026-05-18T00:00:00.000Z"),
     }).map((row) => row.id),
-    ["older-with-period-views", "posted-in-period"],
+    ["posted-in-video-window", "posted-in-period"],
+  );
+  assert.deepEqual(
+    filterCreatorAccessPayableRowsByMode({
+      payMode: "gained",
+      rows,
+      periodStart: new Date("2026-05-25T00:00:00.000Z"),
+      periodEndExclusive: new Date("2026-06-02T00:00:00.000Z"),
+    }).map((row) => row.id),
+    ["posted-in-period"],
   );
   assert.deepEqual(
     filterCreatorAccessPayableRowsByMode({
@@ -320,6 +339,7 @@ test("creator portal posted mode filters payable rows to post dates", () => {
       rows,
       periodStart: new Date("2026-05-25T00:00:00.000Z"),
       periodEndExclusive: new Date("2026-06-02T00:00:00.000Z"),
+      videoWindowStart: new Date("2026-05-18T00:00:00.000Z"),
     }).map((row) => row.id),
     ["posted-in-period"],
   );

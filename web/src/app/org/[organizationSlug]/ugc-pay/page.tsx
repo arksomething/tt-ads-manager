@@ -45,6 +45,7 @@ import {
 import { CopyLinkButton } from "../links/copy-link-button";
 import { UgcPayClient } from "./ugc-pay-client";
 import UgcPayLoading from "./loading";
+import { VideoWindowStartField } from "./video-window-start-field";
 
 export const dynamic = "force-dynamic";
 
@@ -1735,11 +1736,9 @@ async function UgcPayPageReport({
                   label="Video window start"
                   tip="Earliest video post date included in gained-view mode. Use this to include older videos while only paying the views gained in the report range."
                 />
-                <input
+                <VideoWindowStartField
                   className="w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-white/[0.16]"
                   defaultValue={data.videoWindowStartDate}
-                  name="videoWindowStartDate"
-                  type="date"
                 />
               </label>
             ) : null}

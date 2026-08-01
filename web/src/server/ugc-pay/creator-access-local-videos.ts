@@ -230,15 +230,21 @@ export function filterCreatorAccessPayableRowsByMode<
   rows: Row[];
   periodStart: Date;
   periodEndExclusive: Date;
+  videoWindowStart?: Date;
 }) {
-  if (args.payMode === "gained") {
-    return args.rows;
-  }
+  // Gained mode pays views gained during the report period, but only for
+  // videos posted inside the video window (defaults to 7 days before the
+  // period start) — matching the org UGC Pay page and the "Included videos"
+  // label shown in the creator portal.
+  const postedWindowStart =
+    args.payMode === "gained"
+      ? (args.videoWindowStart ?? args.periodStart)
+      : args.periodStart;
 
   return args.rows.filter((row) =>
     isCreatorAccessVideoPostedInPeriod({
       video: row,
-      periodStart: args.periodStart,
+      periodStart: postedWindowStart,
       periodEndExclusive: args.periodEndExclusive,
     }),
   );

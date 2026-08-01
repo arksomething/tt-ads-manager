@@ -616,9 +616,9 @@ function getSelectedDateRange(
 }
 
 function getSelectedPayMode(searchParams: DashboardSearchParams | undefined): UgcPayMode {
-  return getSearchParamValue(searchParams, "payMode") === "gained"
-    ? "gained"
-    : "posted";
+  return getSearchParamValue(searchParams, "payMode") === "posted"
+    ? "posted"
+    : "gained";
 }
 
 function getDefaultVideoWindowStartDate(startDate: string) {
@@ -640,9 +640,9 @@ function getSelectedVideoWindowStartDate(
 function getSelectedViewWindowMode(
   searchParams: DashboardSearchParams | undefined,
 ): UgcPayViewWindowMode {
-  return getSearchParamValue(searchParams, "viewWindowMode") === "first-days"
-    ? "first-days"
-    : "all";
+  return getSearchParamValue(searchParams, "viewWindowMode") === "all"
+    ? "all"
+    : "first-days";
 }
 
 function getSelectedVideoFetchMode(
@@ -2621,6 +2621,7 @@ export async function getOrganizationUgcPayData(args: {
         rows: viewTallyRows,
         periodStart: reportDateBounds.start,
         periodEndExclusive: reportDateBounds.endExclusive,
+        videoWindowStart: videoWindowDateBounds.start,
       })
     : payMode === "gained"
       ? viewTallyRows.filter((row) => {
