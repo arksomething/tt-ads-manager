@@ -51,6 +51,11 @@ export type UgcPayVideoAmountResult = {
 };
 
 export const NON_TALKING_VIDEO_CPM_AMOUNT = 0.5;
+export const NON_TALKING_VIDEO_PAYOUT_CAP_PER_VIDEO = 100;
+// Jul 20 2026 policy: classified non-talking videos take the full non-talking
+// terms (CPM and cap). Videos posted before this date keep the creator deal's
+// cap so historical payouts don't shift.
+export const NON_TALKING_VIDEO_CAP_EFFECTIVE_DATE_ONLY = "2026-07-20";
 
 export function normalizeMoney(value: number) {
   return Number(value.toFixed(2));
@@ -63,15 +68,26 @@ export function applyUgcPayVideoContentTypeCpm<
   args: {
     isTalking: boolean;
     hasVideoDealOverride: boolean;
+    postedDateOnly?: string | null;
   },
 ): TDeal {
   if (args.isTalking || args.hasVideoDealOverride) {
     return deal;
   }
 
+  const appliesNonTalkingCap =
+    args.postedDateOnly != null &&
+    args.postedDateOnly >= NON_TALKING_VIDEO_CAP_EFFECTIVE_DATE_ONLY;
+
   return {
     ...deal,
     cpmAmount: NON_TALKING_VIDEO_CPM_AMOUNT,
+    ...(appliesNonTalkingCap
+      ? {
+          payoutCapPerVideo: NON_TALKING_VIDEO_PAYOUT_CAP_PER_VIDEO,
+          perVideoCapScope: "CPM" as TDeal["perVideoCapScope"],
+        }
+      : {}),
   };
 }
 

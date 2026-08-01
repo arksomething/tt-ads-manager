@@ -178,6 +178,20 @@ function startOfUtcDay(value: Date | string) {
   );
 }
 
+// Mirrors the server's UTC report-date resolution for the non-talking cap cutoff.
+function getVideoPostedDateOnly(video: Pick<UgcPayVideoRow, "publishedAt" | "createdAt">) {
+  const postedAt = video.publishedAt ?? video.createdAt;
+
+  if (!postedAt) {
+    return null;
+  }
+
+  const parsedValue = postedAt instanceof Date ? postedAt : new Date(postedAt);
+  return Number.isNaN(parsedValue.getTime())
+    ? null
+    : parsedValue.toISOString().slice(0, 10);
+}
+
 function getFixedPayForRange(deal: UgcPayDeal, startDate: string, endDate: string) {
   if (deal.fixedFee == null) {
     return 0;
@@ -236,6 +250,7 @@ function recalculateVideo(args: {
     {
       hasVideoDealOverride: args.videoOverride != null,
       isTalking: args.video.isTalking,
+      postedDateOnly: getVideoPostedDateOnly(args.video),
     },
   );
   const fixedFeePerVideo = effectiveDeal.fixedFeePerVideo ?? 0;

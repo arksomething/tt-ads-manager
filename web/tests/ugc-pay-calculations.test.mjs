@@ -122,6 +122,65 @@ test("non-talking videos use the content CPM unless a video override exists", ()
   assert.equal(calculateWithDeal(explicitOverrideDeal).cpmPay, 84);
 });
 
+test("non-talking videos posted on or after Jul 20 2026 also take the non-talking cap", () => {
+  const creatorDeal = deal({
+    cpmAmount: 1,
+    payoutCapPerVideo: 300,
+    perVideoCapScope: "CPM",
+  });
+
+  const beforeCutoff = applyUgcPayVideoContentTypeCpm(creatorDeal, {
+    isTalking: false,
+    hasVideoDealOverride: false,
+    postedDateOnly: "2026-07-19",
+  });
+  assert.equal(beforeCutoff.cpmAmount, 0.5);
+  assert.equal(beforeCutoff.payoutCapPerVideo, 300);
+  assert.equal(beforeCutoff.perVideoCapScope, "CPM");
+
+  const onCutoff = applyUgcPayVideoContentTypeCpm(creatorDeal, {
+    isTalking: false,
+    hasVideoDealOverride: false,
+    postedDateOnly: "2026-07-20",
+  });
+  assert.equal(onCutoff.cpmAmount, 0.5);
+  assert.equal(onCutoff.payoutCapPerVideo, 100);
+  assert.equal(onCutoff.perVideoCapScope, "CPM");
+
+  const uncappedScopeDeal = applyUgcPayVideoContentTypeCpm(
+    deal({ cpmAmount: 1.3, payoutCapPerVideo: 300, perVideoCapScope: "NONE" }),
+    {
+      isTalking: false,
+      hasVideoDealOverride: false,
+      postedDateOnly: "2026-08-01",
+    },
+  );
+  assert.equal(uncappedScopeDeal.payoutCapPerVideo, 100);
+  assert.equal(uncappedScopeDeal.perVideoCapScope, "CPM");
+
+  const noDateProvided = applyUgcPayVideoContentTypeCpm(creatorDeal, {
+    isTalking: false,
+    hasVideoDealOverride: false,
+  });
+  assert.equal(noDateProvided.payoutCapPerVideo, 300);
+
+  const talkingAfterCutoff = applyUgcPayVideoContentTypeCpm(creatorDeal, {
+    isTalking: true,
+    hasVideoDealOverride: false,
+    postedDateOnly: "2026-08-01",
+  });
+  assert.equal(talkingAfterCutoff.cpmAmount, 1);
+  assert.equal(talkingAfterCutoff.payoutCapPerVideo, 300);
+
+  const overriddenAfterCutoff = applyUgcPayVideoContentTypeCpm(creatorDeal, {
+    isTalking: false,
+    hasVideoDealOverride: true,
+    postedDateOnly: "2026-08-01",
+  });
+  assert.equal(overriddenAfterCutoff.cpmAmount, 1);
+  assert.equal(overriddenAfterCutoff.payoutCapPerVideo, 300);
+});
+
 test("per-video fixed fee and total cap still use the overridden CPM", () => {
   const effectiveVideoDeal = applyUgcPayVideoDealOverride(
     deal({
