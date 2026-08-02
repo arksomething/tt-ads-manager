@@ -198,6 +198,7 @@ export async function getCreatorPortalLinksWorkspace(organizationSlug: string) {
         creatorId: campaignCreator.creatorId,
         organizationId: membership.organizationId,
         organizationSlug,
+        revalidate: false,
       });
       const now = new Date();
 
@@ -269,6 +270,10 @@ async function createCreatorPortalAccessRecord(args: {
   organizationSlug: string;
   creatorId: string;
   campaignCreatorId: string;
+  // revalidatePath is illegal during render; the links-workspace render path
+  // provisions missing links inline and must skip it (the page it would
+  // invalidate is the one currently rendering fresh data anyway).
+  revalidate?: boolean;
 }) {
   const linkToken = generateCreatorPortalLinkToken();
   const access = await prisma.creatorPortalAccess.create({
@@ -287,7 +292,9 @@ async function createCreatorPortalAccessRecord(args: {
     },
   });
 
-  revalidateCreatorLinks(args.organizationSlug);
+  if (args.revalidate !== false) {
+    revalidateCreatorLinks(args.organizationSlug);
+  }
 
   return {
     accessId: access.id as string,
