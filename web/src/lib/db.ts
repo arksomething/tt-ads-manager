@@ -635,7 +635,14 @@ async function tryExecuteFindManyViaSupabase(
     query = query.range(from, to);
   }
 
-  const { data, error } = await query;
+  let { data, error } = await query;
+
+  // Transient network failures (undici "fetch failed") kill long report runs;
+  // re-running the identical query is purely mechanical.
+  for (let retry = 0; error && /fetch failed/i.test(error.message) && retry < 3; retry++) {
+    await new Promise((resolve) => setTimeout(resolve, 2_000 * (retry + 1)));
+    ({ data, error } = await query);
+  }
 
   if (error) {
     if (isSupabaseMissingTableError(error)) {
@@ -729,10 +736,18 @@ async function loadRows(modelName: ModelName, context: QueryContext): Promise<Re
     const pageSize = 1000;
 
     const fetchPage = async (from: number) => {
-      const { data, error } = await client
+      let { data, error } = await client
         .from(table)
         .select("*")
         .range(from, from + pageSize - 1);
+
+      for (let retry = 0; error && /fetch failed/i.test(error.message) && retry < 3; retry++) {
+        await new Promise((resolve) => setTimeout(resolve, 2_000 * (retry + 1)));
+        ({ data, error } = await client
+          .from(table)
+          .select("*")
+          .range(from, from + pageSize - 1));
+      }
 
       if (error) {
         if (isSupabaseMissingTableError(error)) {
@@ -746,10 +761,22 @@ async function loadRows(modelName: ModelName, context: QueryContext): Promise<Re
     };
 
     try {
-      const firstPage = await client
+      let firstPage = await client
         .from(table)
         .select("*", { count: "exact" })
         .range(0, pageSize - 1);
+
+      for (
+        let retry = 0;
+        firstPage.error && /fetch failed/i.test(firstPage.error.message) && retry < 3;
+        retry++
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 2_000 * (retry + 1)));
+        firstPage = await client
+          .from(table)
+          .select("*", { count: "exact" })
+          .range(0, pageSize - 1);
+      }
 
       if (firstPage.error) {
         if (isSupabaseMissingTableError(firstPage.error)) {

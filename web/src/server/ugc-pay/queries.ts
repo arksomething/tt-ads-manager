@@ -1448,19 +1448,28 @@ async function getLocalVideoContentTypes(args: {
   // defaults to true on sync, which would mask the creator-level default for
   // videos nobody has actually reviewed. The classification table is written
   // on every manual toggle, so it is the complete human record.
-  const classifications = await prisma.videoContentClassification.findMany({
-    where: {
-      organizationId: args.organizationId,
-      platform: Platform.TIKTOK,
-      sourceVideoId: {
-        in: sourceVideoIds,
-      },
-    },
-    select: {
-      sourceVideoId: true,
-      isTalking: true,
-    },
-  });
+  const classifications: Array<{ sourceVideoId: string; isTalking: boolean }> = [];
+
+  for (const sourceVideoIdBatch of chunkArray(
+    sourceVideoIds,
+    GAINED_VIEW_CAP_CONTEXT_BATCH_SIZE,
+  )) {
+    classifications.push(
+      ...(await prisma.videoContentClassification.findMany({
+        where: {
+          organizationId: args.organizationId,
+          platform: Platform.TIKTOK,
+          sourceVideoId: {
+            in: sourceVideoIdBatch,
+          },
+        },
+        select: {
+          sourceVideoId: true,
+          isTalking: true,
+        },
+      })),
+    );
+  }
   const statusBySourceVideoId = new Map<string, boolean>();
 
   for (const classification of classifications) {

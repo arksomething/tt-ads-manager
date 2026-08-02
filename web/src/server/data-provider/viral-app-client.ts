@@ -217,38 +217,64 @@ export class ViralAppClient {
     const activeRateLimitDelayMs = getActiveRateLimitDelayMs();
 
     if (activeRateLimitDelayMs != null) {
-      logViralAppTiming({
-        cache: "rate-limit-skip",
-        durationMs: 0,
-        method,
-        path,
-        status: 429,
-      });
-      throw new ViralAppApiError(
-        `Rate limit exceeded, please try again in ${Math.max(
-          1,
-          Math.ceil(activeRateLimitDelayMs / 1_000),
-        )} seconds.`,
-        429,
-      );
+      // Patient mode (local audit runs only): wait out the remembered rate
+      // limit instead of failing the sub-query — identical requests, identical
+      // math, just slower. Never enabled in serverless (function timeouts).
+      if (process.env.VIRAL_APP_PATIENT === "1") {
+        await new Promise((resolve) =>
+          setTimeout(resolve, activeRateLimitDelayMs + 2_000),
+        );
+      } else {
+        logViralAppTiming({
+          cache: "rate-limit-skip",
+          durationMs: 0,
+          method,
+          path,
+          status: 429,
+        });
+        throw new ViralAppApiError(
+          `Rate limit exceeded, please try again in ${Math.max(
+            1,
+            Math.ceil(activeRateLimitDelayMs / 1_000),
+          )} seconds.`,
+          429,
+        );
+      }
     }
 
     const requestPromise = (async () => {
       const upstreamStartedAt = Date.now();
       let responseStatus: number | undefined;
 
-      const response = await fetch(url, {
-        method,
-        signal,
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          "x-api-key": providerEnv.DATA_PROVIDER_API_KEY,
-          ...headers,
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        cache: "no-store",
-      });
+      let response!: Response;
+      const patientRetries =
+        process.env.VIRAL_APP_PATIENT === "1" ? 8 : 0;
+
+      for (let patientAttempt = 0; ; patientAttempt++) {
+        response = await fetch(url, {
+          method,
+          signal,
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "x-api-key": providerEnv.DATA_PROVIDER_API_KEY,
+            ...headers,
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
+          cache: "no-store",
+        });
+
+        if (response.status !== 429 || patientAttempt >= patientRetries) {
+          break;
+        }
+
+        const retryAfterSeconds =
+          getRetryAfterSeconds(response.headers.get("retry-after")) ?? 600;
+        await safeJson(response);
+        await new Promise((resolve) =>
+          setTimeout(resolve, (retryAfterSeconds + 2) * 1_000),
+        );
+      }
       responseStatus = response.status;
 
       if (!response.ok) {
