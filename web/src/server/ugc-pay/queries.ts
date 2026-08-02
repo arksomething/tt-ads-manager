@@ -2755,11 +2755,26 @@ export async function getOrganizationUgcPayData(args: {
       deal: effectiveDeal,
       fixedFeePerVideo,
     });
+    // A video posted inside the report range has, by definition, zero views
+    // before the period — the cumulative/fallback contexts can't tell "views
+    // after the pay window" apart from "views before it" and would otherwise
+    // burn the whole per-video cap on post-window growth (a 1.9M-view video
+    // posted mid-July was paying $0).
+    const postedInReportRange = isVideoPostedInReportDateRange({
+      row,
+      start: reportDateBounds.start,
+      endExclusive: reportDateBounds.endExclusive,
+    });
     const gainedViewCapContext =
       payMode === "gained" && typeof perVideoGrossViewCap === "number"
-        ? (providerGainedViewCapContexts.get(row.sourceVideoId) ??
-          localGainedViewCapContexts.get(row.sourceVideoId) ??
-          getFallbackGainedViewCapContext(row))
+        ? (postedInReportRange
+            ? {
+                grossViewsBeforePeriod: 0,
+                grossViewsAtPeriodEnd: row.views ?? 0,
+              }
+            : (providerGainedViewCapContexts.get(row.sourceVideoId) ??
+              localGainedViewCapContexts.get(row.sourceVideoId) ??
+              getFallbackGainedViewCapContext(row)))
         : null;
 
     if (
