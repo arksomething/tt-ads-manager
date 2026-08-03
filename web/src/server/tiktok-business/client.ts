@@ -1,3 +1,7 @@
+import {
+  readDiskCachedResponse,
+  writeDiskCachedResponse,
+} from "@/lib/disk-response-cache";
 import { getTikTokBusinessEnv } from "@/lib/server-env";
 
 type TikTokEnvelope<TData> = {
@@ -124,6 +128,16 @@ export async function requestTikTokBusinessApi<TData>(
   const env = getTikTokBusinessEnv();
   const method = args.method ?? "GET";
   const url = buildUrl(env.TIKTOK_BUSINESS_BASE_URL, args.path, args.query);
+  const diskCacheKey = method === "GET" ? `${method}:${url}` : null;
+
+  if (diskCacheKey) {
+    const diskCached = readDiskCachedResponse<TData>("TIKTOK_API_DISK_CACHE", diskCacheKey);
+
+    if (diskCached.found) {
+      return diskCached.value as TData;
+    }
+  }
+
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= MAX_TIKTOK_API_ATTEMPTS; attempt += 1) {
@@ -182,7 +196,13 @@ export async function requestTikTokBusinessApi<TData>(
         });
       }
 
-      return (payload?.data ?? null) as TData;
+      const data = (payload?.data ?? null) as TData;
+
+      if (diskCacheKey) {
+        writeDiskCachedResponse("TIKTOK_API_DISK_CACHE", diskCacheKey, data);
+      }
+
+      return data;
     } catch (error) {
       lastError =
         error instanceof Error

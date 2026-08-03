@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import path from "node:path";
-
+import {
+  readDiskCachedResponse,
+  writeDiskCachedResponse,
+} from "@/lib/disk-response-cache";
 import { getDataProviderEnv } from "@/lib/server-env";
 import { getProviderRateLimitRetryDelayMs } from "@/lib/provider-rate-limit";
 import { logServerTiming } from "@/lib/server-timing";
@@ -119,55 +119,8 @@ function clearViralAppReadCache() {
   getPendingRequests().clear();
 }
 
-// Snapshot mode (local audit runs only): when VIRAL_APP_DISK_CACHE points at a
-// directory, successful GET responses persist there and are served back on
-// later runs without TTL. The snapshot is scoped by directory — start a fresh
-// one by pointing at a new/emptied directory. Never enabled in serverless
-// (env var absent), so production fetch semantics are unchanged.
-function getDiskCacheDir() {
-  const dir = process.env.VIRAL_APP_DISK_CACHE;
-  return dir && dir.trim().length > 0 ? dir.trim() : null;
-}
-
-function getDiskCacheFile(dir: string, cacheKey: string) {
-  const hash = createHash("sha256").update(cacheKey).digest("hex");
-  return path.join(dir, `${hash}.json`);
-}
-
-function readDiskCachedValue<T>(cacheKey: string) {
-  const dir = getDiskCacheDir();
-
-  if (!dir) {
-    return { found: false as const, value: undefined };
-  }
-
-  try {
-    const parsed = JSON.parse(
-      readFileSync(getDiskCacheFile(dir, cacheKey), "utf8"),
-    ) as { value: T };
-    return { found: true as const, value: parsed.value };
-  } catch {
-    return { found: false as const, value: undefined };
-  }
-}
-
-function writeDiskCachedValue(cacheKey: string, value: unknown) {
-  const dir = getDiskCacheDir();
-
-  if (!dir) {
-    return;
-  }
-
-  try {
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      getDiskCacheFile(dir, cacheKey),
-      JSON.stringify({ cacheKey, fetchedAt: new Date().toISOString(), value }),
-    );
-  } catch {
-    // A failed snapshot write must never fail the request.
-  }
-}
+// Snapshot mode (local audit runs only) lives in @/lib/disk-response-cache,
+// keyed by the VIRAL_APP_DISK_CACHE env var.
 
 function getActiveRateLimitDelayMs(now = Date.now()) {
   const rateLimitUntil = globalForViralAppClient.viralAppRateLimitUntil;
@@ -269,7 +222,7 @@ export class ViralAppClient {
     }
 
     if (method === "GET" && !signal) {
-      const diskCached = readDiskCachedValue<T>(cacheKey);
+      const diskCached = readDiskCachedResponse<T>("VIRAL_APP_DISK_CACHE", cacheKey);
 
       if (diskCached.found) {
         if (canUseCache) {
@@ -388,7 +341,7 @@ export class ViralAppClient {
           : ((await response.json()) as T);
 
       if (method === "GET" && !signal && response.status !== 204) {
-        writeDiskCachedValue(cacheKey, result);
+        writeDiskCachedResponse("VIRAL_APP_DISK_CACHE", cacheKey, result);
       }
 
       logViralAppTiming({

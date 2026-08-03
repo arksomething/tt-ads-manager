@@ -376,6 +376,119 @@ const pendingPaidReportCache = new Map<string, Promise<PaidReportMetricsFetchRes
 const adSpendReportCache = new Map<string, TimedCacheValue<TikTokAdSpendReport>>();
 const pendingAdSpendReportCache = new Map<string, Promise<TikTokAdSpendReport>>();
 
+// The paid-view lookups run once per creator per view window, and each used to
+// issue its own SparkAuthorization read (~100ms of DB round-trip that dominated
+// large per-creator report runs). Fetch the advertiser's AUTHORIZED rows once
+// on a short TTL and apply the same predicates in memory.
+const SPARK_AUTHORIZATION_CACHE_TTL_MS = 60_000;
+
+type CachedSparkAuthorization = {
+  creatorId: string | null;
+  tiktokItemId: string;
+  authStartTime: Date | null;
+  authEndTime: Date | null;
+};
+
+const sparkAuthorizationCache = new Map<string, TimedCacheValue<CachedSparkAuthorization[]>>();
+const pendingSparkAuthorizationCache = new Map<string, Promise<CachedSparkAuthorization[]>>();
+
+function toDateOrNull(value: unknown) {
+  if (value == null) {
+    return null;
+  }
+
+  const parsed = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+async function getAuthorizedSparkAuthorizations(args: {
+  organizationId: string;
+  advertiserId: string;
+}): Promise<CachedSparkAuthorization[]> {
+  const cacheKey = `${args.organizationId}:${args.advertiserId}`;
+  const cached = sparkAuthorizationCache.get(cacheKey);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  const pending = pendingSparkAuthorizationCache.get(cacheKey);
+
+  if (pending) {
+    return pending;
+  }
+
+  const fetchPromise = (async () => {
+    const authorizations = (await prisma.sparkAuthorization.findMany({
+      where: {
+        organizationId: args.organizationId,
+        advertiserId: args.advertiserId,
+        status: SparkAuthorizationStatus.AUTHORIZED,
+        tiktokItemId: {
+          not: null,
+        },
+      },
+      select: {
+        creatorId: true,
+        tiktokItemId: true,
+        authStartTime: true,
+        authEndTime: true,
+      },
+    })) as Array<{
+      creatorId: string | null;
+      tiktokItemId: string | null;
+      authStartTime: Date | string | null;
+      authEndTime: Date | string | null;
+    }>;
+
+    const rows: CachedSparkAuthorization[] = [];
+
+    for (const authorization of authorizations) {
+      const tiktokItemId = authorization.tiktokItemId?.trim();
+
+      if (!tiktokItemId) {
+        continue;
+      }
+
+      rows.push({
+        creatorId: authorization.creatorId,
+        tiktokItemId,
+        authStartTime: toDateOrNull(authorization.authStartTime),
+        authEndTime: toDateOrNull(authorization.authEndTime),
+      });
+    }
+
+    sparkAuthorizationCache.set(cacheKey, {
+      value: rows,
+      expiresAt: Date.now() + SPARK_AUTHORIZATION_CACHE_TTL_MS,
+    });
+    return rows;
+  })();
+
+  pendingSparkAuthorizationCache.set(cacheKey, fetchPromise);
+
+  try {
+    return await fetchPromise;
+  } finally {
+    if (pendingSparkAuthorizationCache.get(cacheKey) === fetchPromise) {
+      pendingSparkAuthorizationCache.delete(cacheKey);
+    }
+  }
+}
+
+// Mirrors the SQL predicate the per-call queries used: active during any part
+// of [startDate, endDate], with open-ended sides treated as unbounded.
+function isSparkAuthorizationActiveInRange(
+  authorization: CachedSparkAuthorization,
+  startDate: Date,
+  endDate: Date,
+) {
+  return (
+    (authorization.authStartTime === null || authorization.authStartTime <= endDate) &&
+    (authorization.authEndTime === null || authorization.authEndTime >= startDate)
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -1594,9 +1707,55 @@ function isMissingOrgTikTokAccountError(error: unknown) {
   );
 }
 
+// React cache() only dedupes inside an RSC render — route handlers (receipt,
+// per-creator report runs) got a fresh ~100ms DB read on every one of
+// thousands of paid-view calls. Layer a short module-level TTL on top.
+const ORG_TIKTOK_ACCOUNT_CACHE_TTL_MS = 60_000;
+const orgTikTokAccountCache = new Map<
+  string,
+  TimedCacheValue<Awaited<ReturnType<typeof getOrgTikTokAccountUncached>>>
+>();
+const pendingOrgTikTokAccountCache = new Map<
+  string,
+  ReturnType<typeof getOrgTikTokAccountUncached>
+>();
+
+async function getOrgTikTokAccount(organizationId: string) {
+  const cached = orgTikTokAccountCache.get(organizationId);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  const pending = pendingOrgTikTokAccountCache.get(organizationId);
+
+  if (pending) {
+    return pending;
+  }
+
+  const fetchPromise = (async () => {
+    const value = await getOrgTikTokAccountUncached(organizationId);
+    orgTikTokAccountCache.set(organizationId, {
+      value,
+      expiresAt: Date.now() + ORG_TIKTOK_ACCOUNT_CACHE_TTL_MS,
+    });
+    return value;
+  })();
+
+  pendingOrgTikTokAccountCache.set(organizationId, fetchPromise);
+
+  try {
+    return await fetchPromise;
+  } finally {
+    if (pendingOrgTikTokAccountCache.get(organizationId) === fetchPromise) {
+      pendingOrgTikTokAccountCache.delete(organizationId);
+    }
+  }
+}
+
 // Request-scoped memoization (same pattern as getOrganizationMembership):
 // dozens of per-creator lookups in one page load share these invariant reads.
-const getOrgTikTokAccount = reactCache(async (organizationId: string) => {
+const getOrgTikTokAccountUncached = reactCache(async (organizationId: string) => {
   const activeAccount = await prisma.organizationTikTokAccount.findFirst({
     where: {
       organizationId,
@@ -1818,46 +1977,20 @@ async function getCreatorSparkItemIds(args: {
   startDate: Date;
   endDate: Date;
 }) {
-  const authorizations = await prisma.sparkAuthorization.findMany({
-    where: {
-      organizationId: args.organizationId,
-      creatorId: args.creatorId,
-      advertiserId: args.advertiserId,
-      status: SparkAuthorizationStatus.AUTHORIZED,
-      tiktokItemId: {
-        not: null,
-      },
-      OR: [
-        {
-          authStartTime: null,
-        },
-        {
-          authStartTime: {
-            lte: args.endDate,
-          },
-        },
-      ],
-      AND: [
-        {
-          OR: [
-            {
-              authEndTime: null,
-            },
-            {
-              authEndTime: {
-                gte: args.startDate,
-              },
-            },
-          ],
-        },
-      ],
-    },
-    select: {
-      tiktokItemId: true,
-    },
+  const authorizations = await getAuthorizedSparkAuthorizations({
+    organizationId: args.organizationId,
+    advertiserId: args.advertiserId,
   });
 
-  return uniqueNonEmptyStrings(authorizations.map((authorization) => authorization.tiktokItemId));
+  return uniqueNonEmptyStrings(
+    authorizations
+      .filter(
+        (authorization) =>
+          authorization.creatorId === args.creatorId &&
+          isSparkAuthorizationActiveInRange(authorization, args.startDate, args.endDate),
+      )
+      .map((authorization) => authorization.tiktokItemId),
+  );
 }
 
 async function getCreatorSparkItemIdsBySourceVideo(args: {
@@ -1874,51 +2007,22 @@ async function getCreatorSparkItemIdsBySourceVideo(args: {
     return new Map<string, string[]>();
   }
 
-  const authorizations = await prisma.sparkAuthorization.findMany({
-    where: {
-      organizationId: args.organizationId,
-      creatorId: args.creatorId,
-      advertiserId: args.advertiserId,
-      status: SparkAuthorizationStatus.AUTHORIZED,
-      tiktokItemId: {
-        in: sourceVideoIds,
-      },
-      OR: [
-        {
-          authStartTime: null,
-        },
-        {
-          authStartTime: {
-            lte: args.endDate,
-          },
-        },
-      ],
-      AND: [
-        {
-          OR: [
-            {
-              authEndTime: null,
-            },
-            {
-              authEndTime: {
-                gte: args.startDate,
-              },
-            },
-          ],
-        },
-      ],
-    },
-    select: {
-      tiktokItemId: true,
-    },
+  const sourceVideoIdSet = new Set(sourceVideoIds);
+  const authorizations = await getAuthorizedSparkAuthorizations({
+    organizationId: args.organizationId,
+    advertiserId: args.advertiserId,
   });
 
   const itemIdsBySourceVideoId = new Map<string, string[]>();
 
   for (const authorization of authorizations) {
-    const itemId = authorization.tiktokItemId?.trim();
+    const itemId = authorization.tiktokItemId;
 
-    if (!itemId) {
+    if (
+      authorization.creatorId !== args.creatorId ||
+      !sourceVideoIdSet.has(itemId) ||
+      !isSparkAuthorizationActiveInRange(authorization, args.startDate, args.endDate)
+    ) {
       continue;
     }
 

@@ -16,7 +16,8 @@
  * Env: reads web/.env + web/.env.local for DB/Supabase credentials.
  *
  * Server: run the local prod build with
- *   VIRAL_APP_PATIENT=1 VIRAL_APP_DISK_CACHE=/tmp/audit-viral-cache-<month> PORT=3100 npm run start
+ *   VIRAL_APP_PATIENT=1 VIRAL_APP_DISK_CACHE=/tmp/audit-viral-cache-<month> \
+ *     TIKTOK_API_DISK_CACHE=/tmp/audit-tiktok-cache-<month> PORT=3100 npm run start
  * The disk cache snapshots every viral.app response for the run, so
  * correction reruns and the reconciliation pass reuse the snapshot instead of
  * re-paying the quota (~35 min → ~1 min). Point VIRAL_APP_DISK_CACHE at a new

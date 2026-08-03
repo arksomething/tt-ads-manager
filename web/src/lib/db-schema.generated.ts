@@ -5435,6 +5435,48 @@ export const modelSchema = {
       }
     },
     "relations": {}
+  },
+  "SingularReportCache": {
+    "table": "SingularReportCache",
+    "fields": {
+      "cacheKey": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "family": {
+        "kind": "scalar",
+        "type": "String",
+        "isList": false,
+        "isOptional": false
+      },
+      "entry": {
+        "kind": "scalar",
+        "type": "Json",
+        "isList": false,
+        "isOptional": false
+      },
+      "expiresAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "createdAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      },
+      "updatedAt": {
+        "kind": "scalar",
+        "type": "DateTime",
+        "isList": false,
+        "isOptional": false
+      }
+    },
+    "relations": {}
   }
 } as const;
 

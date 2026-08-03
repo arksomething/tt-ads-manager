@@ -1,5 +1,6 @@
 import { getSingularEnv, hasSingularEnv } from "@/lib/server-env";
 import { dateRangeIncludesToday } from "@/lib/cache-control";
+import { prisma } from "@/lib/db";
 
 import {
   SingularApiError,
@@ -657,34 +658,127 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function readReportCache(key: string) {
-  const cached = singularReportCache.get(key);
-
-  if (!cached) {
-    return null;
-  }
-
-  if (cached.expiresAt <= Date.now()) {
-    singularReportCache.delete(key);
-    return null;
-  }
-
-  return cached;
+// Durable cross-lambda mirror of the in-memory report caches. Singular async
+// reports take 15–60s to create+poll, and per-lambda memory means every cold
+// serverless instance used to repeat that from scratch; persisting the entries
+// lets a cold lambda adopt a ready report instantly (or keep polling an
+// existing pending one). DB writes are best-effort and never block or fail the
+// report path.
+function persistDurableSingularEntry(
+  family: string,
+  key: string,
+  entry: { expiresAt: number },
+) {
+  const cacheKey = `${family}:${key}`;
+  prisma.singularReportCache
+    .upsert({
+      where: { cacheKey },
+      data: {
+        cacheKey,
+        family,
+        entry: entry as unknown as Record<string, unknown>,
+        expiresAt: new Date(entry.expiresAt),
+      },
+      update: {
+        entry: entry as unknown as Record<string, unknown>,
+        expiresAt: new Date(entry.expiresAt),
+      },
+    })
+    .catch(() => {});
 }
 
-function readSourceRevenueReportCache(key: string) {
+function dropDurableSingularEntry(family: string, key: string) {
+  prisma.singularReportCache
+    .deleteMany({ where: { cacheKey: `${family}:${key}` } })
+    .catch(() => {});
+}
+
+async function readDurableSingularEntry<EntryType extends { expiresAt: number }>(
+  family: string,
+  key: string,
+): Promise<EntryType | null> {
+  try {
+    const row = (await prisma.singularReportCache.findFirst({
+      where: { cacheKey: `${family}:${key}` },
+    })) as { entry?: unknown } | null;
+    const entry = row?.entry as EntryType | undefined;
+
+    if (!entry || typeof entry.expiresAt !== "number" || entry.expiresAt <= Date.now()) {
+      return null;
+    }
+
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+function writeReportCache(key: string, entry: SingularReportCacheEntry) {
+  singularReportCache.set(key, entry);
+  persistDurableSingularEntry("overlay", key, entry);
+}
+
+function deleteReportCache(key: string) {
+  singularReportCache.delete(key);
+  dropDurableSingularEntry("overlay", key);
+}
+
+function writeSourceRevenueReportCache(
+  key: string,
+  entry: SingularSourceRevenueCacheEntry,
+) {
+  singularSourceRevenueReportCache.set(key, entry);
+  persistDurableSingularEntry("source-revenue", key, entry);
+}
+
+function deleteSourceRevenueReportCache(key: string) {
+  singularSourceRevenueReportCache.delete(key);
+  dropDurableSingularEntry("source-revenue", key);
+}
+
+async function readReportCache(key: string) {
+  const cached = singularReportCache.get(key);
+
+  if (cached) {
+    if (cached.expiresAt <= Date.now()) {
+      deleteReportCache(key);
+      return null;
+    }
+
+    return cached;
+  }
+
+  const durable = await readDurableSingularEntry<SingularReportCacheEntry>("overlay", key);
+
+  if (durable) {
+    singularReportCache.set(key, durable);
+  }
+
+  return durable;
+}
+
+async function readSourceRevenueReportCache(key: string) {
   const cached = singularSourceRevenueReportCache.get(key);
 
-  if (!cached) {
-    return null;
+  if (cached) {
+    if (cached.expiresAt <= Date.now()) {
+      deleteSourceRevenueReportCache(key);
+      return null;
+    }
+
+    return cached;
   }
 
-  if (cached.expiresAt <= Date.now()) {
-    singularSourceRevenueReportCache.delete(key);
-    return null;
+  const durable = await readDurableSingularEntry<SingularSourceRevenueCacheEntry>(
+    "source-revenue",
+    key,
+  );
+
+  if (durable) {
+    singularSourceRevenueReportCache.set(key, durable);
   }
 
-  return cached;
+  return durable;
 }
 
 function buildReportCacheKey(args: {
@@ -1007,7 +1101,7 @@ async function getTikTokSingularOverlayForRange(args: {
     endDate: args.endDate,
     startDate: args.startDate,
   });
-  const cached = readReportCache(cacheKey);
+  const cached = await readReportCache(cacheKey);
 
   if (cached?.kind === "ready") {
     return cached.value;
@@ -1044,7 +1138,7 @@ async function getTikTokSingularOverlayForRange(args: {
         lastPolledAt: Date.now(),
       };
 
-      singularReportCache.set(cacheKey, pendingEntry);
+      writeReportCache(cacheKey, pendingEntry);
 
       await sleep(SINGULAR_INITIAL_REPORT_WAIT_MS);
 
@@ -1077,7 +1171,7 @@ async function getTikTokSingularOverlayForRange(args: {
         }
       }
 
-      singularReportCache.delete(cacheKey);
+      deleteReportCache(cacheKey);
 
       return getEmptyTikTokSingularOverlay({
         configured: true,
@@ -1093,7 +1187,7 @@ async function getTikTokSingularOverlayForRange(args: {
     }
   }
 
-  singularReportCache.delete(cacheKey);
+  deleteReportCache(cacheKey);
 
   return getEmptyTikTokSingularOverlay({
     configured: true,
@@ -1131,7 +1225,7 @@ async function pollPendingReport(
 ): Promise<TikTokSingularOverlay> {
 
   if (entry.expiresAt <= Date.now()) {
-    singularReportCache.delete(cacheKey);
+    deleteReportCache(cacheKey);
 
     return getEmptyTikTokSingularOverlay({
       configured: true,
@@ -1168,7 +1262,7 @@ async function pollPendingReport(
       warnings: [],
     };
 
-    singularReportCache.set(cacheKey, {
+    writeReportCache(cacheKey, {
       kind: "ready",
       expiresAt:
         Date.now() +
@@ -1182,7 +1276,7 @@ async function pollPendingReport(
   }
 
   if (status.status === "FAILED") {
-    singularReportCache.delete(cacheKey);
+    deleteReportCache(cacheKey);
 
     return getEmptyTikTokSingularOverlay({
       configured: true,
@@ -1197,7 +1291,7 @@ async function pollPendingReport(
     });
   }
 
-  singularReportCache.set(cacheKey, {
+  writeReportCache(cacheKey, {
     ...entry,
     lastPolledAt: Date.now(),
   });
@@ -1231,7 +1325,7 @@ async function getSingularSourceRevenueReportForRange(args: {
     endDate: args.endDate,
     startDate: args.startDate,
   });
-  const cached = readSourceRevenueReportCache(cacheKey);
+  const cached = await readSourceRevenueReportCache(cacheKey);
 
   if (cached?.kind === "ready" && cached.expiresAt > Date.now()) {
     return cached.value;
@@ -1270,7 +1364,7 @@ async function getSingularSourceRevenueReportForRange(args: {
       lastPolledAt: Date.now(),
     };
 
-    singularSourceRevenueReportCache.set(cacheKey, pendingEntry);
+    writeSourceRevenueReportCache(cacheKey, pendingEntry);
 
     return getPendingSingularSourceRevenueReport({
       cohortPeriod: args.cohortPeriod,
@@ -1280,7 +1374,7 @@ async function getSingularSourceRevenueReportForRange(args: {
       ],
     });
   } catch (error) {
-    singularSourceRevenueReportCache.delete(cacheKey);
+    deleteSourceRevenueReportCache(cacheKey);
 
     if (isAbortError(error)) {
       return getPendingSingularSourceRevenueReport({
@@ -1329,7 +1423,7 @@ async function pollPendingSourceRevenueReport(
   entry: SingularSourceRevenuePendingCacheEntry,
 ): Promise<SingularSourceRevenueReport> {
   if (entry.expiresAt <= Date.now()) {
-    singularSourceRevenueReportCache.delete(cacheKey);
+    deleteSourceRevenueReportCache(cacheKey);
 
     return getEmptySingularSourceRevenueReport({
       configured: true,
@@ -1350,7 +1444,7 @@ async function pollPendingSourceRevenueReport(
     );
   } catch (error) {
     if (isAbortError(error)) {
-      singularSourceRevenueReportCache.set(cacheKey, {
+      writeSourceRevenueReportCache(cacheKey, {
         ...entry,
         lastPolledAt: Date.now(),
       });
@@ -1402,7 +1496,7 @@ async function pollPendingSourceRevenueReport(
           ],
     };
 
-    singularSourceRevenueReportCache.set(cacheKey, {
+    writeSourceRevenueReportCache(cacheKey, {
       kind: "ready",
       expiresAt:
         Date.now() +
@@ -1416,7 +1510,7 @@ async function pollPendingSourceRevenueReport(
   }
 
   if (status.status === "FAILED") {
-    singularSourceRevenueReportCache.delete(cacheKey);
+    deleteSourceRevenueReportCache(cacheKey);
 
     return getEmptySingularSourceRevenueReport({
       configured: true,
@@ -1431,7 +1525,7 @@ async function pollPendingSourceRevenueReport(
     });
   }
 
-  singularSourceRevenueReportCache.set(cacheKey, {
+  writeSourceRevenueReportCache(cacheKey, {
     ...entry,
     lastPolledAt: Date.now(),
   });

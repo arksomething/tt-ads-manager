@@ -1056,3 +1056,14 @@ model TikTokResolvedPostCache {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model SingularReportCache {
+  cacheKey  String   @id
+  family    String
+  entry     Json
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([family, expiresAt])
+}
