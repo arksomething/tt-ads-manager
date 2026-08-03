@@ -325,6 +325,98 @@ async function resolveEnrichmentsViaTikTokAds(args: {
   return resolvedIds;
 }
 
+const OEMBED_LOOKUPS_PER_PASS = 8;
+const OEMBED_TIMEOUT_MS = 6_000;
+const OEMBED_USER_AGENT =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36";
+
+// Free, unauthenticated fallback for posts the Ads API doesn't know (non-Spark
+// creatives). oEmbed resolves the real author even from a placeholder-username
+// URL; a non-OK response usually means the post is deleted or private, in
+// which case the row is left for the viral.app queue.
+async function resolveEnrichmentsViaOembed(args: {
+  rows: readonly ViralPostEnrichment[];
+  skipIds: ReadonlySet<string>;
+}) {
+  const candidateRows = args.rows
+    .filter(
+      (row) =>
+        row.status !== ViralPostEnrichmentStatus.SUCCEEDED &&
+        !args.skipIds.has(row.platformVideoId),
+    )
+    .slice(0, OEMBED_LOOKUPS_PER_PASS);
+  const resolvedIds = new Set<string>();
+
+  await mapWithConcurrency(candidateRows, 4, async (row) => {
+    let payload: {
+      title?: string | null;
+      author_name?: string | null;
+      author_url?: string | null;
+      thumbnail_url?: string | null;
+    };
+
+    try {
+      const response = await fetch(
+        `https://www.tiktok.com/oembed?url=${encodeURIComponent(
+          `https://www.tiktok.com/@_/video/${row.platformVideoId}`,
+        )}`,
+        {
+          headers: { "user-agent": OEMBED_USER_AGENT },
+          signal: AbortSignal.timeout(OEMBED_TIMEOUT_MS),
+        },
+      );
+
+      if (!response.ok) {
+        return;
+      }
+
+      payload = (await response.json()) as typeof payload;
+    } catch {
+      return;
+    }
+
+    const authorMatch = normalizeText(payload.author_url)?.match(/\/@([^/?#]+)/);
+    const accountUsername = authorMatch ? decodeURIComponent(authorMatch[1]) : null;
+
+    if (!accountUsername) {
+      return;
+    }
+
+    await prisma.viralPostEnrichment.update({
+      where: {
+        id: row.id,
+      },
+      data: {
+        status: ViralPostEnrichmentStatus.SUCCEEDED,
+        nextAttemptAt: new Date(Date.now() + SPARK_REFRESH_DELAY_MS),
+        processingStartedAt: null,
+        lastFetchedAt: new Date(),
+        lastError: null,
+        accountDisplayName: normalizeText(payload.author_name),
+        accountUsername,
+        caption: normalizeText(payload.title),
+        thumbnailUrl: normalizeImageUrl(payload.thumbnail_url),
+        videoUrl: buildTikTokVideoUrl({
+          platformVideoId: row.platformVideoId,
+          username: accountUsername,
+        }),
+        publishedAt: decodeTikTokPostedAt(row.platformVideoId),
+        viewCount: null,
+        rawPayload: {
+          source: "tiktok-oembed",
+          title: payload.title ?? null,
+          authorName: payload.author_name ?? null,
+          authorUrl: payload.author_url ?? null,
+          thumbnailUrl: payload.thumbnail_url ?? null,
+        },
+      },
+    });
+    resolvedIds.add(row.platformVideoId);
+  });
+
+  return resolvedIds;
+}
+
 async function fetchViralPostDetails(platformVideoId: string) {
   try {
     return await viralAppClient.request<ViralTikTokVideoDetails>({
@@ -516,11 +608,17 @@ export async function processViralPostEnrichmentQueue(args: {
     organizationSlug: args.organizationSlug,
     rows,
   });
+  const oembedResolvedIds = await resolveEnrichmentsViaOembed({
+    rows,
+    skipIds: adsResolvedIds,
+  });
+  const externallyResolvedIds = new Set([...adsResolvedIds, ...oembedResolvedIds]);
   // Unmatched rows are matching-critical; view-count refreshes of already
   // matched rows only run with whatever budget is left over.
   const dueRows = rows
     .filter(
-      (row) => !adsResolvedIds.has(row.platformVideoId) && isDueForProcessing(row, now),
+      (row) =>
+        !externallyResolvedIds.has(row.platformVideoId) && isDueForProcessing(row, now),
     )
     .sort((left, right) => {
       const leftMatched = left.status === ViralPostEnrichmentStatus.SUCCEEDED ? 1 : 0;

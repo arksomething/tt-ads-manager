@@ -6,6 +6,7 @@ const MAX_REPORT_PAGES = 20;
 const MAX_LIST_PAGES = 20;
 const REPORT_PAGE_SIZE = 1_000;
 const LIST_PAGE_SIZE = 100;
+const LARGE_LIST_PAGE_SIZE = 1_000;
 const AD_GET_FIELDS_CANDIDATES: Array<readonly string[] | undefined> = [
   [
     "ad_id",
@@ -601,20 +602,43 @@ async function fetchAdvertiserAdsWithFields(args: {
   fields?: readonly string[];
 }) {
   const ads: TikTokAdRecord[] = [];
+  let pageSize = LARGE_LIST_PAGE_SIZE;
   let totalPages = 1;
 
   for (let page = 1; page <= totalPages && page <= MAX_LIST_PAGES; page += 1) {
-    const payload = await requestTikTokBusinessApi<TikTokListData>({
-      accessToken: args.accessToken,
-      method: "GET",
-      path: "/open_api/v1.3/ad/get/",
-      query: {
-        advertiser_id: args.advertiserId,
-        page,
-        page_size: LIST_PAGE_SIZE,
-        ...(args.fields ? { fields: args.fields } : {}),
-      },
-    });
+    let payload: TikTokListData;
+
+    try {
+      payload = await requestTikTokBusinessApi<TikTokListData>({
+        accessToken: args.accessToken,
+        method: "GET",
+        path: "/open_api/v1.3/ad/get/",
+        query: {
+          advertiser_id: args.advertiserId,
+          page,
+          page_size: pageSize,
+          ...(args.fields ? { fields: args.fields } : {}),
+        },
+      });
+    } catch (error) {
+      // Downgrade once in case an advertiser rejects the large page size.
+      if (page !== 1 || pageSize === LIST_PAGE_SIZE) {
+        throw error;
+      }
+
+      pageSize = LIST_PAGE_SIZE;
+      payload = await requestTikTokBusinessApi<TikTokListData>({
+        accessToken: args.accessToken,
+        method: "GET",
+        path: "/open_api/v1.3/ad/get/",
+        query: {
+          advertiser_id: args.advertiserId,
+          page,
+          page_size: pageSize,
+          ...(args.fields ? { fields: args.fields } : {}),
+        },
+      });
+    }
 
     const pageAds = getRecordArray(payload, ["list"])
       .map((ad) => normalizeAdRecord(ad))
@@ -624,11 +648,11 @@ async function fetchAdvertiserAdsWithFields(args: {
     totalPages = getTotalPages({
       payload,
       currentRows: pageAds.length,
-      pageSize: LIST_PAGE_SIZE,
+      pageSize,
       maxPages: MAX_LIST_PAGES,
     });
 
-    if (pageAds.length < LIST_PAGE_SIZE) {
+    if (pageAds.length < pageSize) {
       break;
     }
   }
