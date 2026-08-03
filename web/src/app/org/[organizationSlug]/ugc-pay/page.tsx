@@ -1826,16 +1826,36 @@ async function UgcPayPageReport({
         </section>
       ) : null}
 
-      <UgcPayClient
-        creators={data.creators}
-        emptyCreatorLabel={emptyCreatorLabel}
-        endDate={data.endDate}
-        organizationSlug={organizationSlug}
-        payMode={data.payMode}
-        selectedCampaignId={data.selectedCampaignId}
-        startDate={data.startDate}
-        summary={data.summary}
-      />
+      <details className="group rounded-[1.55rem] border border-white/[0.08] bg-white/[0.03] shadow-[0_24px_70px_rgba(0,0,0,0.2)] backdrop-blur">
+        <summary className="flex cursor-pointer select-none flex-col gap-1 rounded-[1.55rem] px-5 py-4 transition hover:bg-white/[0.04] sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            <span className="block text-xs uppercase text-muted-foreground">
+              Internal estimates
+            </span>
+            <span className="mt-1 block text-lg font-semibold tracking-normal text-foreground">
+              Feed totals &amp; pay by creator
+              <span className="ml-2 text-xs font-normal text-muted-foreground transition group-open:hidden">
+                expand
+              </span>
+            </span>
+          </span>
+          <span className="text-sm text-muted-foreground">
+            ~{new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(data.summary.totalPay)} · {formatMetricValue(data.summary.creators)} creators · {formatMetricValue(data.summary.videos)} videos — estimates only; pay runs use the per-creator links above
+          </span>
+        </summary>
+        <div className="space-y-4 px-5 pb-5">
+          <UgcPayClient
+            creators={data.creators}
+            emptyCreatorLabel={emptyCreatorLabel}
+            endDate={data.endDate}
+            organizationSlug={organizationSlug}
+            payMode={data.payMode}
+            selectedCampaignId={data.selectedCampaignId}
+            startDate={data.startDate}
+            summary={data.summary}
+          />
+        </div>
+      </details>
     </div>
   );
 }

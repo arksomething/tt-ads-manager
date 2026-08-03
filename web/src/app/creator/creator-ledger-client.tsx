@@ -614,6 +614,16 @@ export function CreatorLedgerClient({
                         <p className="mt-1 text-xs text-muted-foreground">
                           {video.paidStatus}
                         </p>
+                        <button
+                          className="mt-1 inline-flex items-center gap-1 font-mono text-[0.65rem] text-muted-foreground/80 transition hover:text-foreground"
+                          onClick={() => {
+                            void navigator.clipboard?.writeText(video.sourceVideoId);
+                          }}
+                          title={`Copy video ID ${video.sourceVideoId}`}
+                          type="button"
+                        >
+                          ID …{video.sourceVideoId.slice(-6)}
+                        </button>
                         {canEditDeals ? (
                           <VideoTalkingToggle video={video} />
                         ) : null}
