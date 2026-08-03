@@ -32,6 +32,9 @@ const AD_GET_FIELDS_CANDIDATES: Array<readonly string[] | undefined> = [
 const MAX_VIDEO_INFO_LOOKUPS = 20;
 const VIDEO_INFO_LOOKUP_BATCH_SIZE = 2;
 const VIDEO_INFO_LOOKUP_BATCH_DELAY_MS = 500;
+const MAX_SPARK_POST_LOOKUPS = 40;
+const SPARK_POST_LOOKUP_BATCH_SIZE = 8;
+const SPARK_POST_LOOKUP_BATCH_DELAY_MS = 150;
 const METADATA_CACHE_TTL_MS = 5 * 60 * 1_000;
 const RESOLVED_POST_CACHE_TTL_MS = 15 * 60 * 1_000;
 const SUPPORTED_VIDEO_INFO_IDENTITY_TYPES = new Set([
@@ -340,28 +343,39 @@ function normalizeResolvedPost(
   record: Record<string, unknown>,
   fallbackItemId?: string,
 ): TikTokResolvedPost | null {
+  const nestedCandidateKeys = [
+    "video",
+    "videos",
+    "video_list",
+    "videoList",
+    "video_detail",
+    "videoDetail",
+    "video_details",
+    "videoDetails",
+    "video_infos",
+    "videoInfos",
+    "video_info",
+    "videoInfo",
+    "item",
+    "items",
+    "item_list",
+    "itemList",
+    "item_info",
+    "itemInfo",
+    "post_info",
+    "postInfo",
+    "share_info",
+    "shareInfo",
+  ];
+  const directNested = getNestedRecordCandidates(record, nestedCandidateKeys);
   const candidates = [
     record,
-    ...getNestedRecordCandidates(record, [
-      "video",
-      "videos",
-      "video_list",
-      "videoList",
-      "video_infos",
-      "videoInfos",
-      "video_info",
-      "videoInfo",
-      "item",
-      "items",
-      "item_list",
-      "itemList",
-      "item_info",
-      "itemInfo",
-      "post_info",
-      "postInfo",
-      "share_info",
-      "shareInfo",
-    ]),
+    ...directNested,
+    // identity/video/info nests e.g. poster_url under video_detail.video_info,
+    // so walk one more level down.
+    ...directNested.flatMap((nested) =>
+      getNestedRecordCandidates(nested, nestedCandidateKeys),
+    ),
   ];
   const itemId =
     getFirstString(candidates, [
@@ -388,6 +402,7 @@ function normalizeResolvedPost(
     "caption",
     "description",
     "desc",
+    "text",
     "name",
     "display_name",
     "displayName",
@@ -1153,6 +1168,206 @@ async function getOrgTikTokAccount(organizationSlug: string) {
     warnings: [
       `Using the latest TikTok account even though its status is ${latestAccount.status}.`,
     ],
+  };
+}
+
+type TikTokAdvertiserIdentity = {
+  identityId: string;
+  identityType: string | null;
+  identityAuthorizedBcId: string | null;
+  displayName: string | null;
+  username: string | null;
+};
+
+const advertiserIdentitiesCache = new Map<string, CachedValue<Map<string, TikTokAdvertiserIdentity>>>();
+
+async function fetchAdvertiserIdentities(args: {
+  advertiserId: string;
+  accessToken: string;
+}) {
+  const cacheKey = buildMetadataCacheKey(args);
+  const cached = readCachedValue(advertiserIdentitiesCache, cacheKey);
+
+  if (cached.found) {
+    return cached.value;
+  }
+
+  const identitiesById = new Map<string, TikTokAdvertiserIdentity>();
+
+  // The untyped listing returns most identities, but BC-authorized ones (which
+  // carry identity_authorized_bc_id) are only reliably complete when asked for
+  // explicitly, so merge both.
+  for (const identityType of [undefined, "BC_AUTH_TT"]) {
+    let payload: TikTokListData;
+
+    try {
+      payload = await requestTikTokBusinessApi<TikTokListData>({
+        accessToken: args.accessToken,
+        method: "GET",
+        path: "/open_api/v1.3/identity/get/",
+        query: {
+          advertiser_id: args.advertiserId,
+          page: 1,
+          page_size: 100,
+          ...(identityType ? { identity_type: identityType } : {}),
+        },
+      });
+    } catch {
+      continue;
+    }
+
+    for (const row of getRecordArray(payload, ["identity_list", "list"])) {
+      const identityId = getFirstString([row], ["identity_id", "identityId"]);
+
+      if (!identityId) {
+        continue;
+      }
+
+      const existing = identitiesById.get(identityId);
+      const identity: TikTokAdvertiserIdentity = {
+        identityId,
+        identityType:
+          getFirstString([row], ["identity_type", "identityType"]) ??
+          existing?.identityType ??
+          null,
+        identityAuthorizedBcId:
+          getFirstString([row], ["identity_authorized_bc_id", "identityAuthorizedBcId"]) ??
+          existing?.identityAuthorizedBcId ??
+          null,
+        displayName:
+          getFirstString([row], ["display_name", "displayName"]) ??
+          existing?.displayName ??
+          null,
+        username: getFirstString([row], ["username"]) ?? existing?.username ?? null,
+      };
+
+      identitiesById.set(identityId, identity);
+    }
+  }
+
+  writeCachedValue(advertiserIdentitiesCache, cacheKey, identitiesById, METADATA_CACHE_TTL_MS);
+  return identitiesById;
+}
+
+export type TikTokSparkPostMetadata = {
+  itemId: string;
+  title: string | null;
+  coverUrl: string | null;
+  shareUrl: string | null;
+  identityDisplayName: string | null;
+  identityUsername: string | null;
+};
+
+export type TikTokSparkPostLookupResult = {
+  postsByItemId: Map<string, TikTokSparkPostMetadata>;
+  knownItemIds: Set<string>;
+  warnings: string[];
+};
+
+export async function resolveTikTokSparkPostsByItemIds(args: {
+  organizationSlug: string;
+  itemIds: readonly string[];
+}): Promise<TikTokSparkPostLookupResult> {
+  const itemIds = uniqueNonEmptyStrings([...args.itemIds]);
+
+  if (itemIds.length === 0) {
+    return {
+      postsByItemId: new Map(),
+      knownItemIds: new Set(),
+      warnings: [],
+    };
+  }
+
+  const { account, warnings: accountWarnings } = await getOrgTikTokAccount(args.organizationSlug);
+  const advertiserAds = await fetchAdvertiserAds({
+    advertiserId: account.advertiserId,
+    accessToken: account.accessToken,
+  });
+  const identitiesById = await fetchAdvertiserIdentities({
+    advertiserId: account.advertiserId,
+    accessToken: account.accessToken,
+  });
+
+  // Build lookup contexts straight from the ads, patching in the
+  // identity_authorized_bc_id that ad/get omits from the identity listing.
+  const requestedItemIds = new Set(itemIds);
+  const contextsByItemId = new Map<
+    string,
+    TikTokVideoLookupContext & { identity: TikTokAdvertiserIdentity | null }
+  >();
+
+  for (const ad of advertiserAds.ads) {
+    const itemId = ad.tiktokItemId;
+
+    if (!itemId || !requestedItemIds.has(itemId) || contextsByItemId.has(itemId) || !ad.identityId) {
+      continue;
+    }
+
+    const identity = identitiesById.get(ad.identityId) ?? null;
+    const identityType = normalizeVideoInfoIdentityType(
+      ad.identityType ?? identity?.identityType ?? null,
+    );
+    const identityAuthorizedBcId =
+      ad.identityAuthorizedBcId ?? identity?.identityAuthorizedBcId ?? null;
+
+    if (!identityType || (identityType === "BC_AUTH_TT" && !identityAuthorizedBcId)) {
+      continue;
+    }
+
+    contextsByItemId.set(itemId, {
+      itemId,
+      identityId: ad.identityId,
+      identityType,
+      identityAuthorizedBcId,
+      identity,
+    });
+  }
+
+  const lookupContexts = [...contextsByItemId.values()].slice(0, MAX_SPARK_POST_LOOKUPS);
+  const knownItemIds = new Set(lookupContexts.map((context) => context.itemId));
+  const postsByItemId = new Map<string, TikTokSparkPostMetadata>();
+
+  for (let start = 0; start < lookupContexts.length; start += SPARK_POST_LOOKUP_BATCH_SIZE) {
+    const batch = lookupContexts.slice(start, start + SPARK_POST_LOOKUP_BATCH_SIZE);
+    const batchResults = await Promise.allSettled(
+      batch.map((context) =>
+        fetchIdentityVideoInfo({
+          advertiserId: account.advertiserId,
+          accessToken: account.accessToken,
+          itemId: context.itemId,
+          identityId: context.identityId,
+          identityType: context.identityType,
+          identityAuthorizedBcId: context.identityAuthorizedBcId,
+        }),
+      ),
+    );
+
+    batchResults.forEach((result, index) => {
+      const context = batch[index];
+
+      if (!context || result.status !== "fulfilled" || !result.value) {
+        return;
+      }
+
+      postsByItemId.set(context.itemId, {
+        itemId: result.value.itemId,
+        title: result.value.title,
+        coverUrl: result.value.coverUrl,
+        shareUrl: result.value.shareUrl,
+        identityDisplayName: context.identity?.displayName ?? null,
+        identityUsername: context.identity?.username ?? null,
+      });
+    });
+
+    if (start + SPARK_POST_LOOKUP_BATCH_SIZE < lookupContexts.length) {
+      await sleep(SPARK_POST_LOOKUP_BATCH_DELAY_MS);
+    }
+  }
+
+  return {
+    postsByItemId,
+    knownItemIds,
+    warnings: uniqueNonEmptyStrings([...accountWarnings, ...advertiserAds.warnings]),
   };
 }
 

@@ -3,6 +3,10 @@ import { ZodError, z } from "zod";
 
 import { processViralPostEnrichmentQueue } from "@/server/singular/viral-post-enrichment";
 
+// The TikTok Ads API first pass can batch-resolve up to 60 posts in one poll,
+// which needs more than the default serverless window.
+export const maxDuration = 60;
+
 const requestSchema = z.object({
   postIds: z.array(z.string().trim().min(1)).max(100),
 });

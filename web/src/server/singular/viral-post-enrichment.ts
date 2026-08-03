@@ -4,6 +4,7 @@ import {
   ViralPostEnrichmentStatus,
   type ViralPostEnrichment,
 } from "@/lib/prisma-shim";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { prisma } from "@/lib/db";
 import {
   formatRetryDelay,
@@ -14,6 +15,10 @@ import {
   viralAppClient,
 } from "@/server/data-provider/viral-app-client";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
+import {
+  resolveTikTokSparkPostsByItemIds,
+  type TikTokSparkPostMetadata,
+} from "@/server/tiktok-business/ad-manager-resolver";
 
 const PLATFORM = "tiktok";
 const PROCESSING_STALE_MS = 2 * 60_000;
@@ -180,6 +185,146 @@ function toAttribution(
   };
 }
 
+function extractTikTokUsernameFromUrl(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const match = value.match(/\/@([^/?#]+)\/video\//i);
+
+  if (!match) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
+
+// TikTok video IDs encode the post time in their upper bits (id >> 32 = unix seconds).
+function decodeTikTokPostedAt(platformVideoId: string) {
+  if (!/^\d{15,20}$/.test(platformVideoId)) {
+    return null;
+  }
+
+  const seconds = Number(BigInt(platformVideoId) >> BigInt(32));
+  const posted = new Date(seconds * 1_000);
+  const earliest = Date.UTC(2015, 0, 1);
+  const latest = Date.now() + 2 * 24 * 60 * 60_000;
+
+  if (posted.getTime() < earliest || posted.getTime() > latest) {
+    return null;
+  }
+
+  return posted;
+}
+
+function normalizeSparkPostMetadata(
+  platformVideoId: string,
+  post: TikTokSparkPostMetadata,
+) {
+  // Only trust canonical post links; the Ads API payload also carries signed
+  // CDN media URLs that expire.
+  const shareUrl = normalizeText(post.shareUrl);
+  const canonicalShareUrl =
+    shareUrl && /tiktok\.com\/@[^/]+\/video\//i.test(shareUrl) ? shareUrl : null;
+  const accountUsername =
+    normalizeText(post.identityUsername) ?? extractTikTokUsernameFromUrl(canonicalShareUrl);
+
+  return {
+    accountDisplayName: normalizeText(post.identityDisplayName),
+    accountUsername,
+    caption: normalizeText(post.title),
+    publishedAt: decodeTikTokPostedAt(platformVideoId),
+    thumbnailUrl: normalizeImageUrl(post.coverUrl),
+    videoUrl:
+      canonicalShareUrl ??
+      buildTikTokVideoUrl({
+        platformVideoId,
+        username: accountUsername,
+      }),
+  };
+}
+
+const SPARK_REFRESH_DELAY_MS = 30 * 60_000;
+
+async function resolveEnrichmentsViaTikTokAds(args: {
+  organizationSlug: string;
+  rows: readonly ViralPostEnrichment[];
+}) {
+  const unmatchedRows = args.rows.filter(
+    (row) => row.status !== ViralPostEnrichmentStatus.SUCCEEDED,
+  );
+
+  if (unmatchedRows.length === 0) {
+    return new Set<string>();
+  }
+
+  let lookup: Awaited<ReturnType<typeof resolveTikTokSparkPostsByItemIds>>;
+
+  try {
+    lookup = await resolveTikTokSparkPostsByItemIds({
+      organizationSlug: args.organizationSlug,
+      itemIds: unmatchedRows.map((row) => row.platformVideoId),
+    });
+  } catch {
+    // No TikTok advertiser account or the Ads API is unavailable — the
+    // viral.app queue below still covers every row.
+    return new Set<string>();
+  }
+
+  const resolvedIds = new Set<string>();
+  const resolvedRows = unmatchedRows.filter((row) =>
+    lookup.postsByItemId.has(row.platformVideoId),
+  );
+
+  await mapWithConcurrency(resolvedRows, 8, async (row) => {
+    const post = lookup.postsByItemId.get(row.platformVideoId);
+
+    if (!post) {
+      return;
+    }
+
+    const normalized = normalizeSparkPostMetadata(row.platformVideoId, post);
+
+    await prisma.viralPostEnrichment.update({
+      where: {
+        id: row.id,
+      },
+      data: {
+        status: ViralPostEnrichmentStatus.SUCCEEDED,
+        // Leave the row due soon so viral.app can backfill viewCount in the
+        // background without blocking the match.
+        nextAttemptAt: new Date(Date.now() + SPARK_REFRESH_DELAY_MS),
+        processingStartedAt: null,
+        lastFetchedAt: new Date(),
+        lastError: null,
+        accountDisplayName: normalized.accountDisplayName,
+        accountUsername: normalized.accountUsername,
+        caption: normalized.caption,
+        thumbnailUrl: normalized.thumbnailUrl,
+        videoUrl: normalized.videoUrl,
+        publishedAt: normalized.publishedAt,
+        viewCount: null,
+        rawPayload: {
+          source: "tiktok-ads-api",
+          itemId: post.itemId,
+          title: post.title,
+          coverUrl: post.coverUrl,
+          shareUrl: post.shareUrl,
+          identityDisplayName: post.identityDisplayName,
+          identityUsername: post.identityUsername,
+        },
+      },
+    });
+    resolvedIds.add(row.platformVideoId);
+  });
+
+  return resolvedIds;
+}
+
 async function fetchViralPostDetails(platformVideoId: string) {
   try {
     return await viralAppClient.request<ViralTikTokVideoDetails>({
@@ -231,7 +376,29 @@ export async function enqueueViralPostEnrichments(args: {
     ),
   ];
 
+  if (platformVideoIds.length === 0) {
+    return;
+  }
+
+  const existingRows = (await prisma.viralPostEnrichment.findMany({
+    where: {
+      organizationId: args.organizationId,
+      platform: PLATFORM,
+      platformVideoId: {
+        in: platformVideoIds,
+      },
+    },
+    select: {
+      platformVideoId: true,
+    },
+  })) as Array<{ platformVideoId: string }>;
+  const existingIds = new Set(existingRows.map((row) => row.platformVideoId));
+
   for (const platformVideoId of platformVideoIds) {
+    if (existingIds.has(platformVideoId)) {
+      continue;
+    }
+
     await prisma.viralPostEnrichment.upsert({
       where: {
         organizationId_platform_platformVideoId: {
@@ -292,7 +459,9 @@ export async function getViralPostAttributions(args: {
 
 function isDueForProcessing(row: ViralPostEnrichment, now: Date) {
   if (row.status === ViralPostEnrichmentStatus.SUCCEEDED) {
-    return false;
+    // Rows matched through the TikTok Ads API have no organic view count;
+    // let viral.app backfill it in the background when quota allows.
+    return row.viewCount == null && row.nextAttemptAt <= now;
   }
 
   if (
@@ -343,18 +512,37 @@ export async function processViralPostEnrichmentQueue(args: {
     },
     orderBy: [{ nextAttemptAt: "asc" }, { updatedAt: "asc" }],
   })) as ViralPostEnrichment[];
-  const dueRows = rows.filter((row) => isDueForProcessing(row, now)).slice(0, limit);
+  const adsResolvedIds = await resolveEnrichmentsViaTikTokAds({
+    organizationSlug: args.organizationSlug,
+    rows,
+  });
+  // Unmatched rows are matching-critical; view-count refreshes of already
+  // matched rows only run with whatever budget is left over.
+  const dueRows = rows
+    .filter(
+      (row) => !adsResolvedIds.has(row.platformVideoId) && isDueForProcessing(row, now),
+    )
+    .sort((left, right) => {
+      const leftMatched = left.status === ViralPostEnrichmentStatus.SUCCEEDED ? 1 : 0;
+      const rightMatched = right.status === ViralPostEnrichmentStatus.SUCCEEDED ? 1 : 0;
+      return leftMatched - rightMatched;
+    })
+    .slice(0, limit);
   let processedCount = 0;
   let rateLimited = false;
 
   for (const row of dueRows) {
+    const isRefreshOfMatchedRow = row.status === ViralPostEnrichmentStatus.SUCCEEDED;
     const attemptCount = row.attemptCount + 1;
     await prisma.viralPostEnrichment.update({
       where: {
         id: row.id,
       },
       data: {
-        status: ViralPostEnrichmentStatus.PROCESSING,
+        // A refresh must keep the row matched even if this poll dies mid-flight.
+        status: isRefreshOfMatchedRow
+          ? ViralPostEnrichmentStatus.SUCCEEDED
+          : ViralPostEnrichmentStatus.PROCESSING,
         processingStartedAt: new Date(),
         attemptCount,
       },
@@ -395,7 +583,9 @@ export async function processViralPostEnrichmentQueue(args: {
           id: row.id,
         },
         data: {
-          status: retry.status,
+          // A failed view-count refresh must not un-match an already
+          // matched row — keep it SUCCEEDED and just push the retry out.
+          status: isRefreshOfMatchedRow ? ViralPostEnrichmentStatus.SUCCEEDED : retry.status,
           nextAttemptAt: retryAt,
           processingStartedAt: null,
           lastError:
