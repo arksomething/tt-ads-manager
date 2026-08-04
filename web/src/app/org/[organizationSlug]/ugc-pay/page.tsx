@@ -1675,6 +1675,19 @@ async function UgcPayPageReport({
             </label>
 
             <div className="flex flex-col items-stretch justify-end gap-2 sm:flex-row lg:flex-col">
+              <label
+                className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-[0.95rem] border border-white/[0.08] bg-black/[0.18] px-4 py-2.5 text-sm text-muted-foreground transition hover:border-white/[0.16] has-[:checked]:border-[#E1306C]/40 has-[:checked]:text-foreground"
+                title="Also pay tracked Instagram accounts matched to each creator by username"
+              >
+                <input
+                  className="h-3.5 w-3.5 accent-[#E1306C]"
+                  defaultChecked={data.includeInstagram === true}
+                  name="includeInstagram"
+                  type="checkbox"
+                  value="1"
+                />
+                Include Instagram
+              </label>
               <button
                 className="inline-flex w-full items-center justify-center gap-2 rounded-[0.95rem] border border-white/[0.1] bg-white/[0.06] px-4 py-2.5 text-sm text-foreground transition hover:border-white/[0.16] hover:bg-white/[0.1]"
                 type="submit"

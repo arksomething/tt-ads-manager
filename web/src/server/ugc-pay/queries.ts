@@ -52,7 +52,6 @@ const DEFAULT_DEAL_PAYOUT_CAP_PER_VIDEO = 100;
 const DEFAULT_GLOBAL_VIEW_WINDOW_DAYS = 7;
 const DEFAULT_REPORT_TIME_ZONE = "UTC";
 const VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD = 100;
-const VIEW_TALLY_PER_CREATOR_VIDEO_CEILING = 1_000;
 const GAINED_VIEW_CAP_CONTEXT_BATCH_SIZE = 150;
 const UGC_PAY_CREATOR_QUERY_CONCURRENCY = 2;
 const CREATOR_ACCESS_PAID_LOOKUP_TIMEOUT_MS = 4_000;
@@ -329,6 +328,7 @@ export type OrganizationUgcPayData = {
   viewWindowMode: UgcPayViewWindowMode;
   videoFetchMode: UgcPayVideoFetchMode;
   globalViewWindowDays: number;
+  includeInstagram?: boolean;
   reportTimeZone: string;
   warnings: string[];
   errorMessage: string | null;
@@ -865,6 +865,7 @@ async function getPerCreatorViewTallyRowsForOptions(args: {
   endDate: string;
   includePaidViews?: boolean;
   topVideoLimit?: number;
+  includeInstagram?: boolean;
   warningPrefix: string;
 }) {
   const warnings: string[] = [];
@@ -895,6 +896,7 @@ async function getPerCreatorViewTallyRowsForOptions(args: {
         includePaidViews: args.includePaidViews,
         includeSummaryAnalytics: false,
         topVideoLimit: args.topVideoLimit,
+        includeInstagram: args.includeInstagram,
       });
 
       return {
@@ -913,11 +915,9 @@ async function getPerCreatorViewTallyRowsForOptions(args: {
       );
     }
 
-    // Per-creator fetches paginate to completeness now; only a walk that hit
-    // the 10-page ceiling can still be truncated.
-    if (result.data.rows.length >= VIEW_TALLY_PER_CREATOR_VIDEO_CEILING) {
+    if (result.data.rows.length >= VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD) {
       warnings.push(
-        `Viral.app returned ${result.data.rows.length} videos for ${result.creatorOption.label} from ${args.startDate} to ${args.endDate}, which hit the pagination ceiling. Lower-view videos for this creator may still be missing.`,
+        `Viral.app returned 100 videos for ${result.creatorOption.label} from ${args.startDate} to ${args.endDate}. Lower-view videos for this creator may still be missing.`,
       );
     }
   }
@@ -942,6 +942,7 @@ async function getPerCreatorViewTallyRows(args: {
   endDate: string;
   includePaidViews?: boolean;
   topVideoLimit?: number;
+  includeInstagram?: boolean;
 }) {
   const { matchedOptions, unmatchedCampaignCreators } =
     getMatchedViewTallyCreatorOptions({
@@ -978,6 +979,7 @@ async function getPerCreatorViewTallyRows(args: {
     endDate: args.endDate,
     includePaidViews: args.includePaidViews,
     topVideoLimit: args.topVideoLimit,
+    includeInstagram: args.includeInstagram,
     warningPrefix: "accurate creator videos",
   });
 
@@ -1105,6 +1107,7 @@ async function applyGlobalViewWindowToRows(args: {
   globalViewWindowDays: number;
   includePaidViews?: boolean;
   topVideoLimit?: number;
+  includeInstagram?: boolean;
 }) {
   const reportEndExclusiveDate = addDateOnlyDays(args.endDate, 1);
 
@@ -1192,6 +1195,7 @@ async function applyGlobalViewWindowToRows(args: {
       includePaidViews: args.includePaidViews,
       includeSummaryAnalytics: false,
       topVideoLimit: args.topVideoLimit,
+      includeInstagram: args.includeInstagram,
     });
     warnings.push(...clippedData.warnings);
 
@@ -1217,6 +1221,7 @@ async function applyGlobalViewWindowToRows(args: {
         endDate: group.endDate,
         includePaidViews: args.includePaidViews,
         topVideoLimit: args.topVideoLimit,
+        includeInstagram: args.includeInstagram,
         warningPrefix: "accurate view-window videos",
       });
 
@@ -1492,6 +1497,7 @@ async function getProviderGainedViewCapContexts(args: {
   rows: ViewTallyListItem[];
   startDate: string;
   endDate: string;
+  includeInstagram?: boolean;
 }) {
   if (args.rows.length === 0) {
     return {
@@ -1513,6 +1519,7 @@ async function getProviderGainedViewCapContexts(args: {
     includeAdSpend: false,
     includePaidViews: false,
     includeSummaryAnalytics: false,
+    includeInstagram: args.includeInstagram,
   });
   const cumulativeRowsBySourceVideoId = new Map(
     cumulativeData.rows.map((row) => [row.sourceVideoId, row]),
@@ -2373,6 +2380,11 @@ export async function getOrganizationUgcPayData(args: {
     : getSelectedViewWindowMode(args.searchParams);
   const videoFetchMode = getSelectedVideoFetchMode(args.searchParams);
   const globalViewWindowDays = getSelectedGlobalViewWindowDays(args.searchParams);
+  const includeInstagramParam = getSearchParamValue(args.searchParams, "includeInstagram");
+  const includeInstagram =
+    includeInstagramParam === "1" ||
+    includeInstagramParam === "true" ||
+    includeInstagramParam === "on";
   const viewTallyTopLimit = getSearchParamValue(args.searchParams, "topLimit");
   const start = parseDateOnly(startDate);
   const end = parseDateOnly(endDate);
@@ -2576,6 +2588,7 @@ export async function getOrganizationUgcPayData(args: {
         includePaidViews: args.includePaidViews,
         includeSummaryAnalytics: false,
         topVideoLimit: args.topVideoLimit,
+        includeInstagram,
       });
   markTiming("view-tally");
   const warnings = [...viewTallyData.warnings];
@@ -2591,6 +2604,7 @@ export async function getOrganizationUgcPayData(args: {
       endDate,
       includePaidViews: args.includePaidViews,
       topVideoLimit: args.topVideoLimit,
+      includeInstagram,
     });
     viewTallyRows = perCreatorRows.rows;
     warnings.push(...perCreatorRows.warnings);
@@ -2638,6 +2652,7 @@ export async function getOrganizationUgcPayData(args: {
           globalViewWindowDays,
           includePaidViews: args.includePaidViews,
           topVideoLimit: args.topVideoLimit,
+          includeInstagram,
         })
       : {
           rows: candidatePayableRows,
@@ -2672,6 +2687,7 @@ export async function getOrganizationUgcPayData(args: {
         rows: payableRows,
         startDate: videoWindowStartDate,
         endDate,
+        includeInstagram,
       });
       providerGainedViewCapContexts = providerContextResult.contexts;
       warnings.push(...providerContextResult.warnings);
@@ -2872,6 +2888,7 @@ export async function getOrganizationUgcPayData(args: {
     viewWindowMode,
     videoFetchMode,
     globalViewWindowDays,
+    includeInstagram,
     reportTimeZone,
     warnings: [...new Set(warnings)],
     errorMessage: viewTallyData.errorMessage,

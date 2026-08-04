@@ -923,6 +923,18 @@ function buildTrackedTikTokVideoUrl(args: {
     : `https://www.tiktok.com/video/${encodeURIComponent(args.platformVideoId)}`;
 }
 
+function buildTrackedVideoUrl(args: {
+  platform: string | null;
+  platformVideoId: string;
+  username: string | null;
+}) {
+  if (args.platform === "instagram") {
+    return `https://www.instagram.com/reel/${encodeURIComponent(args.platformVideoId)}/`;
+  }
+
+  return buildTrackedTikTokVideoUrl(args);
+}
+
 async function getPagedProviderRecords(args: {
   path: string;
   search?: string;
@@ -1027,6 +1039,39 @@ export async function getTrackedTikTokAccountLatestPosts() {
 const getTrackedTikTokAccounts = unstable_cache(
   async () => getTrackedTikTokAccountsUncached(),
   ["view-tally-tracked-tiktok-accounts"],
+  {
+    revalidate: 300,
+  },
+);
+
+// Instagram companions for creators (opt-in per report). Matched to creators
+// purely by username, so a creator whose IG handle differs from their TikTok
+// handle needs the IG account renamed in viral.app (or a future explicit map).
+async function getTrackedInstagramAccountsUncached() {
+  const records = await getPagedProviderRecords({
+    path: "/accounts/tracked",
+    perPage: 100,
+    extraQuery: {
+      platforms: "instagram",
+      viewMode: "internal",
+    },
+  });
+
+  return records
+    .map((record) => ({
+      id: normalizeProviderText(record.id) ?? "",
+      platform: normalizeProviderText(record.platform) ?? "instagram",
+      username:
+        normalizeProviderText(record.username) ??
+        normalizeProviderText(record.initialUsername),
+      displayName: normalizeProviderText(record.displayName),
+    }))
+    .filter((record) => record.id.length > 0);
+}
+
+const getTrackedInstagramAccounts = unstable_cache(
+  async () => getTrackedInstagramAccountsUncached(),
+  ["view-tally-tracked-instagram-accounts"],
   {
     revalidate: 300,
   },
@@ -1140,9 +1185,10 @@ function buildProviderAnalyticsQuery(args: {
   orgAccountId?: string | null;
   startDate: string;
   endDate: string;
+  platforms?: string;
 }) {
   return {
-    platforms: "tiktok",
+    platforms: args.platforms ?? "tiktok",
     viewMode: "internal",
     publicationMode: "allEligible",
     onlyPublished: false,
@@ -1156,77 +1202,40 @@ function buildProviderAnalyticsQuery(args: {
   };
 }
 
-const TOP_VIDEOS_MAX_PAGES_PER_ACCOUNT = 10;
 
 async function getProviderAnalyticsTopVideosUncached(args: {
   orgAccountId?: string | null;
   startDate: string;
   endDate: string;
   limit?: number;
+  platforms?: string;
 }) {
+  const allowedPlatforms = new Set(
+    (args.platforms ?? "tiktok").split(",").map((platform) => platform.trim()),
+  );
   const isTikTokRecord = (record: ProviderAnalyticsVideoRecord) => {
     const platform = normalizeProviderText(record.platform);
-    return !platform || platform === "tiktok";
+    return !platform || allowedPlatforms.has(platform);
   };
 
-  // Cross-account queries keep the sampled top-N (the estimate feed). But a
-  // single account's fetch must be COMPLETE: viral.app hard-caps `limit` at
-  // 100 and silently ignores `offset`/`page` with it, so a creator with >100
-  // videos in the window loses their lowest-view videos — real underpayment
-  // (Mogg3d, Aug 2026: 105 tracked rows, engine saw 100). perPage+page is the
-  // API's actual pagination; walk it until a short page.
-  if (!args.orgAccountId) {
-    const response = await viralAppClient.request<unknown>({
-      path: "/analytics/top-videos",
-      query: {
-        ...buildProviderAnalyticsQuery(args),
-        metric: "viewCountInPeriod",
-        limit: args.limit ?? 100,
-      },
-    });
+  // NOTE on pagination (probed Aug 4 2026): viral.app's top-videos endpoint
+  // has NO reliable way past 100 rows per query. `limit` caps at 100;
+  // `offset` and `page` are ignored when `limit` is present; `perPage` is
+  // ignored entirely (page-mode falls back to 5-row pages whose ordering does
+  // NOT match limit-mode, so stitching pages is unsafe). A creator with >100
+  // videos in one query window therefore loses their lowest-view rows — the
+  // per-creator warning downstream flags this; a real fix needs a viral.app
+  // API change.
+  const response = await viralAppClient.request<unknown>({
+    path: "/analytics/top-videos",
+    query: {
+      ...buildProviderAnalyticsQuery(args),
+      metric: "viewCountInPeriod",
+      limit: args.limit ?? 100,
+    },
+  });
 
-    return getProviderAnalyticsRecords<ProviderAnalyticsVideoRecord>(response).filter(isTikTokRecord);
-  }
-
-  const perPage = args.limit ?? 100;
-  const collected: ProviderAnalyticsVideoRecord[] = [];
-  const seenVideoIds = new Set<string>();
-
-  for (let page = 1; page <= TOP_VIDEOS_MAX_PAGES_PER_ACCOUNT; page += 1) {
-    const response = await viralAppClient.request<unknown>({
-      path: "/analytics/top-videos",
-      query: {
-        ...buildProviderAnalyticsQuery(args),
-        metric: "viewCountInPeriod",
-        perPage,
-        page,
-      },
-    });
-    const records =
-      getProviderAnalyticsRecords<ProviderAnalyticsVideoRecord>(response).filter(isTikTokRecord);
-    let added = 0;
-
-    for (const record of records) {
-      const key =
-        normalizeProviderText(record.platformVideoId) ??
-        normalizeProviderText(record.id) ??
-        JSON.stringify(record);
-
-      if (!seenVideoIds.has(key)) {
-        seenVideoIds.add(key);
-        collected.push(record);
-        added += 1;
-      }
-    }
-
-    // A short page ends the walk; a page of pure duplicates means the API
-    // ignored the page param — stop rather than loop.
-    if (records.length < perPage || added === 0) {
-      break;
-    }
-  }
-
-  return collected;
+  return getProviderAnalyticsRecords<ProviderAnalyticsVideoRecord>(response).filter(isTikTokRecord);
 }
 
 const getProviderAnalyticsTopVideos = unstable_cache(
@@ -1235,12 +1244,14 @@ const getProviderAnalyticsTopVideos = unstable_cache(
     startDate: string,
     endDate: string,
     limit?: number,
+    platforms?: string,
   ) =>
     getProviderAnalyticsTopVideosUncached({
       orgAccountId,
       startDate,
       endDate,
       limit,
+      platforms,
     }),
   ["view-tally-provider-analytics-top-videos"],
   {
@@ -1956,6 +1967,7 @@ export async function getOrganizationViewTallyData(args: {
   includePaidViews?: boolean;
   includeSummaryAnalytics?: boolean;
   topVideoLimit?: number;
+  includeInstagram?: boolean;
 }): Promise<OrganizationViewTallyData> {
   const organizationId =
     args.organizationId ??
@@ -2152,9 +2164,44 @@ export async function getOrganizationViewTallyData(args: {
     };
   }
 
-  const selectedAnalyticsOrgAccountId = isAllCreatorsSelected
+  let selectedAnalyticsOrgAccountId = isAllCreatorsSelected
     ? null
     : selectedCreator?.id ?? null;
+  const analyticsPlatforms = args.includeInstagram ? "tiktok,instagram" : undefined;
+
+  // Instagram opt-in: widen the single-account analytics query to the
+  // creator's IG account(s), matched by username against the tracked IG list.
+  if (args.includeInstagram && selectedAnalyticsOrgAccountId) {
+    try {
+      const instagramAccounts = await getTrackedInstagramAccounts();
+      const creatorHandles = new Set(
+        [
+          selectedTrackedAccount?.username,
+          selectedCreator?.meta?.replace(/^@/, ""),
+          selectedCreator?.label,
+        ]
+          .map((value) => normalizeViewTallyHandle(value))
+          .filter((value): value is string => Boolean(value)),
+      );
+      const companionIds = instagramAccounts
+        .filter((account) => {
+          const username = normalizeViewTallyHandle(account.username);
+          return Boolean(username && creatorHandles.has(username));
+        })
+        .map((account) => account.id);
+
+      if (companionIds.length > 0) {
+        selectedAnalyticsOrgAccountId = [
+          selectedAnalyticsOrgAccountId,
+          ...companionIds,
+        ].join(",");
+      }
+    } catch {
+      // IG account lookup is additive; a failed lookup must not break the
+      // TikTok report.
+    }
+  }
+
   const trackedAccountsById = new Map(
     trackedAccounts.map((account) => [account.id, account]),
   );
@@ -2193,6 +2240,7 @@ export async function getOrganizationViewTallyData(args: {
             startDate,
             endDate,
             args.topVideoLimit,
+            analyticsPlatforms,
           ),
           getProviderAnalyticsTopAccounts(
             selectedAnalyticsOrgAccountId,
@@ -2250,6 +2298,7 @@ export async function getOrganizationViewTallyData(args: {
             startDate,
             endDate,
             args.topVideoLimit,
+            analyticsPlatforms,
           ),
       );
     } catch (error) {
@@ -2320,7 +2369,8 @@ export async function getOrganizationViewTallyData(args: {
       return {
         id: normalizeProviderText(video.id) ?? sourceVideoId,
         sourceVideoId,
-        videoUrl: buildTrackedTikTokVideoUrl({
+        videoUrl: buildTrackedVideoUrl({
+          platform: normalizeProviderText(video.platform),
           platformVideoId: sourceVideoId,
           username: accountHandle,
         }),
@@ -2392,6 +2442,12 @@ export async function getOrganizationViewTallyData(args: {
     >();
 
     for (const video of videos) {
+      // Paid-view deduction is TikTok-ads-only; Instagram video ids (non-numeric
+      // shortcodes) can never match spark items or report rows.
+      if (!/^\d+$/.test(video.sourceVideoId)) {
+        continue;
+      }
+
       const existingGroup =
         paidLookupGroups.get(video.selectedCreator.id) ??
         {
