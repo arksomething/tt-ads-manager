@@ -52,6 +52,7 @@ const DEFAULT_DEAL_PAYOUT_CAP_PER_VIDEO = 100;
 const DEFAULT_GLOBAL_VIEW_WINDOW_DAYS = 7;
 const DEFAULT_REPORT_TIME_ZONE = "UTC";
 const VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD = 100;
+const VIEW_TALLY_PER_CREATOR_VIDEO_CEILING = 1_000;
 const GAINED_VIEW_CAP_CONTEXT_BATCH_SIZE = 150;
 const UGC_PAY_CREATOR_QUERY_CONCURRENCY = 2;
 const CREATOR_ACCESS_PAID_LOOKUP_TIMEOUT_MS = 4_000;
@@ -912,9 +913,11 @@ async function getPerCreatorViewTallyRowsForOptions(args: {
       );
     }
 
-    if (result.data.rows.length >= VIEW_TALLY_TOP_VIDEO_LIMIT_WARNING_THRESHOLD) {
+    // Per-creator fetches paginate to completeness now; only a walk that hit
+    // the 10-page ceiling can still be truncated.
+    if (result.data.rows.length >= VIEW_TALLY_PER_CREATOR_VIDEO_CEILING) {
       warnings.push(
-        `Viral.app returned 100 videos for ${result.creatorOption.label} from ${args.startDate} to ${args.endDate}. Lower-view videos for this creator may still be missing.`,
+        `Viral.app returned ${result.data.rows.length} videos for ${result.creatorOption.label} from ${args.startDate} to ${args.endDate}, which hit the pagination ceiling. Lower-view videos for this creator may still be missing.`,
       );
     }
   }

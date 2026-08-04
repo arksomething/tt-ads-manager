@@ -1156,27 +1156,77 @@ function buildProviderAnalyticsQuery(args: {
   };
 }
 
+const TOP_VIDEOS_MAX_PAGES_PER_ACCOUNT = 10;
+
 async function getProviderAnalyticsTopVideosUncached(args: {
   orgAccountId?: string | null;
   startDate: string;
   endDate: string;
   limit?: number;
 }) {
-  const response = await viralAppClient.request<unknown>({
-    path: "/analytics/top-videos",
-    query: {
-      ...buildProviderAnalyticsQuery(args),
-      metric: "viewCountInPeriod",
-      limit: args.limit ?? 100,
-    },
-  });
+  const isTikTokRecord = (record: ProviderAnalyticsVideoRecord) => {
+    const platform = normalizeProviderText(record.platform);
+    return !platform || platform === "tiktok";
+  };
 
-  return getProviderAnalyticsRecords<ProviderAnalyticsVideoRecord>(response).filter(
-    (record) => {
-      const platform = normalizeProviderText(record.platform);
-      return !platform || platform === "tiktok";
-    },
-  );
+  // Cross-account queries keep the sampled top-N (the estimate feed). But a
+  // single account's fetch must be COMPLETE: viral.app hard-caps `limit` at
+  // 100 and silently ignores `offset`/`page` with it, so a creator with >100
+  // videos in the window loses their lowest-view videos — real underpayment
+  // (Mogg3d, Aug 2026: 105 tracked rows, engine saw 100). perPage+page is the
+  // API's actual pagination; walk it until a short page.
+  if (!args.orgAccountId) {
+    const response = await viralAppClient.request<unknown>({
+      path: "/analytics/top-videos",
+      query: {
+        ...buildProviderAnalyticsQuery(args),
+        metric: "viewCountInPeriod",
+        limit: args.limit ?? 100,
+      },
+    });
+
+    return getProviderAnalyticsRecords<ProviderAnalyticsVideoRecord>(response).filter(isTikTokRecord);
+  }
+
+  const perPage = args.limit ?? 100;
+  const collected: ProviderAnalyticsVideoRecord[] = [];
+  const seenVideoIds = new Set<string>();
+
+  for (let page = 1; page <= TOP_VIDEOS_MAX_PAGES_PER_ACCOUNT; page += 1) {
+    const response = await viralAppClient.request<unknown>({
+      path: "/analytics/top-videos",
+      query: {
+        ...buildProviderAnalyticsQuery(args),
+        metric: "viewCountInPeriod",
+        perPage,
+        page,
+      },
+    });
+    const records =
+      getProviderAnalyticsRecords<ProviderAnalyticsVideoRecord>(response).filter(isTikTokRecord);
+    let added = 0;
+
+    for (const record of records) {
+      const key =
+        normalizeProviderText(record.platformVideoId) ??
+        normalizeProviderText(record.id) ??
+        JSON.stringify(record);
+
+      if (!seenVideoIds.has(key)) {
+        seenVideoIds.add(key);
+        collected.push(record);
+        added += 1;
+      }
+    }
+
+    // A short page ends the walk; a page of pure duplicates means the API
+    // ignored the page param — stop rather than loop.
+    if (records.length < perPage || added === 0) {
+      break;
+    }
+  }
+
+  return collected;
 }
 
 const getProviderAnalyticsTopVideos = unstable_cache(
