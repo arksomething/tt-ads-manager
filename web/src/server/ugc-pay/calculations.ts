@@ -52,9 +52,13 @@ export type UgcPayVideoAmountResult = {
 
 export const NON_TALKING_VIDEO_CPM_AMOUNT = 0.5;
 export const NON_TALKING_VIDEO_PAYOUT_CAP_PER_VIDEO = 100;
+// Pre-Jul-20 non-talking terms were $0.50 CPM capped at $300/video. A
+// downgraded video posted before the change must take THAT cap — inheriting
+// the talking deal's pre-change $100 cap undercapped big non-talking videos
+// (mansuhn Jul 2 2026: 543k views paid $100 instead of $271.52).
+export const LEGACY_NON_TALKING_VIDEO_PAYOUT_CAP_PER_VIDEO = 300;
 // Jul 20 2026 policy: classified non-talking videos take the full non-talking
-// terms (CPM and cap). Videos posted before this date keep the creator deal's
-// cap so historical payouts don't shift.
+// terms (CPM and cap) of whichever era the video was posted in.
 export const NON_TALKING_VIDEO_CAP_EFFECTIVE_DATE_ONLY = "2026-07-20";
 
 export function normalizeMoney(value: number) {
@@ -91,12 +95,10 @@ export function applyUgcPayVideoContentTypeCpm<
   return {
     ...deal,
     cpmAmount: NON_TALKING_VIDEO_CPM_AMOUNT,
-    ...(appliesNonTalkingCap
-      ? {
-          payoutCapPerVideo: NON_TALKING_VIDEO_PAYOUT_CAP_PER_VIDEO,
-          perVideoCapScope: "CPM" as TDeal["perVideoCapScope"],
-        }
-      : {}),
+    payoutCapPerVideo: appliesNonTalkingCap
+      ? NON_TALKING_VIDEO_PAYOUT_CAP_PER_VIDEO
+      : LEGACY_NON_TALKING_VIDEO_PAYOUT_CAP_PER_VIDEO,
+    perVideoCapScope: "CPM" as TDeal["perVideoCapScope"],
   };
 }
 
