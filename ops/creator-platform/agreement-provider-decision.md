@@ -1,20 +1,24 @@
 # Creator agreement provider decision
 
-Status: researched, provider not yet selected or integrated.
+Status: SignWell selected and API credential stored; adapter, template, and
+webhook integration not yet implemented.
 
 ## Recommendation
 
 Use the creator platform's confirmed Supabase account as the identity boundary
-and add **SignWell** as the first signing adapter once the agreement template and
-guardian rules are approved. SignWell is the best early-volume fit because it
+and **SignWell** as the first signing adapter once the agreement template and
+guardian rules are approved. The credential is stored as a sensitive production
+variable in the isolated Vercel project and passed a read-only account request;
+it is not present in tracked files. SignWell is the best early-volume fit because it
 supports reusable templates, embedded signing, ordered multi-party recipients,
 webhooks, and an audit page without the large fixed platform cost of DocuSign.
+The current key is provisional because it was pasted into chat. Rotate it and
+replace the Vercel secret before sending any live agreement.
 
-Budget conservatively from the allowance shown in the live SignWell account.
-Its public pages currently describe a small included allowance and usage above
-the allowance starting around $0.85 per document, but the wording about the
-initial free allowance is inconsistent across those pages. Confirm the actual
-entitlement before entering a payment method.
+Its current API pricing page publishes 25 included API documents per month with
+a card on file, followed by usage starting around $0.85 per document and falling
+with volume. Confirm the actual entitlement shown in the live account before
+sending billable production documents.
 
 Official references:
 
@@ -27,9 +31,9 @@ Official references:
 
 | Provider | Appropriate use | Important constraint |
 | --- | --- | --- |
-| SignWell | Default low-volume creator agreement adapter | Confirm the live included-document allowance before launch |
+| SignWell | Selected low-volume creator agreement adapter | Credential stored; template, webhook, legal text, and runtime adapter remain |
 | PandaDoc Free | Temporary zero-cost fallback for creator plus GoTall | 60 sends per year, five templates, and exactly two recipients; it does not fit creator plus guardian plus GoTall |
-| BoldSign API | Re-evaluate near 35–40 agreements per month | $30 per month includes 40 envelopes; fixed spend starts immediately |
+| BoldSign API | Re-evaluate only at materially higher volume | $30 per month includes 40 envelopes; against SignWell's current included allowance, simple flat-rate break-even is roughly 213 monthly sends before volume discounts |
 | First-party clickwrap | Policies, community rules, and acknowledgements | Do not substitute it for the bilateral creator agreement without counsel approval |
 
 PandaDoc and BoldSign references:

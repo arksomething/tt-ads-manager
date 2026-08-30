@@ -91,7 +91,7 @@ smallest runtime that needs it.
 | Analytics | PostHog, Singular, Superwall, and Adapty candidates exist | PostHog personal key only for server-side management queries |
 | Object storage | Supabase server access can support Storage | Choose Supabase Storage or deliberately adopt R2 |
 | Payments | Subscription/revenue integrations exist, but no creator payout rail | Choose a payout provider, then add its scoped server and webhook credentials |
-| Agreements | Provider-neutral agreement/event ledger exists; SignWell is the recommended low-volume provider and PandaDoc Free is the constrained fallback | Choose a provider, approve the legal template, decide guardian rules, then add its API and webhook credentials |
+| Agreements | Provider-neutral agreement/event ledger exists; SignWell is selected and its provisional API key is stored as a sensitive Vercel production variable | Rotate the chat-exposed key before live signing, approve the legal template and guardian rules, then add the adapter, template ID, and verified webhook secret |
 | Default creator deal | Prospective `$0.50/$100` baseline and `$1/$300` talking tiers are documented, but production remains fail-closed | Approve the full term sheet, structured economic rules, contracting entity, and counsel-reviewed agreement |
 | Collector delivery | No cloud-ingestion key exists | Generate an ingestion-only key when the endpoint and outbox are implemented |
 
@@ -105,10 +105,15 @@ boundary.
 
 DocuSign is not part of this system. Its embedded/API packaging is aimed at
 enterprise and ISV integrations and is disproportionate for the expected early
-creator volume. The current recommendation is SignWell: it supports templates,
+creator volume. SignWell is now the selected provider: it supports templates,
 ordered creator/guardian/company recipients, embedded signing, webhooks, and an
-audit page without a monthly API minimum; published overage pricing starts at
-roughly $0.85 per document. PandaDoc Free can cover up to 60 sends per year but
+audit page without a monthly API minimum. Its API key is stored as a sensitive
+production variable in the isolated creator-platform Vercel project and has
+passed a read-only account request. No application route uses the key yet.
+Because the supplied credential was pasted into chat, rotate it before enabling
+live signing and replace the Vercel variable in place.
+Published overage pricing starts at roughly $0.85 per document after the current
+included allowance. PandaDoc Free can cover up to 60 sends per year but
 its two-recipient ceiling makes it unsuitable when a guardian is required.
 
 The database deliberately does not name either provider. A later adapter must

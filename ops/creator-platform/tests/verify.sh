@@ -40,6 +40,7 @@ node -e '
   const collector = catalog.sources.find((source) => source.id === "owned-collector");
   const legacyWeb = catalog.sources.find((source) => source.id === "legacy-web-integrations");
   const creatorPlatform = catalog.sources.find((source) => source.id === "creator-platform-local");
+  const agreements = catalog.platformRequirements.find((area) => area.area === "agreements");
   const creatorDiscordVariables = [
     "DISCORD_CLIENT_ID",
     "DISCORD_CLIENT_SECRET",
@@ -56,17 +57,28 @@ node -e '
     "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
     "SUPABASE_SERVICE_ROLE_KEY",
   ];
+  const creatorAgreementVariables = [
+    "AGREEMENT_PROVIDER",
+    "AGREEMENT_API_KEY",
+    "AGREEMENT_WEBHOOK_SECRET",
+    "AGREEMENT_TEMPLATE_ID",
+  ];
   if (discord?.path !== "${HOME}/.hermes/.env") process.exit(1);
   if (!discord.expectedVariables.includes("DISCORD_BOT_TOKEN")) process.exit(1);
   if (!collector?.expectedVariables.includes("INSTAGRAM_PROVIDER_CREDIT_RESERVE")) process.exit(1);
   if (creatorPlatform?.path !== "${HOME}/projects/tt-ads-manager/creator-platform/.env.local") process.exit(1);
   if (!creatorDiscordVariables.every((name) => creatorPlatform.expectedVariables.includes(name))) process.exit(1);
   if (!creatorAuthVariables.every((name) => creatorPlatform.expectedVariables.includes(name))) process.exit(1);
+  if (!creatorAgreementVariables.every((name) => creatorPlatform.expectedVariables.includes(name))) process.exit(1);
+  if (agreements?.state !== "signwell-key-installed-adapter-pending") process.exit(1);
+  if (!agreements.available.some((item) => item.includes("sensitive AGREEMENT_API_KEY"))) process.exit(1);
+  if (agreements.missing.includes("agreement API key")) process.exit(1);
+  if (!agreements.missing.some((item) => item.includes("rotation of the chat-exposed SignWell API key"))) process.exit(1);
   if (legacyWeb.expectedVariables.some((name) => name.startsWith("DISCORD_"))) process.exit(1);
   if (!example.includes("INSTAGRAM_PROVIDER_CREDIT_RESERVE=100")) process.exit(1);
   if (!example.includes("DISCORD_CLIENT_ID=1534630446959427686")) process.exit(1);
   if (!example.includes("APP_ORIGIN=https://gotall-creator-platform.vercel.app")) process.exit(1);
-  if (!example.includes("AGREEMENT_PROVIDER=")) process.exit(1);
+  if (!example.includes("AGREEMENT_PROVIDER=signwell")) process.exit(1);
   if (example.includes("E_SIGNATURE_PROVIDER=")) process.exit(1);
   if (example.includes("DISCORD_CLIENT_ID=1433587504908341269")) process.exit(1);
 ' "${catalog}" "${example}"
