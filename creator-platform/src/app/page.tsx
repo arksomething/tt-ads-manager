@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 
 import { LandingDashboard } from "@/components/landing-dashboard";
-import { PreviewNote } from "@/components/preview-note";
 import { SiteHeader } from "@/components/site-header";
 
 const steps = [
@@ -37,7 +36,6 @@ export default function Home() {
       <section className="hero">
         <div className="hero__inner">
           <div className="hero__copy">
-            <PreviewNote>Frontend preview · applications are not live yet</PreviewNote>
             <p className="eyebrow">GoTall creator program</p>
             <h1>Make the content. Know what happens next.</h1>
             <p className="hero__lede">
@@ -173,7 +171,7 @@ export default function Home() {
           <h2>Your next strong post should not start with a blank page.</h2>
         </div>
         <Link className="button button--ink button--large" href="/apply">
-          Preview the application
+          Start your application
           <ArrowRight aria-hidden="true" size={18} />
         </Link>
       </section>
@@ -183,7 +181,7 @@ export default function Home() {
           <span className="mini-mark">G</span>
           <span>GoTall creator program</span>
         </div>
-        <p>Frontend preview. Tracking, applications, and payouts are not connected yet.</p>
+        <p>Creator accounts and applications are open. Dashboard tracking and payouts remain clearly labeled previews until connected.</p>
       </footer>
     </main>
   );

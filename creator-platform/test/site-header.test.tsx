@@ -26,4 +26,12 @@ describe("site header", () => {
     expect(screen.queryByRole("navigation", { name: "Mobile navigation" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open navigation" })).toHaveFocus();
   });
+
+  it("routes account access to the real sign-in screen", () => {
+    render(<SiteHeader />);
+
+    for (const link of screen.getAllByRole("link", { name: "Sign in" })) {
+      expect(link).toHaveAttribute("href", "/auth/sign-in");
+    }
+  });
 });

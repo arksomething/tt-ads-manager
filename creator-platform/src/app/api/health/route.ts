@@ -7,7 +7,7 @@ export function GET() {
     {
       ok: true,
       service: "gotall-creator-platform",
-      state: "frontend-preview",
+      state: "creator-account-flow-live",
     },
     {
       headers: {

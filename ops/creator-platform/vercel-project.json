@@ -7,6 +7,6 @@
   "nodeVersion": "24.x",
   "productionDomain": "gethyperspeed.com",
   "currentPreviewDomain": "gotall-creator-platform.vercel.app",
-  "latestProductionDeploymentId": "dpl_SdGoZvqSCkeaaH1iq56xB6c59ZHt",
-  "deploymentState": "frontend-preview-live"
+  "latestProductionDeploymentId": "dpl_2fwcZDCjPpJePf1B9AuMkooHbeeM",
+  "deploymentState": "creator-account-flow-live"
 }

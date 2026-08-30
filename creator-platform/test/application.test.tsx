@@ -27,10 +27,13 @@ describe("application preview", () => {
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 
-  it("reviews every value, preserves edits, and completes only in the browser", async () => {
+  it("reviews every value, preserves edits, and submits through the authenticated API", async () => {
     const user = userEvent.setup();
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    render(<ApplicationPreviewForm />);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ applicationId: "application-1", status: "submitted" }),
+    } as Response);
+    render(<ApplicationPreviewForm accountEmail="dylan@example.com" />);
 
     await user.type(screen.getByRole("textbox", { name: "Name" }), "Dylan Smith");
     await user.type(screen.getByRole("textbox", { name: "Phone number" }), "+1 555 555 0123");
@@ -43,7 +46,7 @@ describe("application preview", () => {
 
     const reviewHeading = screen.getByRole("heading", { name: "Review your application" });
     expect(reviewHeading).toHaveFocus();
-    expect(screen.getByText("Nothing has been submitted yet")).toBeInTheDocument();
+    expect(screen.getByText("Final check")).toBeInTheDocument();
     expect(screen.getByText("Dylan Smith")).toBeInTheDocument();
     expect(screen.getByText("+1 555 555 0123")).toBeInTheDocument();
     expect(screen.getByText("dylan")).toBeInTheDocument();
@@ -64,12 +67,38 @@ describe("application preview", () => {
     expect(screen.getByText("Dylan Jones")).toBeInTheDocument();
     expect(screen.queryByText("Dylan Smith")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Finish preview" }));
+    await user.click(screen.getByRole("button", { name: "Submit application" }));
     const status = screen.getByRole("status");
-    expect(status).toHaveTextContent("Preview complete");
-    expect(status).toHaveTextContent("Nothing was submitted or stored");
-    expect(screen.getByRole("heading", { name: "Your application is ready." })).toHaveFocus();
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(status).toHaveTextContent("Application submitted");
+    expect(status).toHaveTextContent("with the creator team");
+    expect(screen.getByRole("heading", { name: "Your application is with the creator team." })).toHaveFocus();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/applications",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"name":"Dylan Jones"'),
+      }),
+    );
+    fetchSpy.mockRestore();
+  });
+
+  it("keeps the review visible when the application API rejects submission", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: "Application service is unavailable." }),
+    } as Response);
+    render(<ApplicationPreviewForm />);
+
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "Dylan Smith");
+    await user.type(screen.getByRole("textbox", { name: "Phone number" }), "+1 555 555 0123");
+    await user.type(screen.getByRole("textbox", { name: "Discord username" }), "dylan");
+    await user.type(screen.getByRole("textbox", { name: "Creator handle 1" }), "@dylan.grows");
+    await user.click(screen.getByRole("button", { name: /Review application/i }));
+    await user.click(screen.getByRole("button", { name: "Submit application" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Application service is unavailable.");
+    expect(screen.getByRole("heading", { name: "Review your application" })).toBeInTheDocument();
     fetchSpy.mockRestore();
   });
 

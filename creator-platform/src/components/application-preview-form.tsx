@@ -20,7 +20,7 @@ import {
   type CreatorApplicationPlatform,
 } from "@/lib/creator-application";
 
-type ApplicationStep = "details" | "review" | "complete-preview";
+type ApplicationStep = "details" | "review" | "complete";
 
 type AccountRow = {
   id: number;
@@ -50,7 +50,7 @@ function DefaultDealCard({ titleId }: { titleId: string }) {
   );
 }
 
-export function ApplicationPreviewForm() {
+export function ApplicationPreviewForm({ accountEmail }: { accountEmail?: string | null }) {
   const [step, setStep] = useState<ApplicationStep>("details");
   const [identity, setIdentity] = useState<IdentityFields>({
     name: "",
@@ -64,6 +64,8 @@ export function ApplicationPreviewForm() {
   const [accountError, setAccountError] = useState<string | null>(null);
   const [invalidAccountId, setInvalidAccountId] = useState<number | null>(null);
   const [accountAnnouncement, setAccountAnnouncement] = useState("");
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const nextAccountId = useRef(2);
   const pendingFocus = useRef<ApplicationStep | number | null>(null);
   const handleRefs = useRef<Record<number, HTMLInputElement | null>>({});
@@ -160,24 +162,53 @@ export function ApplicationPreviewForm() {
     transitionTo("review");
   };
 
-  const finishPreview = (event: FormEvent<HTMLFormElement>) => {
+  const submitApplication = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    transitionTo("complete-preview");
+
+    if (!reviewDraft || submitting) return;
+
+    setSubmissionError(null);
+    setSubmitting(true);
+
+    try {
+      const response = await fetch("/api/applications", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(reviewDraft),
+      });
+      const result = (await response.json().catch(() => null)) as
+        | { error?: string }
+        | null;
+
+      if (!response.ok) {
+        setSubmissionError(
+          result?.error ?? "We could not submit the application. Please try again.",
+        );
+        return;
+      }
+
+      transitionTo("complete");
+    } catch {
+      setSubmissionError("We could not reach the application service. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const editDetails = () => {
     transitionTo("details");
   };
 
-  if (step === "complete-preview") {
+  if (step === "complete") {
     return (
       <section className="application-form application-complete" role="status" aria-labelledby="application-complete-title">
         <div className="application-complete__icon"><Check aria-hidden="true" size={22} /></div>
-        <p className="eyebrow">Preview complete</p>
-        <h2 id="application-complete-title" ref={focusStepHeading("complete-preview")} tabIndex={-1}>Your application is ready.</h2>
+        <p className="eyebrow">Application submitted</p>
+        <h2 id="application-complete-title" ref={focusStepHeading("complete")} tabIndex={-1}>Your application is with the creator team.</h2>
         <p>
-          In the live flow, this is where your application will be submitted to the creator team.
-          Nothing was submitted or stored in this frontend preview.
+          You can return to your account at any time to see the current review and onboarding state.
         </p>
         <div className="application-complete__next">
           <ClipboardCheck aria-hidden="true" size={18} />
@@ -187,8 +218,8 @@ export function ApplicationPreviewForm() {
           </div>
         </div>
         <div className="application-complete__actions">
-          <button className="button button--ghost" type="button" onClick={editDetails}>Edit details</button>
-          <Link className="button button--ink" href="/">Return to creator program <ArrowRight aria-hidden="true" size={16} /></Link>
+          <Link className="button button--ghost" href="/">Return to creator program</Link>
+          <Link className="button button--ink" href="/account">Open account <ArrowRight aria-hidden="true" size={16} /></Link>
         </div>
       </section>
     );
@@ -197,7 +228,7 @@ export function ApplicationPreviewForm() {
   return (
     <form
       className="application-form"
-      onSubmit={step === "details" ? reviewApplication : finishPreview}
+      onSubmit={step === "details" ? reviewApplication : submitApplication}
     >
       <ol className="application-progress" aria-label="Application progress">
         <li data-state={step === "details" ? "current" : "complete"}><span>1</span> Details</li>
@@ -207,6 +238,13 @@ export function ApplicationPreviewForm() {
       {step === "details" ? (
         <>
           <DefaultDealCard titleId="default-deal-title" />
+
+          {accountEmail ? (
+            <div className="application-account-email">
+              <span>Signed in as</span>
+              <strong>{accountEmail}</strong>
+            </div>
+          ) : null}
 
           <div className="application-fields">
             <label>
@@ -330,14 +368,14 @@ export function ApplicationPreviewForm() {
 
           <div className="application-form__footer">
             <Link href="/"><ArrowLeft aria-hidden="true" size={15} /> Back</Link>
-            <span><LockKeyhole aria-hidden="true" size={14} /> Preview mode · details stay in this browser</span>
+            <span><LockKeyhole aria-hidden="true" size={14} /> Your account protects this application</span>
             <button className="button button--ink button--large" type="submit">Review application <ArrowRight aria-hidden="true" size={17} /></button>
           </div>
         </>
       ) : reviewDraft ? (
         <section className="application-review" aria-labelledby="application-review-title">
           <div className="application-review__header">
-            <p className="eyebrow">Nothing has been submitted yet</p>
+            <p className="eyebrow">Final check</p>
             <h2 id="application-review-title" ref={focusStepHeading("review")} tabIndex={-1}>Review your application</h2>
             <p>Make sure these are the creator accounts you want us to connect.</p>
           </div>
@@ -375,9 +413,12 @@ export function ApplicationPreviewForm() {
 
           <div className="application-form__footer application-form__footer--review">
             <button className="application-edit-button" type="button" onClick={editDetails}><ArrowLeft aria-hidden="true" size={15} /> Edit details</button>
-            <span><LockKeyhole aria-hidden="true" size={14} /> Preview mode · nothing will be submitted</span>
-            <button className="button button--ink button--large" type="submit">Finish preview <ArrowRight aria-hidden="true" size={17} /></button>
+            <span><LockKeyhole aria-hidden="true" size={14} /> Submitted to your verified account</span>
+            <button className="button button--ink button--large" disabled={submitting} type="submit">
+              {submitting ? "Submitting…" : "Submit application"} <ArrowRight aria-hidden="true" size={17} />
+            </button>
           </div>
+          {submissionError ? <p className="application-submit-error" role="alert">{submissionError}</p> : null}
         </section>
       ) : null}
     </form>

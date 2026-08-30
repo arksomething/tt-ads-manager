@@ -7,6 +7,7 @@ inventory_script="${root_dir}/ops/creator-platform/bin/inventory-project-envs.mj
 catalog="${root_dir}/ops/creator-platform/credentials.catalog.json"
 example="${root_dir}/ops/creator-platform/credentials.env.example"
 vercel_project="${root_dir}/ops/creator-platform/vercel-project.json"
+supabase_project="${root_dir}/ops/creator-platform/supabase-project.json"
 
 node --check "${audit_script}"
 node --check "${inventory_script}"
@@ -14,8 +15,19 @@ node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "
 node -e '
   const project = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
   if (project.projectName !== "gotall-creator-platform") process.exit(1);
+  if (project.projectId !== "qubkgekdpyntuanzqqeu") process.exit(1);
+  if (project.region !== "us-east-1" || project.state !== "creator-account-backend-hardened-live") process.exit(1);
+  if (project.emailSender !== "accounts@gotall.app" || project.emailConfirmationRequired !== true) process.exit(1);
+  if (project.passwordChangeReauthentication !== true || project.passwordChangeNotifications !== true) process.exit(1);
+  if (!project.migrations?.includes("creator-platform/supabase/migrations/20260830113000_creator_account_hardening.sql")) process.exit(1);
+  if (!project.migrations?.includes("creator-platform/supabase/migrations/20260830120000_creator_account_state_fix.sql")) process.exit(1);
+  if (project.agreementProvider !== null) process.exit(1);
+' "${supabase_project}"
+node -e '
+  const project = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+  if (project.projectName !== "gotall-creator-platform") process.exit(1);
   if (project.rootDirectory !== "creator-platform" || project.framework !== "nextjs") process.exit(1);
-  if (project.deploymentState !== "frontend-preview-live") process.exit(1);
+  if (project.deploymentState !== "creator-account-flow-live") process.exit(1);
   if (project.currentPreviewDomain !== "gotall-creator-platform.vercel.app") process.exit(1);
   if (!project.latestProductionDeploymentId?.startsWith("dpl_")) process.exit(1);
 ' "${vercel_project}"
@@ -38,14 +50,24 @@ node -e '
     "DISCORD_AT_RISK_ROLE_ID",
     "DISCORD_TOP_PERFORMER_ROLE_ID",
   ];
+  const creatorAuthVariables = [
+    "APP_ORIGIN",
+    "NEXT_PUBLIC_SUPABASE_URL",
+    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+  ];
   if (discord?.path !== "${HOME}/.hermes/.env") process.exit(1);
   if (!discord.expectedVariables.includes("DISCORD_BOT_TOKEN")) process.exit(1);
   if (!collector?.expectedVariables.includes("INSTAGRAM_PROVIDER_CREDIT_RESERVE")) process.exit(1);
   if (creatorPlatform?.path !== "${HOME}/projects/tt-ads-manager/creator-platform/.env.local") process.exit(1);
   if (!creatorDiscordVariables.every((name) => creatorPlatform.expectedVariables.includes(name))) process.exit(1);
+  if (!creatorAuthVariables.every((name) => creatorPlatform.expectedVariables.includes(name))) process.exit(1);
   if (legacyWeb.expectedVariables.some((name) => name.startsWith("DISCORD_"))) process.exit(1);
   if (!example.includes("INSTAGRAM_PROVIDER_CREDIT_RESERVE=100")) process.exit(1);
   if (!example.includes("DISCORD_CLIENT_ID=1534630446959427686")) process.exit(1);
+  if (!example.includes("APP_ORIGIN=https://gotall-creator-platform.vercel.app")) process.exit(1);
+  if (!example.includes("AGREEMENT_PROVIDER=")) process.exit(1);
+  if (example.includes("E_SIGNATURE_PROVIDER=")) process.exit(1);
   if (example.includes("DISCORD_CLIENT_ID=1433587504908341269")) process.exit(1);
 ' "${catalog}" "${example}"
 

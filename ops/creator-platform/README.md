@@ -34,6 +34,9 @@ credentials they need.
   `gotall-creator-platform` Vercel project.
 - Creator-platform local values: ignored owner-only
   `creator-platform/.env.local`.
+- Creator account data: the dedicated Supabase project
+  `gotall-creator-platform` (`qubkgekdpyntuanzqqeu`) in `us-east-1`. Its public
+  URL/key and server-only key are installed only in the matching Vercel project.
 - Legacy production values: the existing `tt-ads-manager` Vercel environment.
 - Legacy local values: ignored owner-only files under `web/`; they are not a
   credential source for the creator platform.
@@ -44,6 +47,16 @@ credentials they need.
 - Hermes Discord and Resend credentials: retained in their narrow owner-only
   runtimes. Discord was live-validated; Resend authenticated successfully and
   `gotall.app` is already a verified sending domain.
+
+Creator authentication is intentionally isolated from both the legacy CRM and
+the consumer GoTall Supabase user pool. The creator project requires email
+confirmation, a 10-character minimum password, leaked-password protection, and
+uses Resend custom SMTP from `accounts@gotall.app`. Password changes require
+recent authentication and generate a change notification. The account,
+application, enrollment, immutable deal-version, verified platform-account,
+and provider-neutral agreement tables all have row-level security enabled;
+anonymous users have no table grants. Applicant-entered handles remain
+provisional until provider-native ownership evidence is recorded.
 
 `GoTall - Management` is the live, reboot-persistent Hermes Discord application
 and is present in both `GoTall Creators` and `GoTall Community`. Its OAuth
@@ -67,18 +80,19 @@ smallest runtime that needs it.
 
 | Area | Existing credential candidate | Remaining input |
 | --- | --- | --- |
-| Database, Supabase, and web auth | Candidates exist in legacy/private sources | Install dedicated creator-platform values and create an integration-encryption key during implementation |
+| Database, Supabase, and web auth | Dedicated creator Supabase project, RLS schema, confirmed email/password auth, and Vercel runtime values are live | Add CAPTCHA before a broad public launch; create an integration-encryption key only when an integration needs stored tokens |
 | Domain and hosting | Cloudflare DNS, Vercel, and VPS access validated | None for the additive domain preparation |
 | Source control | Local repositories and commits are intact | Reauthenticate GitHub CLI/HTTPS for `arksomething` before pushing or connecting the new Vercel project |
 | Viral migration safety net | Current web credential exists | Revalidate before any migration-critical run |
 | TikTok | Business app and Ads credentials exist; public collector is separate | Official creator OAuth credentials only if that future path is chosen |
 | Instagram collection | Credential, bounded identity proof, 29 direct observations, and a protected 100-credit floor validated | Raise the provider balance to at least 1,250 before enabling timers; last observed balance is 95 and the guard is blocked |
 | Discord | GoTall - Management bot/client, OAuth credentials, two guilds, callback, channels, roles, and Manage Roles permission validated | Rotate the chat-exposed client secret, build the callback handler, and correct the bot-role hierarchy |
-| Transactional email | Resend key validated; `gotall.app` sending verified | Select the exact From addresses |
+| Transactional email | Resend custom SMTP is live for creator auth from `accounts@gotall.app` | Monitor delivery and abuse before increasing the 30-email/hour project limit |
 | Analytics | PostHog, Singular, Superwall, and Adapty candidates exist | PostHog personal key only for server-side management queries |
 | Object storage | Supabase server access can support Storage | Choose Supabase Storage or deliberately adopt R2 |
 | Payments | Subscription/revenue integrations exist, but no creator payout rail | Choose a payout provider, then add its scoped server and webhook credentials |
-| Agreements | No e-sign provider selected | Choose clickwrap or an e-sign provider |
+| Agreements | Provider-neutral agreement/event ledger exists; SignWell is the recommended low-volume provider and PandaDoc Free is the constrained fallback | Choose a provider, approve the legal template, decide guardian rules, then add its API and webhook credentials |
+| Default creator deal | Prospective `$0.50/$100` baseline and `$1/$300` talking tiers are documented, but production remains fail-closed | Approve the full term sheet, structured economic rules, contracting entity, and counsel-reviewed agreement |
 | Collector delivery | No cloud-ingestion key exists | Generate an ingestion-only key when the endpoint and outbox are implemented |
 
 Existing TikTok Business credentials are not proof of TikTok Login Kit or
@@ -86,6 +100,29 @@ Display API approval. Existing Stripe-style subscription credentials in other
 projects are not creator payout credentials. Those distinctions are retained in
 the catalog so a convenient key is never silently reused for the wrong trust
 boundary.
+
+## Agreement provider direction
+
+DocuSign is not part of this system. Its embedded/API packaging is aimed at
+enterprise and ISV integrations and is disproportionate for the expected early
+creator volume. The current recommendation is SignWell: it supports templates,
+ordered creator/guardian/company recipients, embedded signing, webhooks, and an
+audit page without a monthly API minimum; published overage pricing starts at
+roughly $0.85 per document. PandaDoc Free can cover up to 60 sends per year but
+its two-recipient ceiling makes it unsuitable when a guardian is required.
+
+The database deliberately does not name either provider. A later adapter must
+write verified, idempotent provider events and archive the completed artifact
+and its hash. A browser return URL can never mark an agreement complete.
+First-party clickwrap remains appropriate for policies and acknowledgements,
+but it must not replace the bilateral creator agreement without legal approval.
+The researched comparison, thresholds, and adapter requirements are recorded in
+[`agreement-provider-decision.md`](./agreement-provider-decision.md).
+
+The observed economic candidate, legacy contradictions, Viral.app limit seed,
+and decisions blocking activation are recorded in
+[`default-deal-readiness.md`](./default-deal-readiness.md). No legal or payout
+terms were inferred into production from the inconsistent legacy fallback.
 
 ## Domain transition
 
@@ -101,13 +138,12 @@ The intended stable map is:
 `studio.gethyperspeed.com` is already routed to the existing VPS workload and
 `legacy.gethyperspeed.com` is already attached to the existing Vercel project.
 Both were verified over HTTPS without removing their original addresses. The
-separate Vercel project `gotall-creator-platform` now serves the clearly labeled
-frontend preview at `gotall-creator-platform.vercel.app`, with
-`creator-platform` as its Next.js root and Node.js 24. The deployment contains
-sample UI only: applications, authentication, Discord linking, canonical
-tracking, and payouts are not connected. Its production environment currently
-holds only the scoped Discord OAuth variables documented above; the remaining
-app credentials have not been installed. The apex remains on the current studio
+separate Vercel project `gotall-creator-platform` serves the creator app at
+`gotall-creator-platform.vercel.app`, with `creator-platform` as its Next.js
+root and Node.js 24. Its production environment contains the isolated Supabase
+account configuration plus the scoped Discord OAuth variables. Public sample
+dashboard routes remain explicitly labeled; Discord linking, canonical
+tracking, agreements, and payouts are not connected yet. The apex remains on the current studio
 until the creator platform has working authentication, callbacks, monitoring,
 and rollback. The laptop collector gets no public dashboard subdomain. It will
 eventually deliver signed, idempotent batches to a narrow HTTPS ingestion route

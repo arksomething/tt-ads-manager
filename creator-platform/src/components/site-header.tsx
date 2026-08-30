@@ -44,8 +44,8 @@ export function SiteHeader() {
         </nav>
 
         <div className="site-header__actions">
-          <Link className="button button--ghost header-sign-in" href="/preview/creator">
-            Preview dashboard
+          <Link className="button button--ghost header-sign-in" href="/auth/sign-in">
+            Sign in
           </Link>
           <Link className="button button--ink" href="/apply">
             Apply
@@ -76,8 +76,8 @@ export function SiteHeader() {
             <Link href="/#questions" onClick={closeMenu}>Questions</Link>
           </nav>
           <div>
-            <Link className="button button--ghost" href="/preview/creator" onClick={closeMenu}>
-              Preview dashboard
+            <Link className="button button--ghost" href="/auth/sign-in" onClick={closeMenu}>
+              Sign in
             </Link>
             <Link className="button button--ink" href="/apply" onClick={closeMenu}>
               Apply
