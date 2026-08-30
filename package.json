@@ -11,6 +11,13 @@
     "db:generate": "cd web && npm run db:generate",
     "db:push": "cd web && npm run db:push",
     "db:migrate": "cd web && npm run db:migrate",
-    "db:studio": "cd web && npm run db:studio"
+    "db:studio": "cd web && npm run db:studio",
+    "creator:dev": "npm --prefix creator-platform run dev",
+    "creator:build": "npm --prefix creator-platform run build",
+    "creator:start": "npm --prefix creator-platform run start",
+    "creator:test": "npm --prefix creator-platform run test",
+    "creator:lint": "npm --prefix creator-platform run lint",
+    "creator:typecheck": "npm --prefix creator-platform run typecheck",
+    "creator:verify": "npm --prefix creator-platform run verify"
   }
 }

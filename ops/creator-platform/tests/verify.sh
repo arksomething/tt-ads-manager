@@ -14,8 +14,10 @@ node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "
 node -e '
   const project = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
   if (project.projectName !== "gotall-creator-platform") process.exit(1);
-  if (project.rootDirectory !== "web" || project.framework !== "nextjs") process.exit(1);
-  if (project.deploymentState !== "reserved-no-deployment") process.exit(1);
+  if (project.rootDirectory !== "creator-platform" || project.framework !== "nextjs") process.exit(1);
+  if (project.deploymentState !== "frontend-preview-live") process.exit(1);
+  if (project.currentPreviewDomain !== "gotall-creator-platform.vercel.app") process.exit(1);
+  if (!project.latestProductionDeploymentId?.startsWith("dpl_")) process.exit(1);
 ' "${vercel_project}"
 
 node -e '
@@ -24,9 +26,24 @@ node -e '
   const example = fs.readFileSync(process.argv[2], "utf8");
   const discord = catalog.sources.find((source) => source.id === "hermes-discord-management");
   const collector = catalog.sources.find((source) => source.id === "owned-collector");
+  const legacyWeb = catalog.sources.find((source) => source.id === "legacy-web-integrations");
+  const creatorPlatform = catalog.sources.find((source) => source.id === "creator-platform-local");
+  const creatorDiscordVariables = [
+    "DISCORD_CLIENT_ID",
+    "DISCORD_CLIENT_SECRET",
+    "DISCORD_OAUTH_REDIRECT_URI",
+    "DISCORD_GUILD_ID",
+    "DISCORD_ONBOARDING_ROLE_ID",
+    "DISCORD_ACTIVE_ROLE_ID",
+    "DISCORD_AT_RISK_ROLE_ID",
+    "DISCORD_TOP_PERFORMER_ROLE_ID",
+  ];
   if (discord?.path !== "${HOME}/.hermes/.env") process.exit(1);
   if (!discord.expectedVariables.includes("DISCORD_BOT_TOKEN")) process.exit(1);
   if (!collector?.expectedVariables.includes("INSTAGRAM_PROVIDER_CREDIT_RESERVE")) process.exit(1);
+  if (creatorPlatform?.path !== "${HOME}/projects/tt-ads-manager/creator-platform/.env.local") process.exit(1);
+  if (!creatorDiscordVariables.every((name) => creatorPlatform.expectedVariables.includes(name))) process.exit(1);
+  if (legacyWeb.expectedVariables.some((name) => name.startsWith("DISCORD_"))) process.exit(1);
   if (!example.includes("INSTAGRAM_PROVIDER_CREDIT_RESERVE=100")) process.exit(1);
   if (!example.includes("DISCORD_CLIENT_ID=1534630446959427686")) process.exit(1);
   if (example.includes("DISCORD_CLIENT_ID=1433587504908341269")) process.exit(1);
