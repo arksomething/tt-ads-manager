@@ -23,8 +23,11 @@ node -e '
   const catalog = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   const example = fs.readFileSync(process.argv[2], "utf8");
   const discord = catalog.sources.find((source) => source.id === "hermes-discord-management");
+  const collector = catalog.sources.find((source) => source.id === "owned-collector");
   if (discord?.path !== "${HOME}/.hermes/.env") process.exit(1);
   if (!discord.expectedVariables.includes("DISCORD_BOT_TOKEN")) process.exit(1);
+  if (!collector?.expectedVariables.includes("INSTAGRAM_PROVIDER_CREDIT_RESERVE")) process.exit(1);
+  if (!example.includes("INSTAGRAM_PROVIDER_CREDIT_RESERVE=100")) process.exit(1);
   if (!example.includes("DISCORD_CLIENT_ID=1534630446959427686")) process.exit(1);
   if (example.includes("DISCORD_CLIENT_ID=1433587504908341269")) process.exit(1);
 ' "${catalog}" "${example}"

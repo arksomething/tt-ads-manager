@@ -43,7 +43,8 @@ a deployed callback handler. Before deterministic lifecycle-role automation,
 grant Management `Manage Roles` and place its role above the four lifecycle
 roles but below Admin. Never put creator users or roles in the Hermes agent
 allowlist; OAuth, deterministic role sync, and the LLM gateway are separate
-trust lanes even when they share one Discord application.
+trust lanes even when they share one Discord application. The ScrapeCreators
+key remains collector-only and is not loaded into Hermes.
 
 Provider-native credentials should not be copied merely to make the catalog
 look centralized. The catalog is the central map; each secret stays with the
@@ -58,7 +59,7 @@ smallest runtime that needs it.
 | Source control | Local repositories and commits are intact | Reauthenticate GitHub CLI/HTTPS for `arksomething` before pushing or connecting the new Vercel project |
 | Viral migration safety net | Current web credential exists | Revalidate before any migration-critical run |
 | TikTok | Business app and Ads credentials exist; public collector is separate | Official creator OAuth credentials only if that future path is chosen |
-| Instagram collection | Credential, direct-post smoke, and bounded profile discovery validated; 29 direct observations written | Top up recurring credits and add a low-credit stop/alert before enabling timers |
+| Instagram collection | Credential, bounded identity proof, 29 direct observations, and a protected 100-credit floor validated | Raise the provider balance to at least 1,250 before enabling timers; last observed balance is 95 and the guard is blocked |
 | Discord | GoTall - Management bot/client, two guilds, callback, channels, and roles validated | Client secret, callback handler, and corrected role permission/hierarchy |
 | Transactional email | Resend key validated; `gotall.app` sending verified | Select the exact From addresses |
 | Analytics | PostHog, Singular, Superwall, and Adapty candidates exist | PostHog personal key only for server-side management queries |

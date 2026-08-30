@@ -232,10 +232,11 @@ agent-jobctl enable creator-tracker-dashboard-health.timer
 ```
 
 The Instagram credential smoke and bounded single-account database proof have
-passed. Enable the two Instagram timers only after provider credits cover the
-initial backlog plus measured daily use, a persistent low-credit stop/alert is
-deployed, and the Instagram executable values have been added to the private
-host environment:
+passed. Its persistent guard is currently blocked at a 100-credit reserve with
+95 last observed. Enable the two Instagram timers only after provider credits
+cover the initial backlog plus measured daily use, the guard is explicitly
+rearmed from timestamped evidence, and the Instagram executable values have
+been added to the private host environment:
 
 ```bash
 agent-jobctl enable creator-tracker-instagram-discovery.timer
