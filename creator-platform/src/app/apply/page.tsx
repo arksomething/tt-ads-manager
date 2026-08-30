@@ -21,9 +21,9 @@ export default function ApplyPage() {
         <div className="application-intro">
           <PreviewNote>Frontend preview · nothing is submitted</PreviewNote>
           <p className="eyebrow">Creator application</p>
-          <h1>Show us how you create.</h1>
-          <p>One strong example is enough. We care about delivery, consistency, and whether the format fits—not follower count.</p>
-          <div className="application-intro__facts"><span>About 3 minutes</span><span>No large audience required</span><span>Reviewed by the creator team</span></div>
+          <h1>Tell us where you create.</h1>
+          <p>Share your name, phone number, Discord username, and every TikTok or Instagram handle you use. That is all we need to start.</p>
+          <div className="application-intro__facts"><span>About 1 minute</span><span>TikTok + Instagram</span><span>One standard deal</span></div>
         </div>
         <ApplicationPreviewForm />
       </section>

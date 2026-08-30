@@ -17,6 +17,11 @@ The first production-safe frontend slice includes:
 All fixture data is visibly marked as sample data. Applications, authentication,
 Discord linking, canonical tracking, and payouts are not connected yet.
 
+The application preview asks only for the creator's name, phone number, Discord
+username, and one or more TikTok or Instagram handles. Applicants never choose
+or send deal terms. The accepted-creator backend must assign the current,
+versioned program default atomically when enrollment is implemented.
+
 The visual direction comes from `../inspo/creator-platform/`: neutral,
 brand-flexible, compact, and task-first. Unknown, stale, restricted, and
 unsupported tracking states must remain distinct from a real zero. Earnings

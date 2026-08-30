@@ -15,7 +15,7 @@ import { PreviewNote } from "@/components/preview-note";
 import { SiteHeader } from "@/components/site-header";
 
 const steps = [
-  ["01", "Apply", "Tell us what you make and share one video you are proud of."],
+  ["01", "Apply", "Share your name, phone number, Discord username, and creator handles."],
   ["02", "Join the community", "Meet the team, get feedback, and know exactly what happens next."],
   ["03", "Pick a script", "Choose a ready-to-film idea with a proven hook and clear direction."],
   ["04", "Film and post", "Create on your phone, then publish to your campaign accounts."],
@@ -102,8 +102,8 @@ export default function Home() {
           <p className="eyebrow eyebrow--light">The program</p>
           <h2>Everything around the content gets easier.</h2>
           <p>
-            The exact deal can change by campaign. The workspace keeps the brief, requirements, tracking,
-            and payment state precise either way.
+            Every accepted creator starts on the same standard deal. The workspace keeps the brief,
+            requirements, tracking, and payment state precise from there.
           </p>
           <Link className="button button--paper" href="/preview/onboarding">
             See onboarding
@@ -158,7 +158,7 @@ export default function Home() {
           </details>
           <details>
             <summary>How are earnings calculated?</summary>
-            <p>Your deal terms define the calculation. The dashboard separates estimates, review, approval, and payment.</p>
+            <p>Every accepted creator starts on the standard creator deal and reviews the exact terms before onboarding. The dashboard separates estimates, review, approval, and payment.</p>
           </details>
           <details>
             <summary>What happens after I apply?</summary>

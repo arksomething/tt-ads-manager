@@ -17,5 +17,6 @@ describe("creator program landing page", () => {
     expect(screen.getAllByText("Sample workspace").length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: /apply to create/i })).toHaveAttribute("href", "/apply");
     expect(screen.getByText(/estimated, under review, approved, and paid/i)).toBeInTheDocument();
+    expect(screen.getByText(/every accepted creator starts on the same standard deal/i)).toBeInTheDocument();
   });
 });

@@ -3050,57 +3050,42 @@ button {
 .application-saved strong { font-size: 12px; }
 .application-saved span { font-size: 11px; line-height: 1.5; }
 
-.application-form fieldset {
+.application-form > fieldset {
   margin: 0;
   padding: 0 0 30px;
   border: 0;
   border-bottom: 1px solid var(--line);
 }
 
-.application-form legend {
+.application-form > fieldset > legend {
   padding: 0;
   font-size: 20px;
   font-weight: 610;
   letter-spacing: -0.025em;
 }
 
-.application-form fieldset > p {
+.application-form > fieldset > p {
   margin: 8px 0 20px;
   color: #74746f;
   font-size: 12px;
   line-height: 1.5;
 }
 
-.earning-options {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
-}
-
-.earning-options label {
-  min-height: 88px;
-  padding: 15px;
+.application-default-deal {
+  padding: 17px;
   display: flex;
   align-items: flex-start;
   gap: 11px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  cursor: pointer;
+  border: 1px solid #d7ded8;
+  border-radius: 9px;
+  background: #f7faf7;
 }
 
-.earning-options label:has(input:checked) {
-  border-color: #111;
-  box-shadow: inset 0 0 0 1px #111;
-}
-
-.earning-options input {
-  margin: 3px 0 0;
-  accent-color: #111;
-}
-
-.earning-options span { display: flex; flex-direction: column; }
-.earning-options strong { font-size: 13px; font-weight: 620; }
-.earning-options em { margin-top: 5px; color: #777772; font-size: 10px; font-style: normal; line-height: 1.4; }
+.application-default-deal > svg { margin-top: 2px; flex: 0 0 auto; color: #365b42; }
+.application-default-deal > div { display: flex; flex-direction: column; gap: 3px; }
+.application-default-deal span { color: #52715d; font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.application-default-deal strong { font-size: 13px; font-weight: 650; }
+.application-default-deal p { margin: 2px 0 0; color: #657069; font-size: 11px; line-height: 1.5; }
 
 .application-fields {
   margin-top: 30px;
@@ -3121,7 +3106,9 @@ button {
 }
 
 .application-fields input,
-.application-fields select {
+.application-fields select,
+.creator-account-row input,
+.creator-account-row select {
   width: 100%;
   height: 47px;
   padding: 0 13px;
@@ -3134,8 +3121,90 @@ button {
 
 .application-fields input::placeholder { color: #aaa; }
 .application-fields input:focus,
-.application-fields select:focus { border-color: #111; outline: 1px solid #111; }
+.application-fields select:focus,
+.creator-account-row input:focus,
+.creator-account-row select:focus { border-color: #111; outline: 1px solid #111; }
 .application-fields__wide { grid-column: 1 / -1; }
+
+.creator-accounts {
+  margin-top: 30px !important;
+  padding-bottom: 0 !important;
+  border-bottom: 0 !important;
+}
+
+.creator-account-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.creator-account-row {
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fafaf8;
+}
+
+.creator-account-row__header {
+  margin-bottom: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.creator-account-row__header strong {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.creator-account-row__header button {
+  padding: 3px 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: #797974;
+  font-size: 10px;
+}
+
+.creator-account-row__header button:hover { color: #111; }
+
+.creator-account-row__fields {
+  display: grid;
+  grid-template-columns: minmax(135px, 0.42fr) 1fr;
+  gap: 12px;
+}
+
+.creator-account-row__fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.creator-account-row__fields label > span:first-child {
+  font-size: 11px;
+  font-weight: 610;
+}
+
+.creator-account-row input::placeholder { color: #aaa; }
+.creator-account-row input[aria-invalid="true"] { border-color: #a43a3a; }
+
+.application-field-error {
+  color: #9b3333;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.creator-account-add {
+  margin-top: 13px;
+  min-height: 39px;
+  padding: 0 13px;
+  font-size: 12px;
+}
 
 .application-form__footer {
   margin-top: 34px;
@@ -3172,9 +3241,9 @@ button {
   .application-header > span { display: none; }
   .application-layout { padding-top: 52px; }
   .application-form { margin: 0 -16px; padding: 28px 20px; border-left: 0; border-right: 0; border-radius: 0; }
-  .earning-options,
   .application-fields { grid-template-columns: 1fr; }
   .application-fields__wide { grid-column: auto; }
+  .creator-account-row__fields { grid-template-columns: 1fr; }
   .application-form__footer { grid-template-columns: 1fr; }
   .application-form__footer > a { order: 3; }
   .application-form__footer > span { justify-self: start; }
