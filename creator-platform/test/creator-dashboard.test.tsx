@@ -52,7 +52,21 @@ describe("creator dashboard preview", () => {
     expect(screen.getByRole("heading", { name: "Reporting is preview-only" })).toBeInTheDocument();
     expect(screen.getByText(/no report was sent/i)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Day 2: 1 post" }));
-    expect(screen.getByText("Sample day 2")).toBeInTheDocument();
+    const calendar = screen.getByRole("group", { name: "Sample posting activity over fifty-two weeks" });
+    const activityDays = calendar.querySelectorAll("button");
+    expect(activityDays).toHaveLength(364);
+    expect(screen.getByText("Sample calendar")).toBeInTheDocument();
+    expect(activityDays[1]).toHaveAccessibleName("Tuesday, June 3, 2025: 1 tracked post (sample)");
+    expect(Array.from(activityDays).filter((day) => day.tabIndex === 0)).toHaveLength(1);
+    expect(activityDays[363]).toHaveAttribute("tabindex", "0");
+
+    activityDays[0].focus();
+    await user.keyboard("{ArrowRight}");
+    expect(activityDays[7]).toHaveFocus();
+    await user.keyboard("{ArrowDown}{ArrowLeft}");
+    expect(activityDays[1]).toHaveFocus();
+
+    await user.click(activityDays[1]);
+    expect(screen.getByText("Sample day 2 · Jun 3")).toBeInTheDocument();
   });
 });

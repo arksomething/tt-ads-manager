@@ -19,7 +19,7 @@ import {
   Settings,
   X,
 } from "lucide-react";
-import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, useEffect, useRef, useState } from "react";
 
 import { BrandMark } from "@/components/brand-mark";
 import { PreviewNote } from "@/components/preview-note";
@@ -31,13 +31,58 @@ import {
   getPreviewMetricValue,
 } from "@/lib/preview-models";
 
-const activityLevels = [
+const activityLevelSeed = [
   0, 1, 0, 2, 1, 0, 1, 2, 0, 3, 1, 0, 2, 1, 2, 2, 0, 1, 3, 2, 1, 0, 1, 2,
   3, 1, 1, 2, 0, 3, 2, 1, 0, 1, 2, 3, 2, 1, 0, 2, 1, 3, 2, 0, 1, 2, 3, 3,
   2, 1, 0, 2, 3, 1, 2, 2, 0, 1, 3, 2, 1, 0, 2, 3, 2, 1, 0, 1, 2, 3,
   1, 2, 0, 1, 3, 2, 2, 1, 0, 3, 2, 1, 1, 0, 2, 3, 1, 2, 0, 1, 3, 2,
   1, 0, 2, 1, 3, 2,
 ];
+
+const activityWeekCount = 52;
+const activityDayCount = activityWeekCount * 7;
+const latestActivityDayIndex = activityDayCount - 1;
+const activityLevels = Array.from({ length: activityDayCount }, (_, index) => {
+  const seedOffset = Math.floor(index / 49) * 13;
+  return activityLevelSeed[(index + seedOffset) % activityLevelSeed.length];
+});
+const activityStartDate = Date.UTC(2025, 5, 2);
+const activityDayMilliseconds = 24 * 60 * 60 * 1000;
+const activityDateFormatter = new Intl.DateTimeFormat("en-US", {
+  weekday: "long",
+  month: "long",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
+const activityShortDateFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  timeZone: "UTC",
+});
+const activityMonthFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  timeZone: "UTC",
+});
+
+const activityDays = activityLevels.map((level, index) => {
+  const date = new Date(activityStartDate + (index * activityDayMilliseconds));
+
+  return {
+    dateLabel: activityDateFormatter.format(date),
+    level,
+    monthLabel: activityMonthFormatter.format(date),
+    shortDateLabel: activityShortDateFormatter.format(date),
+  };
+});
+
+const activityMonths = activityDays.reduce<Array<{ label: string; week: number }>>((months, day, index) => {
+  if (months.at(-1)?.label !== day.monthLabel) {
+    months.push({ label: day.monthLabel, week: Math.floor(index / 7) });
+  }
+
+  return months;
+}, []);
 
 const chartPath =
   "M0 188 L42 177 L84 147 L126 120 L168 128 L210 92 L252 105 L294 59 L336 84 L378 30 L420 80 L462 69 L504 46 L546 72 L588 120 L630 85 L672 63 L714 91 L756 132 L798 111";
@@ -68,6 +113,8 @@ export function CreatorDashboardPreview() {
   const dialogRef = useRef<HTMLElement>(null);
   const backgroundRef = useRef<HTMLDivElement>(null);
   const lastFocusedRef = useRef<HTMLElement | null>(null);
+  const activityButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const activityScrollRef = useRef<HTMLDivElement>(null);
 
   const viewsValue = getPreviewMetricValue(creatorDashboardSample.metrics.verifiedViews);
   const earningsValue = getPreviewMetricValue(creatorDashboardSample.metrics.estimatedEarningsMinor);
@@ -127,12 +174,55 @@ export function CreatorDashboardPreview() {
     };
   }, [inboxOpen]);
 
+  useEffect(() => {
+    const scroller = activityScrollRef.current;
+    if (!scroller || window.innerWidth > 650) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      scroller.scrollLeft = scroller.scrollWidth - scroller.clientWidth;
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
   const openInbox = (event: MouseEvent<HTMLButtonElement>) => {
     lastFocusedRef.current = event.currentTarget;
     setInboxOpen(true);
   };
 
   const closeInbox = () => setInboxOpen(false);
+
+  const moveActivityFocus = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex: number | null = null;
+
+    switch (event.key) {
+      case "ArrowDown":
+        nextIndex = index + 1;
+        break;
+      case "ArrowUp":
+        nextIndex = index - 1;
+        break;
+      case "ArrowRight":
+        nextIndex = index + 7;
+        break;
+      case "ArrowLeft":
+        nextIndex = index - 7;
+        break;
+      case "Home":
+        nextIndex = index - (index % 7);
+        break;
+      case "End":
+        nextIndex = index + (6 - (index % 7));
+        break;
+      default:
+        return;
+    }
+
+    event.preventDefault();
+    const boundedIndex = Math.max(0, Math.min(activityDays.length - 1, nextIndex));
+    setSelectedActivityDay(boundedIndex);
+    activityButtonRefs.current[boundedIndex]?.focus();
+  };
 
   return (
     <div className="creator-preview">
@@ -245,7 +335,10 @@ export function CreatorDashboardPreview() {
 
           <section className="creator-activity" aria-labelledby="activity-title">
             <div className="creator-section-title">
-              <h2 id="activity-title">Activity</h2>
+              <div>
+                <h2 id="activity-title">Activity</h2>
+                <span className="creator-activity__sample-label">Sample calendar</span>
+              </div>
               <span><Flame size={14} fill="currentColor" /> {creatorDashboardSample.creator.streakDays} day streak</span>
               <button
                 type="button"
@@ -256,31 +349,89 @@ export function CreatorDashboardPreview() {
                 How this works
               </button>
             </div>
-            <div className="creator-activity__months" aria-hidden="true"><span>Feb</span><span>Mar</span><span>Apr</span><span>May</span></div>
-            <div className="creator-activity__grid" aria-label="Sample posting activity over fourteen weeks">
-              {activityLevels.map((level, index) => (
-                <button
-                  type="button"
-                  key={index}
-                  data-level={level}
-                  aria-pressed={selectedActivityDay === index}
-                  aria-label={`Day ${index + 1}: ${level === 0 ? "no required post" : `${level} post${level > 1 ? "s" : ""}`}`}
-                  title={level === 0 ? "No required post" : `${level} post${level > 1 ? "s" : ""}`}
-                  onClick={() => setSelectedActivityDay(index)}
-                />
-              ))}
-            </div>
-            {selectedActivityDay != null ? (
-              <div className="creator-activity-detail" role="status">
-                <span>Sample day {selectedActivityDay + 1}</span>
-                <strong>
-                  {activityLevels[selectedActivityDay] === 0
-                    ? "No required post"
-                    : `${activityLevels[selectedActivityDay]} tracked post${activityLevels[selectedActivityDay] > 1 ? "s" : ""}`}
-                </strong>
-                <button type="button" onClick={() => setSelectedActivityDay(null)} aria-label="Close activity detail"><X size={14} /></button>
+            <p id="activity-calendar-description" className="sr-only">
+              Sample calendar. Columns are weeks starting Monday and rows are Monday through Sunday. Use arrow keys to move between days.
+            </p>
+            <div ref={activityScrollRef} className="creator-activity__calendar-scroll">
+              <div className="creator-activity__calendar-frame">
+                <div
+                  className="creator-activity__calendar"
+                  role="group"
+                  aria-label="Sample posting activity over fifty-two weeks"
+                  aria-describedby="activity-calendar-description"
+                >
+                  <div className="creator-activity__weekdays" aria-hidden="true">
+                    <span>Mon</span>
+                    <span>Wed</span>
+                    <span>Fri</span>
+                  </div>
+                  <div className="creator-activity__plot">
+                    <div
+                      className="creator-activity__months"
+                      aria-hidden="true"
+                      style={{ gridTemplateColumns: `repeat(${activityWeekCount}, var(--activity-cell-size))` }}
+                    >
+                      {activityMonths.map((month) => (
+                        <span key={month.label} style={{ gridColumnStart: month.week + 1 }}>{month.label}</span>
+                      ))}
+                    </div>
+                    <div
+                      className="creator-activity__grid"
+                      style={{ gridTemplateColumns: `repeat(${activityWeekCount}, var(--activity-cell-size))` }}
+                    >
+                      {activityDays.map((day, index) => {
+                        const activityDescription = day.level === 0
+                          ? "no required post"
+                          : `${day.level} tracked post${day.level > 1 ? "s" : ""}`;
+
+                        return (
+                          <button
+                            type="button"
+                            key={day.dateLabel}
+                            ref={(node) => { activityButtonRefs.current[index] = node; }}
+                            data-level={day.level}
+                            aria-pressed={selectedActivityDay === index}
+                            aria-label={`${day.dateLabel}: ${activityDescription} (sample)`}
+                            title={`${day.shortDateLabel} · ${activityDescription}`}
+                            tabIndex={selectedActivityDay === index || (selectedActivityDay == null && index === latestActivityDayIndex) ? 0 : -1}
+                            onClick={() => setSelectedActivityDay(index)}
+                            onKeyDown={(event) => moveActivityFocus(event, index)}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+                <div className="creator-activity__footer">
+                  <span>Jun 2, 2025 – May 31, 2026 · sample data</span>
+                  <div className="creator-activity__legend" aria-label="Scheduled off-day followed by increasing numbers of tracked posts">
+                    <span aria-hidden="true">Off day</span>
+                    {[0, 1, 2, 3].map((level) => <i key={level} data-level={level} aria-hidden="true" />)}
+                    <span aria-hidden="true">More posts</span>
+                  </div>
+                </div>
+                {selectedActivityDay != null ? (
+                  <div className="creator-activity-detail" role="status">
+                    <span>Sample day {selectedActivityDay + 1} · {activityDays[selectedActivityDay].shortDateLabel}</span>
+                    <strong>
+                      {activityDays[selectedActivityDay].level === 0
+                        ? "No required post"
+                        : `${activityDays[selectedActivityDay].level} tracked post${activityDays[selectedActivityDay].level > 1 ? "s" : ""}`}
+                    </strong>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedActivityDay(null);
+                        activityButtonRefs.current[latestActivityDayIndex]?.focus();
+                      }}
+                      aria-label="Close activity detail"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ) : null}
               </div>
-            ) : null}
+            </div>
           </section>
 
           <section className="creator-actions" aria-label="Next actions">
