@@ -2,6 +2,11 @@
 .env
 .env.local
 .env.*.local
+*.secret
+*.credentials
+*.credentials.env
+.local-state/
+ops/**/private/
 OAuth Client ID - Billion Views.json
 
 node_modules

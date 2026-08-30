@@ -1,0 +1,10 @@
+{
+  "projectId": "prj_w8HQjEZobVxTlS9OdFZz3qcEMss1",
+  "orgId": "team_k7brTNiTuHD3ABFxYjBYlgDk",
+  "projectName": "gotall-creator-platform",
+  "rootDirectory": "web",
+  "framework": "nextjs",
+  "nodeVersion": "24.x",
+  "productionDomain": "gethyperspeed.com",
+  "deploymentState": "reserved-no-deployment"
+}
