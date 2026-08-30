@@ -31,16 +31,19 @@ credentials they need.
 - Collector scheduling: non-secret `~/.config/creator-tracker/env` plus narrowly
   scoped service credentials.
 - Cloudflare and Vercel CLI sessions: their owner-only native credential stores.
-- Existing Discord and Resend credentials: retained only as migration sources.
-  Discord was live-validated; Resend authenticated successfully and `gotall.app`
-  is already a verified sending domain.
+- Hermes Discord and Resend credentials: retained in their narrow owner-only
+  runtimes. Discord was live-validated; Resend authenticated successfully and
+  `gotall.app` is already a verified sending domain.
 
-The existing `GoTall` Discord bot and its client ID were live-validated against
-Discord. It is already in the `GoTall Creators` guild, and the guild's lifecycle
-roles can be mapped without requesting new IDs. Creator account linking still
-needs the application's client secret and the new OAuth callback registered in
-the Discord developer portal. The bot's managed role also needs to sit above
-every lifecycle role it will assign.
+`GoTall - Management` is the live, reboot-persistent Hermes Discord application
+and is present in both `GoTall Creators` and `GoTall Community`. Its OAuth
+redirect is registered. The legacy `GoTall` application is not part of the new
+platform. Creator account linking still needs the Management client secret and
+a deployed callback handler. Before deterministic lifecycle-role automation,
+grant Management `Manage Roles` and place its role above the four lifecycle
+roles but below Admin. Never put creator users or roles in the Hermes agent
+allowlist; OAuth, deterministic role sync, and the LLM gateway are separate
+trust lanes even when they share one Discord application.
 
 Provider-native credentials should not be copied merely to make the catalog
 look centralized. The catalog is the central map; each secret stays with the
@@ -55,8 +58,8 @@ smallest runtime that needs it.
 | Source control | Local repositories and commits are intact | Reauthenticate GitHub CLI/HTTPS for `arksomething` before pushing or connecting the new Vercel project |
 | Viral migration safety net | Current web credential exists | Revalidate before any migration-critical run |
 | TikTok | Business app and Ads credentials exist; public collector is separate | Official creator OAuth credentials only if that future path is chosen |
-| Instagram collection | Adapter exists | `SCRAPECREATORS_API_KEY` |
-| Discord | Existing bot token/client ID, guild, channels, and roles validated | Client secret and registered OAuth callback |
+| Instagram collection | Credential, direct-post smoke, and bounded profile discovery validated; 29 direct observations written | Top up recurring credits and add a low-credit stop/alert before enabling timers |
+| Discord | GoTall - Management bot/client, two guilds, callback, channels, and roles validated | Client secret, callback handler, and corrected role permission/hierarchy |
 | Transactional email | Resend key validated; `gotall.app` sending verified | Select the exact From addresses |
 | Analytics | PostHog, Singular, Superwall, and Adapty candidates exist | PostHog personal key only for server-side management queries |
 | Object storage | Supabase server access can support Storage | Choose Supabase Storage or deliberately adopt R2 |
