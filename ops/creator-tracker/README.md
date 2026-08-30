@@ -154,13 +154,13 @@ true:
 The endpoint itself only proves web-process liveness. The health unit is
 expected to stay failed while source coverage is degraded.
 
-As of the 2026-08-29 activation audit, TikTok is not subject to a blanket
+As of the 2026-08-30 activation audit, TikTok is not subject to a blanket
 laptop/IP block. The root-owned, signed-manifest-verified yt-dlp 2026.08.19
-runtime resolves discovery for 86 of 90 active TikTok accounts and never falls
-back to `/usr/bin/yt-dlp`. The four account-specific exceptions are
-`dgetstaller` and `gotall.dan` (private or embedding-disabled), `gar.213`
-(private), and `gt66784` (HTTP 403). Direct catch-up has produced 55 complete
-observations across 54 of 4,563 TikTok videos and 13 locked day-seven finals;
+runtime resolves discovery for 87 of 90 active TikTok accounts and never falls
+back to `/usr/bin/yt-dlp`. The three account-specific exceptions are
+`dgetstaller` and `gotall.dan` (private or embedding-disabled) and `gar.213`
+(private). At 00:25 EDT, direct catch-up had reached 242 of 4,563 TikTok videos
+and 16 locked day-seven finals;
 remaining overdue work drains through bounded persistent timer ticks. The
 optional ScrapeCreators TikTok fallback remains explicitly disabled with
 `TIKTOK_FALLBACK=off` even though a key is present; public TikTok collection
