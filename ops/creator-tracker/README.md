@@ -162,17 +162,19 @@ back to `/usr/bin/yt-dlp`. The four account-specific exceptions are
 (private), and `gt66784` (HTTP 403). Direct catch-up has produced 55 complete
 observations across 54 of 4,563 TikTok videos and 13 locked day-seven finals;
 remaining overdue work drains through bounded persistent timer ticks. The
-optional ScrapeCreators TikTok fallback has no configured API key and remains
-disabled, but public TikTok collection itself is functioning.
+optional ScrapeCreators TikTok fallback remains explicitly disabled with
+`TIKTOK_FALLBACK=off` even though a key is present; public TikTok collection
+itself is functioning.
 
-Instagram's adapter and unit files are installed, but
-`SCRAPECREATORS_API_KEY` and the two private executable settings are absent, so
-both Instagram timers remain disabled. All 8 accounts and 451 videos remain
-provider-only, typed `unsupported_no_instagram_adapter`, with no direct
-Instagram observations. The owned adapter must not be described as live until
-the key is installed, one-account identity/counter evidence passes, the full
-bounded catch-up completes, and the two Instagram success markers are fresh.
-Legacy payouts remain in force.
+Instagram's adapter and unit files are installed. The owner-only key passed an
+exactly-one-request identity/counter smoke; a separate bounded 3-request
+discovery resolved 1 account and wrote 29 complete direct video observations.
+Seven accounts and 422 videos remain overdue. Both Instagram timers remain
+disabled because the last provider response reported only 95 credits, which is
+not enough for the remaining 451-video inventory and recurring cadence. The
+adapter must not be described as fully live until provider capacity is
+replenished, the full bounded catch-up completes, and both success markers are
+fresh. Legacy payouts remain in force.
 
 ## Verification and operation
 
