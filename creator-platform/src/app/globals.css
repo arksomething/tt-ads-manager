@@ -3033,22 +3033,50 @@ button {
   background: #fff;
 }
 
-.application-saved {
-  margin-bottom: 28px;
-  padding: 14px;
+.application-progress {
+  margin: 0 0 24px;
+  padding: 0;
   display: flex;
-  align-items: flex-start;
-  gap: 11px;
-  border: 1px solid #bfd8c8;
-  border-radius: 8px;
-  background: #f1f8f3;
-  color: #265f3c;
+  align-items: center;
+  gap: 18px;
+  list-style: none;
 }
 
-.application-saved svg { margin-top: 2px; flex: 0 0 auto; }
-.application-saved div { display: flex; flex-direction: column; gap: 3px; }
-.application-saved strong { font-size: 12px; }
-.application-saved span { font-size: 11px; line-height: 1.5; }
+.application-progress li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #969691;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.application-progress li + li::before {
+  content: "";
+  width: 36px;
+  height: 1px;
+  margin-right: 11px;
+  background: var(--line);
+}
+
+.application-progress li > span {
+  width: 23px;
+  height: 23px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: #fff;
+  font-size: 9px;
+}
+
+.application-progress li[data-state="current"] { color: #111; }
+.application-progress li[data-state="current"] > span { border-color: #111; background: #111; color: #fff; }
+.application-progress li[data-state="complete"] { color: #4d6756; }
+.application-progress li[data-state="complete"] > span { border-color: #a9bcae; background: #edf4ef; }
 
 .application-form > fieldset {
   margin: 0;
@@ -3206,6 +3234,177 @@ button {
   font-size: 12px;
 }
 
+.application-review__header {
+  padding: 5px 0 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.application-review__header .eyebrow {
+  margin-bottom: 10px;
+  color: #55715e;
+}
+
+.application-review__header h2,
+.application-complete h2 {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 620;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+.application-review__header > p:last-child,
+.application-complete > p:not(.eyebrow) {
+  margin: 10px 0 0;
+  color: #6d6d68;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.application-review__identity {
+  margin: 22px 0 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.application-review__identity > div {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafaf8;
+}
+
+.application-review__identity dt {
+  color: #858580;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.application-review__identity dd {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.application-review__wide { grid-column: 1 / -1; }
+
+.application-review__accounts {
+  margin-top: 25px;
+}
+
+.application-review__section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.application-review__section-heading h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.application-review__section-heading > span {
+  color: #858580;
+  font-size: 10px;
+}
+
+.application-review__accounts ul {
+  margin: 11px 0 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  list-style: none;
+  overflow: hidden;
+}
+
+.application-review__accounts li {
+  padding: 13px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  background: #fafaf8;
+}
+
+.application-review__accounts li + li { border-top: 1px solid var(--line); }
+.application-review__accounts li span { color: #777772; font-size: 10px; }
+.application-review__accounts li strong { overflow-wrap: anywhere; text-align: right; font-size: 12px; }
+.application-review > .application-default-deal { margin-top: 22px; }
+
+.application-review__next,
+.application-complete__next {
+  margin-top: 14px;
+  padding: 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border-radius: 8px;
+  background: #f3f3f0;
+  color: #62625d;
+}
+
+.application-review__next > svg,
+.application-complete__next > svg { margin-top: 1px; flex: 0 0 auto; color: #444; }
+.application-review__next > div,
+.application-complete__next > div { display: flex; flex-direction: column; gap: 3px; }
+.application-review__next strong,
+.application-complete__next strong { color: #292927; font-size: 11px; }
+.application-review__next span,
+.application-complete__next span { font-size: 10px; line-height: 1.5; }
+
+.application-edit-button {
+  padding: 5px 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: #70706b;
+  font-size: 10px;
+}
+
+.application-edit-button:hover { color: #111; }
+
+.application-complete {
+  min-height: 510px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  flex-direction: column;
+}
+
+.application-complete__icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #e8f3eb;
+  color: #326044;
+}
+
+.application-complete .eyebrow { margin-bottom: 11px; color: #55715e; }
+.application-complete__next { width: 100%; margin-top: 28px; }
+
+.application-complete__actions {
+  width: 100%;
+  margin-top: 28px;
+  padding-top: 24px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+}
+
 .application-form__footer {
   margin-top: 34px;
   padding-top: 26px;
@@ -3217,7 +3416,8 @@ button {
 }
 
 .application-form__footer > a,
-.application-form__footer > span {
+.application-form__footer > span,
+.application-form__footer > .application-edit-button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -3244,7 +3444,14 @@ button {
   .application-fields { grid-template-columns: 1fr; }
   .application-fields__wide { grid-column: auto; }
   .creator-account-row__fields { grid-template-columns: 1fr; }
+  .application-progress { gap: 10px; }
+  .application-progress li + li::before { width: 22px; margin-right: 7px; }
+  .application-review__identity { grid-template-columns: 1fr; }
+  .application-review__wide { grid-column: auto; }
   .application-form__footer { grid-template-columns: 1fr; }
-  .application-form__footer > a { order: 3; }
+  .application-form__footer > a,
+  .application-form__footer > .application-edit-button { order: 3; }
   .application-form__footer > span { justify-self: start; }
+  .application-complete { min-height: 0; }
+  .application-complete__actions { align-items: stretch; flex-direction: column-reverse; }
 }

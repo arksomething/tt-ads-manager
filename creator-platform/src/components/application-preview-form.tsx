@@ -1,15 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, Check, LockKeyhole, Plus, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  ClipboardCheck,
+  LockKeyhole,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { FormEvent, useRef, useState } from "react";
 
 import {
   CREATOR_APPLICATION_PLATFORMS,
   findDuplicateCreatorAccountIndex,
   PROGRAM_DEFAULT_DEAL,
+  type CreatorApplicationInput,
   type CreatorApplicationPlatform,
 } from "@/lib/creator-application";
+
+type ApplicationStep = "details" | "review" | "complete-preview";
 
 type AccountRow = {
   id: number;
@@ -17,34 +28,78 @@ type AccountRow = {
   handle: string;
 };
 
+type IdentityFields = Pick<
+  CreatorApplicationInput,
+  "name" | "phoneNumber" | "discordUsername"
+>;
+
+function platformLabel(value: CreatorApplicationPlatform) {
+  return CREATOR_APPLICATION_PLATFORMS.find((platform) => platform.value === value)?.label ?? value;
+}
+
+function DefaultDealCard({ titleId }: { titleId: string }) {
+  return (
+    <section className="application-default-deal" aria-labelledby={titleId}>
+      <LockKeyhole aria-hidden="true" size={18} />
+      <div>
+        <span>Assigned automatically</span>
+        <strong id={titleId}>{PROGRAM_DEFAULT_DEAL.label}</strong>
+        <p>Every accepted creator starts on the program default. You will review the exact terms before onboarding.</p>
+      </div>
+    </section>
+  );
+}
+
 export function ApplicationPreviewForm() {
-  const [saved, setSaved] = useState(false);
+  const [step, setStep] = useState<ApplicationStep>("details");
+  const [identity, setIdentity] = useState<IdentityFields>({
+    name: "",
+    phoneNumber: "",
+    discordUsername: "",
+  });
   const [accounts, setAccounts] = useState<AccountRow[]>([
     { id: 1, platform: "TIKTOK", handle: "" },
   ]);
+  const [reviewDraft, setReviewDraft] = useState<CreatorApplicationInput | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [invalidAccountId, setInvalidAccountId] = useState<number | null>(null);
   const [accountAnnouncement, setAccountAnnouncement] = useState("");
   const nextAccountId = useRef(2);
-  const pendingFocusId = useRef<number | null>(null);
+  const pendingFocus = useRef<ApplicationStep | number | null>(null);
   const handleRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
-  const resetSubmissionState = () => {
-    setSaved(false);
+  const resetValidation = () => {
     setAccountError(null);
     setInvalidAccountId(null);
+  };
+
+  const transitionTo = (nextStep: ApplicationStep) => {
+    pendingFocus.current = nextStep;
+    setStep(nextStep);
+  };
+
+  const focusStepHeading = (targetStep: ApplicationStep) => (node: HTMLHeadingElement | null) => {
+    if (node && pendingFocus.current === targetStep) {
+      node.focus();
+      pendingFocus.current = null;
+    }
+  };
+
+  const updateIdentity = (field: keyof IdentityFields, value: string) => {
+    setIdentity((current) => ({ ...current, [field]: value }));
+    resetValidation();
   };
 
   const addAccount = () => {
     const id = nextAccountId.current;
     nextAccountId.current += 1;
-    pendingFocusId.current = id;
+    pendingFocus.current = id;
     setAccounts((current) => [
       ...current,
       { id, platform: "TIKTOK", handle: "" },
     ]);
     setAccountAnnouncement("Creator account added.");
-    resetSubmissionState();
+    resetValidation();
   };
 
   const removeAccount = (id: number) => {
@@ -57,7 +112,7 @@ export function ApplicationPreviewForm() {
     setAccounts(nextAccounts);
     setAccountAnnouncement("Creator account removed.");
     handleRefs.current[nextAccounts[nextFocusIndex].id]?.focus();
-    resetSubmissionState();
+    resetValidation();
   };
 
   const updateAccount = (
@@ -75,10 +130,10 @@ export function ApplicationPreviewForm() {
           : account,
       ) as AccountRow[],
     );
-    resetSubmissionState();
+    resetValidation();
   };
 
-  const submitPreview = (event: FormEvent<HTMLFormElement>) => {
+  const reviewApplication = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const duplicateIndex = findDuplicateCreatorAccountIndex(accounts);
@@ -86,134 +141,245 @@ export function ApplicationPreviewForm() {
       const duplicate = accounts[duplicateIndex];
       setAccountError("That platform and handle are already listed.");
       setInvalidAccountId(duplicate.id);
-      setSaved(false);
       handleRefs.current[duplicate.id]?.focus();
       return;
     }
 
-    setAccountError(null);
-    setInvalidAccountId(null);
-    setSaved(true);
+    const draft: CreatorApplicationInput = {
+      name: identity.name.trim(),
+      phoneNumber: identity.phoneNumber.trim(),
+      discordUsername: identity.discordUsername.trim(),
+      accounts: accounts.map(({ platform, handle }) => ({
+        platform,
+        handle: handle.trim(),
+      })),
+    };
+
+    resetValidation();
+    setReviewDraft(draft);
+    transitionTo("review");
   };
 
-  return (
-    <form className="application-form" onSubmit={submitPreview}>
-      {saved ? (
-        <div className="application-saved" role="status">
-          <Check size={17} />
+  const finishPreview = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    transitionTo("complete-preview");
+  };
+
+  const editDetails = () => {
+    transitionTo("details");
+  };
+
+  if (step === "complete-preview") {
+    return (
+      <section className="application-form application-complete" role="status" aria-labelledby="application-complete-title">
+        <div className="application-complete__icon"><Check aria-hidden="true" size={22} /></div>
+        <p className="eyebrow">Preview complete</p>
+        <h2 id="application-complete-title" ref={focusStepHeading("complete-preview")} tabIndex={-1}>Your application is ready.</h2>
+        <p>
+          In the live flow, this is where your application will be submitted to the creator team.
+          Nothing was submitted or stored in this frontend preview.
+        </p>
+        <div className="application-complete__next">
+          <ClipboardCheck aria-hidden="true" size={18} />
           <div>
-            <strong>Frontend flow complete</strong>
-            <span>
-              The {PROGRAM_DEFAULT_DEAL.label.toLocaleLowerCase("en-US")} would be assigned automatically.
-              Nothing was submitted or stored.
-            </span>
+            <strong>Agreement comes after approval</strong>
+            <span>If accepted, you will review and sign the standard creator agreement during onboarding.</span>
           </div>
         </div>
-      ) : null}
-
-      <section className="application-default-deal" aria-labelledby="default-deal-title">
-        <LockKeyhole aria-hidden="true" size={18} />
-        <div>
-          <span>Assigned automatically</span>
-          <strong id="default-deal-title">{PROGRAM_DEFAULT_DEAL.label}</strong>
-          <p>Every accepted creator starts on the program default. You will review the exact terms before onboarding.</p>
+        <div className="application-complete__actions">
+          <button className="button button--ghost" type="button" onClick={editDetails}>Edit details</button>
+          <Link className="button button--ink" href="/">Return to creator program <ArrowRight aria-hidden="true" size={16} /></Link>
         </div>
       </section>
+    );
+  }
 
-      <div className="application-fields">
-        <label>
-          <span>Name</span>
-          <input name="name" autoComplete="name" placeholder="Your name" required onChange={resetSubmissionState} />
-        </label>
-        <label>
-          <span>Phone number</span>
-          <input name="phoneNumber" type="tel" autoComplete="tel" inputMode="tel" placeholder="+1 555 555 0123" required onChange={resetSubmissionState} />
-        </label>
-        <label className="application-fields__wide">
-          <span>Discord username</span>
-          <input name="discordUsername" autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="yourusername" required onChange={resetSubmissionState} />
-        </label>
-      </div>
+  return (
+    <form
+      className="application-form"
+      onSubmit={step === "details" ? reviewApplication : finishPreview}
+    >
+      <ol className="application-progress" aria-label="Application progress">
+        <li data-state={step === "details" ? "current" : "complete"}><span>1</span> Details</li>
+        <li data-state={step === "review" ? "current" : "upcoming"}><span>2</span> Review</li>
+      </ol>
 
-      <fieldset className="creator-accounts">
-        <legend>Creator accounts</legend>
-        <p>Add every TikTok and Instagram handle you want connected to your creator profile.</p>
+      {step === "details" ? (
+        <>
+          <DefaultDealCard titleId="default-deal-title" />
 
-        <div className="creator-account-list">
-          {accounts.map((account, index) => {
-            const accountNumber = index + 1;
-            const labelId = `creator-account-${account.id}-label`;
-            const errorId = `creator-account-${account.id}-error`;
-            const isInvalid = invalidAccountId === account.id;
+          <div className="application-fields">
+            <label>
+              <span>Name</span>
+              <input
+                ref={(node) => {
+                  if (node && pendingFocus.current === "details") {
+                    node.focus();
+                    pendingFocus.current = null;
+                  }
+                }}
+                name="name"
+                autoComplete="name"
+                placeholder="Your name"
+                value={identity.name}
+                required
+                onChange={(event) => updateIdentity("name", event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Phone number</span>
+              <input
+                name="phoneNumber"
+                type="tel"
+                autoComplete="tel"
+                inputMode="tel"
+                placeholder="+1 555 555 0123"
+                value={identity.phoneNumber}
+                required
+                onChange={(event) => updateIdentity("phoneNumber", event.target.value)}
+              />
+            </label>
+            <label className="application-fields__wide">
+              <span>Discord username</span>
+              <input
+                name="discordUsername"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                placeholder="yourusername"
+                value={identity.discordUsername}
+                required
+                onChange={(event) => updateIdentity("discordUsername", event.target.value)}
+              />
+            </label>
+          </div>
 
-            return (
-              <div className="creator-account-row" role="group" aria-labelledby={labelId} key={account.id}>
-                <div className="creator-account-row__header">
-                  <strong id={labelId}>Account {accountNumber}</strong>
-                  {accounts.length > 1 ? (
-                    <button type="button" onClick={() => removeAccount(account.id)} aria-label={`Remove account ${accountNumber}`}>
-                      <Trash2 aria-hidden="true" size={14} /> Remove
-                    </button>
-                  ) : null}
-                </div>
-                <div className="creator-account-row__fields">
-                  <label htmlFor={`creator-account-${account.id}-platform`}>
-                    <span>Platform</span>
-                    <select
-                      id={`creator-account-${account.id}-platform`}
-                      name={`accounts[${index}][platform]`}
-                      aria-label={`Platform ${accountNumber}`}
-                      value={account.platform}
-                      onChange={(event) => updateAccount(account.id, "platform", event.target.value)}
-                      required
-                    >
-                      {CREATOR_APPLICATION_PLATFORMS.map((platform) => (
-                        <option value={platform.value} key={platform.value}>{platform.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label htmlFor={`creator-account-${account.id}-handle`}>
-                    <span>Creator handle</span>
-                    <input
-                      ref={(node) => {
-                        handleRefs.current[account.id] = node;
-                        if (node && pendingFocusId.current === account.id) {
-                          node.focus();
-                          pendingFocusId.current = null;
-                        }
-                      }}
-                      id={`creator-account-${account.id}-handle`}
-                      name={`accounts[${index}][handle]`}
-                      aria-label={`Creator handle ${accountNumber}`}
-                      aria-invalid={isInvalid || undefined}
-                      aria-describedby={isInvalid ? errorId : undefined}
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      placeholder="@yourhandle"
-                      value={account.handle}
-                      onChange={(event) => updateAccount(account.id, "handle", event.target.value)}
-                      required
-                    />
-                    {isInvalid && accountError ? <span className="application-field-error" id={errorId}>{accountError}</span> : null}
-                  </label>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+          <fieldset className="creator-accounts">
+            <legend>Creator accounts</legend>
+            <p>Add every TikTok and Instagram handle you want connected to your creator profile.</p>
 
-        <button className="button button--ghost creator-account-add" type="button" onClick={addAccount}>
-          <Plus aria-hidden="true" size={16} /> Add another handle
-        </button>
-        <span className="sr-only" aria-live="polite">{accountAnnouncement}</span>
-      </fieldset>
+            <div className="creator-account-list">
+              {accounts.map((account, index) => {
+                const accountNumber = index + 1;
+                const labelId = `creator-account-${account.id}-label`;
+                const errorId = `creator-account-${account.id}-error`;
+                const isInvalid = invalidAccountId === account.id;
 
-      <div className="application-form__footer">
-        <Link href="/"><ArrowLeft size={15} /> Back</Link>
-        <span><LockKeyhole size={14} /> Preview mode · details stay in this browser</span>
-        <button className="button button--ink button--large" type="submit">Review application <ArrowRight size={17} /></button>
-      </div>
+                return (
+                  <div className="creator-account-row" role="group" aria-labelledby={labelId} key={account.id}>
+                    <div className="creator-account-row__header">
+                      <strong id={labelId}>Account {accountNumber}</strong>
+                      {accounts.length > 1 ? (
+                        <button type="button" onClick={() => removeAccount(account.id)} aria-label={`Remove account ${accountNumber}`}>
+                          <Trash2 aria-hidden="true" size={14} /> Remove
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="creator-account-row__fields">
+                      <label htmlFor={`creator-account-${account.id}-platform`}>
+                        <span>Platform</span>
+                        <select
+                          id={`creator-account-${account.id}-platform`}
+                          name={`accounts[${index}][platform]`}
+                          aria-label={`Platform ${accountNumber}`}
+                          value={account.platform}
+                          onChange={(event) => updateAccount(account.id, "platform", event.target.value)}
+                          required
+                        >
+                          {CREATOR_APPLICATION_PLATFORMS.map((platform) => (
+                            <option value={platform.value} key={platform.value}>{platform.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label htmlFor={`creator-account-${account.id}-handle`}>
+                        <span>Creator handle</span>
+                        <input
+                          ref={(node) => {
+                            handleRefs.current[account.id] = node;
+                            if (node && pendingFocus.current === account.id) {
+                              node.focus();
+                              pendingFocus.current = null;
+                            }
+                          }}
+                          id={`creator-account-${account.id}-handle`}
+                          name={`accounts[${index}][handle]`}
+                          aria-label={`Creator handle ${accountNumber}`}
+                          aria-invalid={isInvalid || undefined}
+                          aria-describedby={isInvalid ? errorId : undefined}
+                          autoCapitalize="none"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          placeholder="@yourhandle"
+                          value={account.handle}
+                          onChange={(event) => updateAccount(account.id, "handle", event.target.value)}
+                          required
+                        />
+                        {isInvalid && accountError ? <span className="application-field-error" id={errorId}>{accountError}</span> : null}
+                      </label>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button className="button button--ghost creator-account-add" type="button" onClick={addAccount}>
+              <Plus aria-hidden="true" size={16} /> Add another handle
+            </button>
+            <span className="sr-only" aria-live="polite">{accountAnnouncement}</span>
+          </fieldset>
+
+          <div className="application-form__footer">
+            <Link href="/"><ArrowLeft aria-hidden="true" size={15} /> Back</Link>
+            <span><LockKeyhole aria-hidden="true" size={14} /> Preview mode · details stay in this browser</span>
+            <button className="button button--ink button--large" type="submit">Review application <ArrowRight aria-hidden="true" size={17} /></button>
+          </div>
+        </>
+      ) : reviewDraft ? (
+        <section className="application-review" aria-labelledby="application-review-title">
+          <div className="application-review__header">
+            <p className="eyebrow">Nothing has been submitted yet</p>
+            <h2 id="application-review-title" ref={focusStepHeading("review")} tabIndex={-1}>Review your application</h2>
+            <p>Make sure these are the creator accounts you want us to connect.</p>
+          </div>
+
+          <dl className="application-review__identity">
+            <div><dt>Name</dt><dd>{reviewDraft.name}</dd></div>
+            <div><dt>Phone number</dt><dd>{reviewDraft.phoneNumber}</dd></div>
+            <div className="application-review__wide"><dt>Discord username</dt><dd>{reviewDraft.discordUsername}</dd></div>
+          </dl>
+
+          <div className="application-review__accounts">
+            <div className="application-review__section-heading">
+              <h3>Creator accounts</h3>
+              <span>{reviewDraft.accounts.length} {reviewDraft.accounts.length === 1 ? "account" : "accounts"}</span>
+            </div>
+            <ul>
+              {reviewDraft.accounts.map((account, index) => (
+                <li key={`${account.platform}:${account.handle}:${index}`}>
+                  <span>{platformLabel(account.platform)}</span>
+                  <strong>{account.handle.startsWith("@") ? account.handle : `@${account.handle}`}</strong>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <DefaultDealCard titleId="review-default-deal-title" />
+
+          <div className="application-review__next">
+            <ClipboardCheck aria-hidden="true" size={18} />
+            <div>
+              <strong>Signing is a separate onboarding step</strong>
+              <span>If approved, you will receive the exact standard agreement to review and sign.</span>
+            </div>
+          </div>
+
+          <div className="application-form__footer application-form__footer--review">
+            <button className="application-edit-button" type="button" onClick={editDetails}><ArrowLeft aria-hidden="true" size={15} /> Edit details</button>
+            <span><LockKeyhole aria-hidden="true" size={14} /> Preview mode · nothing will be submitted</span>
+            <button className="button button--ink button--large" type="submit">Finish preview <ArrowRight aria-hidden="true" size={17} /></button>
+          </div>
+        </section>
+      ) : null}
     </form>
   );
 }

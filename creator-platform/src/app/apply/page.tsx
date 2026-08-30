@@ -15,7 +15,7 @@ export default function ApplyPage() {
     <main className="application-page">
       <header className="application-header">
         <Link href="/" className="wordmark"><BrandMark /><span>Creator program</span></Link>
-        <span>Application 1 of 1</span>
+        <span>Application preview</span>
       </header>
       <section className="application-layout">
         <div className="application-intro">

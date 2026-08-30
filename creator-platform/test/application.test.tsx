@@ -27,8 +27,9 @@ describe("application preview", () => {
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 
-  it("supports multiple platform handles and completes only in the browser", async () => {
+  it("reviews every value, preserves edits, and completes only in the browser", async () => {
     const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
     render(<ApplicationPreviewForm />);
 
     await user.type(screen.getByRole("textbox", { name: "Name" }), "Dylan Smith");
@@ -40,10 +41,36 @@ describe("application preview", () => {
     await user.type(screen.getByRole("textbox", { name: "Creator handle 2" }), "@dylan.builds");
     await user.click(screen.getByRole("button", { name: /Review application/i }));
 
+    const reviewHeading = screen.getByRole("heading", { name: "Review your application" });
+    expect(reviewHeading).toHaveFocus();
+    expect(screen.getByText("Nothing has been submitted yet")).toBeInTheDocument();
+    expect(screen.getByText("Dylan Smith")).toBeInTheDocument();
+    expect(screen.getByText("+1 555 555 0123")).toBeInTheDocument();
+    expect(screen.getByText("dylan")).toBeInTheDocument();
+    expect(screen.getByText("@dylan.grows")).toBeInTheDocument();
+    expect(screen.getByText("@dylan.builds")).toBeInTheDocument();
+    expect(screen.getByText("Signing is a separate onboarding step")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Edit details" }));
+    const nameInput = screen.getByRole("textbox", { name: "Name" });
+    expect(nameInput).toHaveFocus();
+    expect(nameInput).toHaveValue("Dylan Smith");
+    expect(screen.getByRole("textbox", { name: "Phone number" })).toHaveValue("+1 555 555 0123");
+    expect(screen.getByRole("textbox", { name: "Creator handle 2" })).toHaveValue("@dylan.builds");
+
+    await user.clear(nameInput);
+    await user.type(nameInput, "Dylan Jones");
+    await user.click(screen.getByRole("button", { name: /Review application/i }));
+    expect(screen.getByText("Dylan Jones")).toBeInTheDocument();
+    expect(screen.queryByText("Dylan Smith")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Finish preview" }));
     const status = screen.getByRole("status");
-    expect(status).toHaveTextContent("Frontend flow complete");
-    expect(status).toHaveTextContent("standard creator deal would be assigned automatically");
+    expect(status).toHaveTextContent("Preview complete");
     expect(status).toHaveTextContent("Nothing was submitted or stored");
+    expect(screen.getByRole("heading", { name: "Your application is ready." })).toHaveFocus();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 
   it("focuses added handles and prevents duplicate platform accounts", async () => {
