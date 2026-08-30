@@ -1,0 +1,14 @@
+[Unit]
+Description=Run creator tracker scheduler every 5 minutes
+
+[Timer]
+Unit=creator-tracker-scheduler-tick.service
+OnBootSec=90s
+OnCalendar=*:0/5
+AccuracySec=10s
+RandomizedDelaySec=15s
+FixedRandomDelay=true
+Persistent=true
+
+[Install]
+WantedBy=timers.target

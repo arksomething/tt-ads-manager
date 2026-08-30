@@ -1,0 +1,14 @@
+[Unit]
+Description=Drain due owned Instagram video observations every 5 minutes
+
+[Timer]
+Unit=creator-tracker-instagram-scheduler.service
+OnBootSec=2min
+OnCalendar=*:2/5
+AccuracySec=10s
+RandomizedDelaySec=15s
+FixedRandomDelay=true
+Persistent=true
+
+[Install]
+WantedBy=timers.target

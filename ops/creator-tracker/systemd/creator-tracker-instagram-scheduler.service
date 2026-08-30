@@ -1,0 +1,27 @@
+[Unit]
+Description=Creator tracker owned Instagram due-work scheduler
+
+[Service]
+Type=oneshot
+Slice=creator-tracker.slice
+WorkingDirectory=%h/projects/tt-ads-manager
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-%h/.config/creator-tracker/env
+ExecStartPre=/usr/bin/nm-online -q --timeout=60
+ExecStart=/bin/bash %h/.local/libexec/creator-tracker/run-contained-job.sh instagram-scheduler
+TimeoutStartSec=10min
+SuccessExitStatus=75
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=full
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+StandardOutput=journal
+StandardError=journal

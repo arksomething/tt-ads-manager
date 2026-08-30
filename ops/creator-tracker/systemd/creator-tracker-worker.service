@@ -1,0 +1,34 @@
+[Unit]
+Description=Creator tracker loopback dashboard worker
+StartLimitIntervalSec=5min
+StartLimitBurst=8
+
+[Service]
+Type=simple
+Slice=creator-tracker.slice
+WorkingDirectory=%h/projects/tt-ads-manager
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-%h/.config/creator-tracker/env
+ExecStart=/bin/bash %h/.local/libexec/creator-tracker/run-contained-job.sh collector-worker
+Restart=always
+RestartSec=15s
+TimeoutStopSec=45s
+KillMode=control-group
+OOMPolicy=stop
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=full
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Refresh creator tracker roster every 30 minutes
+
+[Timer]
+Unit=creator-tracker-roster-refresh.service
+OnBootSec=2min
+OnCalendar=*-*-* *:03,33:00
+AccuracySec=30s
+RandomizedDelaySec=60s
+FixedRandomDelay=true
+Persistent=true
+
+[Install]
+WantedBy=timers.target

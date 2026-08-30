@@ -1,0 +1,16 @@
+[Unit]
+Description=Creator tracker aggregate resource boundary
+
+[Slice]
+CPUAccounting=true
+MemoryAccounting=true
+IOAccounting=true
+CPUQuota=200%
+CPUWeight=50
+IOWeight=50
+MemoryHigh=1536M
+MemoryMax=2G
+MemorySwapMax=512M
+TasksMax=384
+ManagedOOMMemoryPressure=kill
+ManagedOOMMemoryPressureLimit=70%

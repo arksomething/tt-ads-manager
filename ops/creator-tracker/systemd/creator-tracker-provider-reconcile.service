@@ -1,0 +1,31 @@
+[Unit]
+Description=Creator tracker Viral provider safety-net reconciliation
+StartLimitIntervalSec=2h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+Slice=creator-tracker.slice
+WorkingDirectory=%h/projects/tt-ads-manager
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-%h/.config/creator-tracker/env
+ExecStartPre=/usr/bin/nm-online -q --timeout=60
+ExecStart=/bin/bash %h/.local/libexec/creator-tracker/run-contained-job.sh provider-reconcile
+TimeoutStartSec=25min
+SuccessExitStatus=75
+Restart=on-failure
+RestartSec=5min
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=full
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+StandardOutput=journal
+StandardError=journal
