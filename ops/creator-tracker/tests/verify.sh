@@ -210,7 +210,7 @@ wait "$signal_supervisor_pid"
 signal_exit=$?
 set -e
 signal_supervisor_pid=''
-[[ "$signal_exit" -ne 0 ]]
+[[ "$signal_exit" -eq 0 ]]
 for stopped_pid in "$managed_pid" "$descendant_pid"; do
   if kill -0 "$stopped_pid" 2>/dev/null; then
     printf 'creator-tracker: process %s survived the supervisor signal\n' \

@@ -208,7 +208,10 @@ finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 if [[ -n "$received_signal" ]]; then
   write_status stopped "$exit_code" "$finished_at"
-  exit "$exit_code"
+  # A supervisor-initiated stop/reboot is an expected lifecycle transition,
+  # not a collector failure. Retain the child's real signal exit in the status
+  # evidence while returning success to systemd.
+  exit 0
 fi
 
 if ((exit_code == 0)); then
