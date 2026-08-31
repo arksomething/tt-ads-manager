@@ -74,8 +74,7 @@ export async function POST(request: NextRequest) {
   return copySupabaseResponseState(
     successResponse,
     NextResponse.redirect(
-      authRedirectUrl(request, "/auth/sign-in", {
-        notice: "Check your inbox and confirm your email before signing in.",
+      authRedirectUrl(request, "/auth/check-email", {
         next: nextPath,
       }),
       303,

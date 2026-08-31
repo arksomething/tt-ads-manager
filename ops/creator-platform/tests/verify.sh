@@ -21,13 +21,14 @@ node -e '
   if (project.passwordChangeReauthentication !== true || project.passwordChangeNotifications !== true) process.exit(1);
   if (!project.migrations?.includes("creator-platform/supabase/migrations/20260830113000_creator_account_hardening.sql")) process.exit(1);
   if (!project.migrations?.includes("creator-platform/supabase/migrations/20260830120000_creator_account_state_fix.sql")) process.exit(1);
+  if (!project.migrations?.includes("creator-platform/supabase/migrations/20260831100000_creator_account_real_home.sql")) process.exit(1);
   if (project.agreementProvider !== null) process.exit(1);
 ' "${supabase_project}"
 node -e '
   const project = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
   if (project.projectName !== "gotall-creator-platform") process.exit(1);
   if (project.rootDirectory !== "creator-platform" || project.framework !== "nextjs") process.exit(1);
-  if (project.deploymentState !== "creator-account-flow-live") process.exit(1);
+  if (project.deploymentState !== "creator-real-account-flow-live") process.exit(1);
   if (project.currentPreviewDomain !== "gotall-creator-platform.vercel.app") process.exit(1);
   if (!project.latestProductionDeploymentId?.startsWith("dpl_")) process.exit(1);
 ' "${vercel_project}"

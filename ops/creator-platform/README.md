@@ -58,6 +58,14 @@ and provider-neutral agreement tables all have row-level security enabled;
 anonymous users have no table grants. Applicant-entered handles remain
 provisional until provider-native ownership evidence is recorded.
 
+The production signup, confirmation, resend-confirmation, sign-in, sign-out,
+application, and password-recovery paths have passed an end-to-end disposable
+account test. Authenticated account and status pages show only the creator's
+persisted application snapshot and never send a real creator into a public
+sample dashboard. Production intentionally has no owner, creator, or staff
+identity yet; the first durable account must use an explicitly chosen real
+email rather than an inferred legacy handle.
+
 `GoTall - Management` is the live, reboot-persistent Hermes Discord application
 and is present in both `GoTall Creators` and `GoTall Community`. Its OAuth
 redirect is registered. The legacy `GoTall` application is not part of the new
@@ -80,7 +88,7 @@ smallest runtime that needs it.
 
 | Area | Existing credential candidate | Remaining input |
 | --- | --- | --- |
-| Database, Supabase, and web auth | Dedicated creator Supabase project, RLS schema, confirmed email/password auth, and Vercel runtime values are live | Add CAPTCHA before a broad public launch; create an integration-encryption key only when an integration needs stored tokens |
+| Database, Supabase, and web auth | Dedicated creator Supabase project, RLS schema, confirmed email/password auth, resend confirmation, recovery, protected persisted account pages, and Vercel runtime values are live | Create the first explicitly identified account; add CAPTCHA before a broad public launch; create an integration-encryption key only when an integration needs stored tokens |
 | Domain and hosting | Cloudflare DNS, Vercel, and VPS access validated | None for the additive domain preparation |
 | Source control | Local repositories and commits are intact | Reauthenticate GitHub CLI/HTTPS for `arksomething` before pushing or connecting the new Vercel project |
 | Viral migration safety net | Current web credential exists | Revalidate before any migration-critical run |

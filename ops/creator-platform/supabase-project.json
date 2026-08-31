@@ -11,7 +11,8 @@
   "migrations": [
     "creator-platform/supabase/migrations/20260830102000_creator_accounts.sql",
     "creator-platform/supabase/migrations/20260830113000_creator_account_hardening.sql",
-    "creator-platform/supabase/migrations/20260830120000_creator_account_state_fix.sql"
+    "creator-platform/supabase/migrations/20260830120000_creator_account_state_fix.sql",
+    "creator-platform/supabase/migrations/20260831100000_creator_account_real_home.sql"
   ],
   "emailSender": "accounts@gotall.app",
   "emailProvider": "Resend SMTP",

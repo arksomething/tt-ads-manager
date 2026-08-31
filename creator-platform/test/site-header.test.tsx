@@ -34,4 +34,14 @@ describe("site header", () => {
       expect(link).toHaveAttribute("href", "/auth/sign-in");
     }
   });
+
+  it("routes a signed-in creator to their real account", () => {
+    render(<SiteHeader signedIn />);
+
+    for (const link of screen.getAllByRole("link", { name: /your account/i })) {
+      expect(link).toHaveAttribute("href", "/account");
+    }
+    expect(screen.queryByRole("link", { name: "Sign in" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /^Apply$/ })).not.toBeInTheDocument();
+  });
 });

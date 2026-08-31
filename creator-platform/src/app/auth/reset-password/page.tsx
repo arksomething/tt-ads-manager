@@ -44,7 +44,7 @@ export default async function ResetPasswordPage({
       title="Choose a new password."
       description="Choose a password you do not use on another service. Your reset link will be verified when you save it."
       error={getSearchParamValue(params, "error")}
-      footer={<Link href="/account">Cancel and return to account</Link>}
+      footer={<Link href="/auth/sign-in">Cancel reset and return to sign in</Link>}
     >
       <form className="auth-form" action="/api/auth/reset-password" method="post">
         <label>

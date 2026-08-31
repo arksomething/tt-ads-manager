@@ -44,7 +44,7 @@ function DefaultDealCard({ titleId }: { titleId: string }) {
       <div>
         <span>Assigned automatically</span>
         <strong id={titleId}>{PROGRAM_DEFAULT_DEAL.label}</strong>
-        <p>Every accepted creator starts on the program default. You will review the exact terms before onboarding.</p>
+        <p>If accepted, you will review the exact standard-deal version assigned before onboarding. No agreement is active until those terms are available to you.</p>
       </div>
     </section>
   );

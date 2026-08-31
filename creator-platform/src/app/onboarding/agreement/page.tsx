@@ -51,7 +51,7 @@ export default async function AgreementPage() {
           </p>
           <div className="account-status__actions">
             {complete ? (
-              <Link className="button button--ink button--large" href="/preview/creator">Open dashboard preview</Link>
+              <Link className="button button--ink button--large" href="/account">Open your creator account</Link>
             ) : (
               <span className="account-status__next">No signing provider has been exposed in this account flow yet.</span>
             )}

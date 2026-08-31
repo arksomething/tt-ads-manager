@@ -6,7 +6,11 @@ import { useEffect, useRef, useState } from "react";
 
 import { BrandMark } from "@/components/brand-mark";
 
-export function SiteHeader() {
+type SiteHeaderProps = {
+  signedIn?: boolean;
+};
+
+export function SiteHeader({ signedIn = false }: SiteHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const menuPanelRef = useRef<HTMLDivElement>(null);
@@ -44,11 +48,13 @@ export function SiteHeader() {
         </nav>
 
         <div className="site-header__actions">
-          <Link className="button button--ghost header-sign-in" href="/auth/sign-in">
-            Sign in
-          </Link>
-          <Link className="button button--ink" href="/apply">
-            Apply
+          {!signedIn ? (
+            <Link className="button button--ghost header-sign-in" href="/auth/sign-in">
+              Sign in
+            </Link>
+          ) : null}
+          <Link className="button button--ink" href={signedIn ? "/account" : "/apply"}>
+            {signedIn ? "Your account" : "Apply"}
             <ArrowUpRight aria-hidden="true" size={16} />
           </Link>
           <button
@@ -76,11 +82,17 @@ export function SiteHeader() {
             <Link href="/#questions" onClick={closeMenu}>Questions</Link>
           </nav>
           <div>
-            <Link className="button button--ghost" href="/auth/sign-in" onClick={closeMenu}>
-              Sign in
-            </Link>
-            <Link className="button button--ink" href="/apply" onClick={closeMenu}>
-              Apply
+            {!signedIn ? (
+              <Link className="button button--ghost" href="/auth/sign-in" onClick={closeMenu}>
+                Sign in
+              </Link>
+            ) : null}
+            <Link
+              className="button button--ink"
+              href={signedIn ? "/account" : "/apply"}
+              onClick={closeMenu}
+            >
+              {signedIn ? "Your account" : "Apply"}
               <ArrowUpRight aria-hidden="true" size={16} />
             </Link>
           </div>

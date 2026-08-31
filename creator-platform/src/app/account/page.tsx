@@ -3,8 +3,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { BrandMark } from "@/components/brand-mark";
+import { SubmittedApplicationDetails } from "@/components/submitted-application-details";
 import { getSearchParamValue } from "@/lib/auth-navigation";
 import { hasSupabaseAuthEnv } from "@/lib/server-env";
+import { getOwnCreatorApplication } from "@/server/accounts/application";
 import { getCreatorAccountState } from "@/server/accounts/state";
 import { getCurrentAccount } from "@/server/auth/session";
 
@@ -24,8 +26,28 @@ function stateLabel(value: string | null, fallback: string) {
     : fallback;
 }
 
-function NextAccountAction({ nextPath }: { nextPath: string | null | undefined }) {
-  if (nextPath === "/apply" || !nextPath) {
+function accountLabel(value: string | null | undefined) {
+  if (value === "suspended") return "Suspended";
+  if (value === "closed") return "Closed";
+  return "Verified email";
+}
+
+function NextAccountAction({
+  nextPath,
+  unavailable,
+}: {
+  nextPath: string | null | undefined;
+  unavailable: boolean;
+}) {
+  if (unavailable) {
+    return (
+      <span className="account-status__next">
+        We cannot determine your next action right now. Refresh this page before continuing.
+      </span>
+    );
+  }
+
+  if (nextPath === "/apply") {
     return <Link className="button button--ink button--large" href="/apply">Continue application</Link>;
   }
 
@@ -37,8 +59,8 @@ function NextAccountAction({ nextPath }: { nextPath: string | null | undefined }
     return <Link className="button button--ink button--large" href="/onboarding/agreement">Continue to agreement</Link>;
   }
 
-  if (nextPath === "/preview/creator") {
-    return <Link className="button button--ink button--large" href="/preview/creator">Open dashboard preview</Link>;
+  if (nextPath === "/account") {
+    return <span className="account-status__next">Your creator account is active.</span>;
   }
 
   return <span className="account-status__next">The creator team is preparing your next step.</span>;
@@ -55,14 +77,24 @@ export default async function AccountPage({ searchParams }: AccountPageProps) {
   }
 
   const params = await searchParams;
-  let accountState = null;
-  let stateError = null;
-
-  try {
-    accountState = await getCreatorAccountState();
-  } catch {
-    stateError = "Your account is active, but its onboarding state is temporarily unavailable.";
-  }
+  const [accountStateResult, applicationResult] = await Promise.allSettled([
+    getCreatorAccountState(),
+    getOwnCreatorApplication(),
+  ]);
+  const accountState = accountStateResult.status === "fulfilled"
+    ? accountStateResult.value
+    : null;
+  const application = applicationResult.status === "fulfilled"
+    ? applicationResult.value
+    : null;
+  const stateUnavailable =
+    accountStateResult.status === "rejected" || !accountState?.nextPath;
+  const accountError = stateUnavailable
+    ? "Your account is active, but its onboarding state is temporarily unavailable."
+    : applicationResult.status === "rejected"
+      ? "Your account status loaded, but the submitted application details are temporarily unavailable."
+      : null;
+  const firstName = application?.name.split(/\s+/u)[0];
 
   return (
     <main className="account-page">
@@ -77,7 +109,7 @@ export default async function AccountPage({ searchParams }: AccountPageProps) {
       <section className="account-layout">
         <div>
           <p className="eyebrow">Creator account</p>
-          <h1>Your next step stays clear.</h1>
+          <h1>{firstName ? `Welcome, ${firstName}.` : "Your creator account."}</h1>
           <p>{account.email ?? "Verified creator account"}</p>
         </div>
 
@@ -89,16 +121,26 @@ export default async function AccountPage({ searchParams }: AccountPageProps) {
               {getSearchParamValue(params, "notice")}
             </p>
           ) : null}
-          {stateError ? <p className="auth-message auth-message--error" role="alert">{stateError}</p> : null}
+          {accountError ? <p className="auth-message auth-message--error" role="alert">{accountError}</p> : null}
 
           <dl className="account-status__list">
-            <div><dt>Profile</dt><dd>{stateLabel(accountState?.profileState ?? null, "Account created")}</dd></div>
-            <div><dt>Application</dt><dd>{stateLabel(accountState?.applicationState ?? null, "Not submitted")}</dd></div>
+            <div><dt>Account</dt><dd>{accountLabel(accountState?.profileState)}</dd></div>
+            <div><dt>Application</dt><dd>{stateLabel(accountState?.applicationState ?? application?.status ?? null, "Not submitted")}</dd></div>
             <div><dt>Agreement</dt><dd>{stateLabel(accountState?.agreementState ?? null, "Not started")}</dd></div>
           </dl>
 
+          {application ? (
+            <SubmittedApplicationDetails
+              application={application}
+              titleId="account-submitted-details-title"
+            />
+          ) : null}
+
           <div className="account-status__actions">
-            <NextAccountAction nextPath={accountState?.nextPath} />
+            <NextAccountAction
+              nextPath={accountState?.nextPath}
+              unavailable={stateUnavailable}
+            />
             <Link className="button button--ghost button--large" href="/">Creator program</Link>
           </div>
         </section>

@@ -2,6 +2,7 @@ import { NextRequest, type NextResponse } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST as forgotPassword } from "@/app/api/auth/forgot-password/route";
+import { POST as resendConfirmation } from "@/app/api/auth/resend-confirmation/route";
 import { POST as resetPassword } from "@/app/api/auth/reset-password/route";
 import { POST as signUp } from "@/app/api/auth/sign-up/route";
 import { GET as confirmAuth } from "@/app/auth/confirm/route";
@@ -15,6 +16,7 @@ import {
 const mocks = vi.hoisted(() => ({
   authResponse: null as NextResponse | null,
   exchangeCodeForSession: vi.fn(),
+  resend: vi.fn(),
   resetPasswordForEmail: vi.fn(),
   signUp: vi.fn(),
   updateUser: vi.fn(),
@@ -33,6 +35,7 @@ vi.mock("@/lib/supabase/server", async (importOriginal) => {
       return {
         auth: {
           exchangeCodeForSession: mocks.exchangeCodeForSession,
+          resend: mocks.resend,
           resetPasswordForEmail: mocks.resetPasswordForEmail,
           signUp: mocks.signUp,
           updateUser: mocks.updateUser,
@@ -79,6 +82,7 @@ describe("creator auth routes", () => {
 
     mocks.authResponse = null;
     mocks.exchangeCodeForSession.mockReset();
+    mocks.resend.mockReset();
     mocks.resetPasswordForEmail.mockReset();
     mocks.signUp.mockReset();
     mocks.updateUser.mockReset();
@@ -112,7 +116,7 @@ describe("creator auth routes", () => {
     );
 
     expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toContain("/auth/sign-in?");
+    expect(response.headers.get("location")).toContain("/auth/check-email?");
     expect(response.cookies.get("sb-test-code-verifier")?.value).toBe(
       "pkce-verifier",
     );
@@ -120,6 +124,30 @@ describe("creator auth routes", () => {
     expect(mocks.signUp).toHaveBeenCalledWith({
       email: "creator@example.com",
       password: "a secure password",
+      options: {
+        emailRedirectTo:
+          "https://creators.gotall.com/auth/confirm?next=%2Fapply",
+      },
+    });
+  });
+
+  it("resends confirmation through the canonical callback without exposing account existence", async () => {
+    mocks.resend.mockResolvedValue({ data: {}, error: new Error("unknown account") });
+
+    const response = await resendConfirmation(
+      formRequest("/api/auth/resend-confirmation", {
+        email: "creator@example.com",
+        next: "/apply",
+      }),
+    );
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toContain("/auth/check-email?");
+    expect(response.headers.get("location")).toContain("notice=");
+    expect(response.headers.get("location")).not.toContain("error=");
+    expect(mocks.resend).toHaveBeenCalledWith({
+      type: "signup",
+      email: "creator@example.com",
       options: {
         emailRedirectTo:
           "https://creators.gotall.com/auth/confirm?next=%2Fapply",

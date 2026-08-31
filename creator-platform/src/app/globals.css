@@ -3408,7 +3408,8 @@ button {
   gap: 14px;
 }
 
-.application-review__section-heading h3 {
+.application-review__section-heading h3,
+.application-review__section-heading h4 {
   margin: 0;
   font-size: 15px;
   font-weight: 650;
@@ -3717,6 +3718,54 @@ button {
 .account-status__list dt { color: #777772; font-size: 11px; }
 .account-status__list dd { margin: 0; text-align: right; font-size: 12px; font-weight: 650; }
 
+.account-submission {
+  margin-top: 28px;
+  padding-top: 25px;
+  border-top: 1px solid var(--line);
+}
+
+.account-submission__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.account-submission__header .eyebrow { margin-bottom: 6px; }
+
+.account-submission__header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.account-submission__header time {
+  color: #777772;
+  font-size: 10px;
+  text-align: right;
+}
+
+.account-submission .application-review__identity { margin-top: 16px; }
+.account-submission .application-review__accounts { margin-top: 20px; }
+
+.account-submission__empty,
+.account-submission__note {
+  color: #777772;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.account-submission__empty {
+  margin: 11px 0 0;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fafaf8;
+}
+
+.account-submission__note { margin: 9px 0 0; }
+
 .account-status__actions {
   margin-top: 25px;
   padding-top: 22px;
@@ -3788,4 +3837,6 @@ button {
   .auth-card,
   .account-status { margin: 0 -16px; padding: 28px 20px; border-left: 0; border-right: 0; border-radius: 0; }
   .auth-footer-links { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .account-submission__header { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .account-submission__header time { text-align: left; }
 }

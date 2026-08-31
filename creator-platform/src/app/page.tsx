@@ -12,6 +12,10 @@ import {
 
 import { LandingDashboard } from "@/components/landing-dashboard";
 import { SiteHeader } from "@/components/site-header";
+import { hasSupabaseAuthEnv } from "@/lib/server-env";
+import { getCurrentAccount } from "@/server/auth/session";
+
+export const dynamic = "force-dynamic";
 
 const steps = [
   ["01", "Apply", "Share your name, phone number, Discord username, and creator handles."],
@@ -28,10 +32,12 @@ const benefits = [
   [BadgeCheck, "Earnings stay legible", "Estimated, under review, approved, and paid never blur together."],
 ] as const;
 
-export default function Home() {
+export default async function Home() {
+  const account = hasSupabaseAuthEnv() ? await getCurrentAccount() : null;
+
   return (
     <main className="marketing-page">
-      <SiteHeader />
+      <SiteHeader signedIn={Boolean(account)} />
 
       <section className="hero">
         <div className="hero__inner">
@@ -100,8 +106,8 @@ export default function Home() {
           <p className="eyebrow eyebrow--light">The program</p>
           <h2>Everything around the content gets easier.</h2>
           <p>
-            Every accepted creator starts on the same standard deal. The workspace keeps the brief,
-            requirements, tracking, and payment state precise from there.
+            The program is designed around one standard deal. Accepted creators review the exact
+            version assigned before onboarding, and the workspace keeps every later state precise.
           </p>
           <Link className="button button--paper" href="/preview/onboarding">
             See onboarding
@@ -156,7 +162,7 @@ export default function Home() {
           </details>
           <details>
             <summary>How are earnings calculated?</summary>
-            <p>Every accepted creator starts on the standard creator deal and reviews the exact terms before onboarding. The dashboard separates estimates, review, approval, and payment.</p>
+            <p>Accepted creators review the exact standard-deal terms assigned before onboarding. Once tracking and payouts are connected, the dashboard will separate estimates, review, approval, and payment.</p>
           </details>
           <details>
             <summary>What happens after I apply?</summary>
