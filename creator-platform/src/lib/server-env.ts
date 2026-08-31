@@ -3,6 +3,11 @@ type SupabasePublicEnv = {
   publishableKey: string;
 };
 
+type SupabaseAdminEnv = {
+  url: string;
+  serviceRoleKey: string;
+};
+
 function firstNonEmpty(...values: Array<string | undefined>) {
   return values.find((value) => value?.trim())?.trim();
 }
@@ -98,4 +103,41 @@ export function getSupabasePublicEnv(): SupabasePublicEnv {
   }
 
   return { url, publishableKey };
+}
+
+export function getSupabaseAdminEnv(): SupabaseAdminEnv {
+  const url = firstNonEmpty(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.SUPABASE_URL,
+  );
+  const serviceRoleKey = firstNonEmpty(process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+  if (!url || !serviceRoleKey) {
+    throw new Error(
+      "Server-side Supabase access is not configured. Provide the Supabase URL and service role key.",
+    );
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    throw new Error("The configured Supabase URL is not valid.");
+  }
+
+  const localHttp =
+    parsedUrl.protocol === "http:" && isLoopbackHostname(parsedUrl.hostname);
+  if (
+    (parsedUrl.protocol !== "https:" && !localHttp) ||
+    parsedUrl.username ||
+    parsedUrl.password
+  ) {
+    throw new Error("The configured Supabase URL must use HTTPS.");
+  }
+
+  if (serviceRoleKey.length < 20) {
+    throw new Error("The configured Supabase service role key is not valid.");
+  }
+
+  return { url: parsedUrl.origin, serviceRoleKey };
 }

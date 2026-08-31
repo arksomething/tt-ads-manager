@@ -10,5 +10,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./test/setup.ts"],
+    // Verification runs on a shared production host. Bounding the pool keeps
+    // interaction tests deterministic when unrelated jobs consume CPU.
+    maxWorkers: 2,
   },
 });

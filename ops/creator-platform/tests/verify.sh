@@ -16,21 +16,28 @@ node -e '
   const project = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
   if (project.projectName !== "gotall-creator-platform") process.exit(1);
   if (project.projectId !== "qubkgekdpyntuanzqqeu") process.exit(1);
-  if (project.region !== "us-east-1" || project.state !== "creator-account-backend-hardened-live") process.exit(1);
+  if (project.region !== "us-east-1" || project.state !== "creator-account-and-discord-schema-live") process.exit(1);
   if (project.emailSender !== "accounts@gotall.app" || project.emailConfirmationRequired !== true) process.exit(1);
   if (project.passwordChangeReauthentication !== true || project.passwordChangeNotifications !== true) process.exit(1);
   if (!project.migrations?.includes("creator-platform/supabase/migrations/20260830113000_creator_account_hardening.sql")) process.exit(1);
   if (!project.migrations?.includes("creator-platform/supabase/migrations/20260830120000_creator_account_state_fix.sql")) process.exit(1);
   if (!project.migrations?.includes("creator-platform/supabase/migrations/20260831100000_creator_account_real_home.sql")) process.exit(1);
+  if (!project.migrations?.includes("creator-platform/supabase/migrations/20260831140000_creator_discord_reminders.sql")) process.exit(1);
+  if (!project.migrations?.includes("creator-platform/supabase/migrations/20260831141000_creator_pgcrypto_search_path.sql")) process.exit(1);
+  if (project.latestAppliedMigration !== "creator-platform/supabase/migrations/20260831141000_creator_pgcrypto_search_path.sql") process.exit(1);
   if (project.agreementProvider !== null) process.exit(1);
 ' "${supabase_project}"
 node -e '
   const project = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
   if (project.projectName !== "gotall-creator-platform") process.exit(1);
   if (project.rootDirectory !== "creator-platform" || project.framework !== "nextjs") process.exit(1);
-  if (project.deploymentState !== "creator-real-account-flow-live") process.exit(1);
+  if (project.deploymentState !== "creator-discord-web-live-e2e-gated") process.exit(1);
   if (project.currentPreviewDomain !== "gotall-creator-platform.vercel.app") process.exit(1);
-  if (!project.latestProductionDeploymentId?.startsWith("dpl_")) process.exit(1);
+  if (project.currentProductionAlias !== "gotall-creator-platform.vercel.app") process.exit(1);
+  if (project.productionDomain !== "gotall-creator-platform.vercel.app") process.exit(1);
+  if (project.intendedApexDomain !== "gethyperspeed.com" || project.discordCallbackDomain !== "gethyperspeed.com") process.exit(1);
+  if (project.latestProductionDeploymentId !== "dpl_GGJzmEb6PbcgkM83cSLEtrtQAZSb") process.exit(1);
+  if (project.discordCallbackWorkerVersionId !== "84979fb5-bcd8-4fb8-99d7-58975f6e5a17") process.exit(1);
 ' "${vercel_project}"
 
 node -e '
@@ -38,6 +45,7 @@ node -e '
   const catalog = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   const example = fs.readFileSync(process.argv[2], "utf8");
   const discord = catalog.sources.find((source) => source.id === "hermes-discord-management");
+  const discordAutomation = catalog.platformRequirements.find((area) => area.area === "discord-automation");
   const collector = catalog.sources.find((source) => source.id === "owned-collector");
   const legacyWeb = catalog.sources.find((source) => source.id === "legacy-web-integrations");
   const creatorPlatform = catalog.sources.find((source) => source.id === "creator-platform-local");
@@ -47,6 +55,8 @@ node -e '
     "DISCORD_CLIENT_SECRET",
     "DISCORD_OAUTH_REDIRECT_URI",
     "DISCORD_GUILD_ID",
+    "DISCORD_GUILD_INVITE_URL",
+    "DISCORD_REMINDER_WORKER_SECRET",
     "DISCORD_ONBOARDING_ROLE_ID",
     "DISCORD_ACTIVE_ROLE_ID",
     "DISCORD_AT_RISK_ROLE_ID",
@@ -66,6 +76,12 @@ node -e '
   ];
   if (discord?.path !== "${HOME}/.hermes/.env") process.exit(1);
   if (!discord.expectedVariables.includes("DISCORD_BOT_TOKEN")) process.exit(1);
+  if (discordAutomation?.state !== "discord-infrastructure-live-launch-gated") process.exit(1);
+  if (!discordAutomation.available.some((item) => item.includes("Cloudflare callback proxy version 84979fb5-bcd8-4fb8-99d7-58975f6e5a17"))) process.exit(1);
+  if (!discordAutomation.available.some((item) => item.includes("healthy production heartbeat"))) process.exit(1);
+  if (discordAutomation.missing.length !== 2) process.exit(1);
+  if (!discordAutomation.missing.includes("rotation of the chat-exposed DISCORD_CLIENT_SECRET before launch")) process.exit(1);
+  if (!discordAutomation.missing.includes("explicitly consenting OAuth, test-DM, role, opt-out, and disconnect E2E proof")) process.exit(1);
   if (!collector?.expectedVariables.includes("INSTAGRAM_PROVIDER_CREDIT_RESERVE")) process.exit(1);
   if (creatorPlatform?.path !== "${HOME}/projects/tt-ads-manager/creator-platform/.env.local") process.exit(1);
   if (!creatorDiscordVariables.every((name) => creatorPlatform.expectedVariables.includes(name))) process.exit(1);
@@ -78,6 +94,8 @@ node -e '
   if (legacyWeb.expectedVariables.some((name) => name.startsWith("DISCORD_"))) process.exit(1);
   if (!example.includes("INSTAGRAM_PROVIDER_CREDIT_RESERVE=100")) process.exit(1);
   if (!example.includes("DISCORD_CLIENT_ID=1534630446959427686")) process.exit(1);
+  if (!example.includes("DISCORD_GUILD_INVITE_URL=https://discord.gg/")) process.exit(1);
+  if (!example.includes("DISCORD_REMINDER_WORKER_SECRET=")) process.exit(1);
   if (!example.includes("APP_ORIGIN=https://gotall-creator-platform.vercel.app")) process.exit(1);
   if (!example.includes("AGREEMENT_PROVIDER=signwell")) process.exit(1);
   if (example.includes("E_SIGNATURE_PROVIDER=")) process.exit(1);

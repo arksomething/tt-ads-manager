@@ -8,6 +8,7 @@ import { getSearchParamValue } from "@/lib/auth-navigation";
 import { hasSupabaseAuthEnv } from "@/lib/server-env";
 import { getOwnCreatorApplication } from "@/server/accounts/application";
 import { getCreatorAccountState } from "@/server/accounts/state";
+import { getCurrentDiscordStaffMembership } from "@/server/admin/discord";
 import { getCurrentAccount } from "@/server/auth/session";
 
 export const metadata: Metadata = {
@@ -77,9 +78,10 @@ export default async function AccountPage({ searchParams }: AccountPageProps) {
   }
 
   const params = await searchParams;
-  const [accountStateResult, applicationResult] = await Promise.allSettled([
+  const [accountStateResult, applicationResult, staffResult] = await Promise.allSettled([
     getCreatorAccountState(),
     getOwnCreatorApplication(),
+    getCurrentDiscordStaffMembership(),
   ]);
   const accountState = accountStateResult.status === "fulfilled"
     ? accountStateResult.value
@@ -87,6 +89,7 @@ export default async function AccountPage({ searchParams }: AccountPageProps) {
   const application = applicationResult.status === "fulfilled"
     ? applicationResult.value
     : null;
+  const staff = staffResult.status === "fulfilled" ? staffResult.value : null;
   const stateUnavailable =
     accountStateResult.status === "rejected" || !accountState?.nextPath;
   const accountError = stateUnavailable
@@ -134,6 +137,26 @@ export default async function AccountPage({ searchParams }: AccountPageProps) {
               application={application}
               titleId="account-submitted-details-title"
             />
+          ) : null}
+
+          <section className="account-integration" aria-labelledby="account-discord-title">
+            <div>
+              <p className="eyebrow">Integration</p>
+              <h3 id="account-discord-title">Discord and reminders</h3>
+              <p>Verify your Discord identity, control direct-message consent, and inspect real delivery history.</p>
+            </div>
+            <Link className="button button--ghost" href="/account/discord">Manage Discord</Link>
+          </section>
+
+          {staff ? (
+            <section className="account-integration" aria-labelledby="account-discord-operations-title">
+              <div>
+                <p className="eyebrow">Staff operations</p>
+                <h3 id="account-discord-operations-title">Discord delivery health</h3>
+                <p>Inspect worker heartbeat, durable queues, creator link coverage, role synchronization, and sanitized failures.</p>
+              </div>
+              <Link className="button button--ghost" href="/admin/discord">Open operations</Link>
+            </section>
           ) : null}
 
           <div className="account-status__actions">

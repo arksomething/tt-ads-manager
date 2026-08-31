@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gotall-creator-discord-callback",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-08-31",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "gethyperspeed.com/api/integrations/discord/callback*",
+      "zone_name": "gethyperspeed.com"
+    }
+  ],
+  "observability": {
+    "enabled": false
+  }
+}

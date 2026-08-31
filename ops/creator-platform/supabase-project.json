@@ -8,11 +8,14 @@
   "incrementalComputeEstimateUsdPerMonth": 10,
   "runtimeAuthority": "gotall-creator-platform Vercel encrypted environment variables",
   "migration": "creator-platform/supabase/migrations/20260830102000_creator_accounts.sql",
+  "latestAppliedMigration": "creator-platform/supabase/migrations/20260831141000_creator_pgcrypto_search_path.sql",
   "migrations": [
     "creator-platform/supabase/migrations/20260830102000_creator_accounts.sql",
     "creator-platform/supabase/migrations/20260830113000_creator_account_hardening.sql",
     "creator-platform/supabase/migrations/20260830120000_creator_account_state_fix.sql",
-    "creator-platform/supabase/migrations/20260831100000_creator_account_real_home.sql"
+    "creator-platform/supabase/migrations/20260831100000_creator_account_real_home.sql",
+    "creator-platform/supabase/migrations/20260831140000_creator_discord_reminders.sql",
+    "creator-platform/supabase/migrations/20260831141000_creator_pgcrypto_search_path.sql"
   ],
   "emailSender": "accounts@gotall.app",
   "emailProvider": "Resend SMTP",
@@ -22,5 +25,5 @@
   "passwordChangeReauthentication": true,
   "passwordChangeNotifications": true,
   "agreementProvider": null,
-  "state": "creator-account-backend-hardened-live"
+  "state": "creator-account-and-discord-schema-live"
 }

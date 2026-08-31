@@ -5,8 +5,12 @@
   "rootDirectory": "creator-platform",
   "framework": "nextjs",
   "nodeVersion": "24.x",
-  "productionDomain": "gethyperspeed.com",
+  "productionDomain": "gotall-creator-platform.vercel.app",
+  "intendedApexDomain": "gethyperspeed.com",
+  "discordCallbackDomain": "gethyperspeed.com",
   "currentPreviewDomain": "gotall-creator-platform.vercel.app",
-  "latestProductionDeploymentId": "dpl_4xwz6PDogewQiqyqgGRt3Gxkx3EC",
-  "deploymentState": "creator-real-account-flow-live"
+  "currentProductionAlias": "gotall-creator-platform.vercel.app",
+  "latestProductionDeploymentId": "dpl_GGJzmEb6PbcgkM83cSLEtrtQAZSb",
+  "discordCallbackWorkerVersionId": "84979fb5-bcd8-4fb8-99d7-58975f6e5a17",
+  "deploymentState": "creator-discord-web-live-e2e-gated"
 }

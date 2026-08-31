@@ -72,7 +72,7 @@ create table public.program_deal_versions (
 create or replace function public.hash_program_deal_terms()
 returns trigger
 language plpgsql
-set search_path = public, pg_temp
+set search_path = pg_catalog, extensions, public, pg_temp
 as $$
 begin
   new.terms_sha256 = encode(digest(convert_to(new.terms_markdown, 'UTF8'), 'sha256'), 'hex');

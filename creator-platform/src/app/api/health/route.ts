@@ -7,7 +7,9 @@ export function GET() {
     {
       ok: true,
       service: "gotall-creator-platform",
-      state: "creator-real-account-flow-live",
+      // This endpoint proves only that the deployed web process can answer.
+      // Integration readiness is derived from authenticated operations data.
+      state: "web-process-ready",
     },
     {
       headers: {

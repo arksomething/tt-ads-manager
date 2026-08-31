@@ -11,7 +11,7 @@ describe("creator platform health route", () => {
     await expect(response.json()).resolves.toEqual({
       ok: true,
       service: "gotall-creator-platform",
-      state: "creator-real-account-flow-live",
+      state: "web-process-ready",
     });
   });
 });

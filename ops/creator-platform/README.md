@@ -67,18 +67,28 @@ identity yet; the first durable account must use an explicitly chosen real
 email rather than an inferred legacy handle.
 
 `GoTall - Management` is the live, reboot-persistent Hermes Discord application
-and is present in both `GoTall Creators` and `GoTall Community`. Its OAuth
-redirect is registered. The legacy `GoTall` application is not part of the new
-platform. The Management OAuth client ID, client secret, redirect, guild, and
-role identifiers are installed in the reserved `gotall-creator-platform` Vercel
-production environment. The secret supplied through chat must be rotated before
-launch, and creator account linking still needs a deployed callback handler.
-Management has `Manage Roles` without `Administrator`, but before deterministic
-lifecycle-role automation its role must be placed above the four lifecycle
-roles and below Admin. Never put creator users or roles in the Hermes agent
-allowlist; OAuth, deterministic role sync, and the LLM gateway are separate
-trust lanes even when they share one Discord application. The ScrapeCreators
-key remains collector-only and is not loaded into Hermes.
+and is present in both `GoTall Creators` and `GoTall Community`. The legacy
+`GoTall` application is not part of the new platform. Creator linking and staff
+operations interfaces, the OAuth start/callback/disconnect routes, the durable
+Supabase reminder schema, and the signed worker API are deployed in the isolated
+creator platform. The registered `gethyperspeed.com` callback is served by the
+narrow Cloudflare Worker version `84979fb5-bcd8-4fb8-99d7-58975f6e5a17`; it
+does not move the apex or proxy another route. The deterministic creator worker
+is enabled at boot, runs under the dedicated `gotall-discord` system account,
+and has a healthy production heartbeat after a restart. Management has `Manage
+Roles` without `Administrator`, and its role hierarchy is validated above all
+four managed lifecycle roles and below Admin.
+
+The client secret supplied through chat must still be rotated before broad
+launch. After rotation, one explicitly consenting account must prove OAuth,
+membership, a requested test DM and receipt, role reconciliation, opt-out, and
+disconnect end to end. Production currently has no linked Discord creator and
+no delivery or role job. Never put creator users or roles in the Hermes agent
+allowlist. OAuth, deterministic role sync, and the LLM gateway are separate
+code and configuration lanes, but because the deterministic worker and Hermes
+currently share the Management bot credential, that separation is not a
+cryptographic token boundary. The ScrapeCreators key remains collector-only and
+is not loaded into Hermes.
 
 Provider-native credentials should not be copied merely to make the catalog
 look centralized. The catalog is the central map; each secret stays with the
@@ -94,7 +104,7 @@ smallest runtime that needs it.
 | Viral migration safety net | Current web credential exists | Revalidate before any migration-critical run |
 | TikTok | Business app and Ads credentials exist; public collector is separate | Official creator OAuth credentials only if that future path is chosen |
 | Instagram collection | Credential, bounded identity proof, 29 direct observations, and a protected 100-credit floor validated | Raise the provider balance to at least 1,250 before enabling timers; last observed balance is 95 and the guard is blocked |
-| Discord | GoTall - Management bot/client, OAuth credentials, two guilds, callback, channels, roles, and Manage Roles permission validated | Rotate the chat-exposed client secret, build the callback handler, and correct the bot-role hierarchy |
+| Discord | GoTall - Management bot/client, creator and staff interfaces, OAuth routes and callback proxy, durable reminder/role schema, signed worker API, validated hierarchy, healthy reboot-persistent worker, and Manage Roles permission are live | Rotate the chat-exposed client secret, then complete an explicitly consenting OAuth, requested test-DM, role, opt-out, and disconnect E2E proof |
 | Transactional email | Resend custom SMTP is live for creator auth from `accounts@gotall.app` | Monitor delivery and abuse before increasing the 30-email/hour project limit |
 | Analytics | PostHog, Singular, Superwall, and Adapty candidates exist | PostHog personal key only for server-side management queries |
 | Object storage | Supabase server access can support Storage | Choose Supabase Storage or deliberately adopt R2 |
@@ -153,12 +163,15 @@ The intended stable map is:
 Both were verified over HTTPS without removing their original addresses. The
 separate Vercel project `gotall-creator-platform` serves the creator app at
 `gotall-creator-platform.vercel.app`, with `creator-platform` as its Next.js
-root and Node.js 24. Its production environment contains the isolated Supabase
+root and Node.js 24. Deployment `dpl_GGJzmEb6PbcgkM83cSLEtrtQAZSb` is live on
+that stable alias. Its production environment contains the isolated Supabase
 account configuration plus the scoped Discord OAuth variables. Public sample
-dashboard routes remain explicitly labeled; Discord linking, canonical
-tracking, agreements, and payouts are not connected yet. The apex remains on the current studio
-until the creator platform has working authentication, callbacks, monitoring,
-and rollback. The laptop collector gets no public dashboard subdomain. It will
+dashboard routes remain explicitly labeled. Discord infrastructure is deployed
+and monitored, but creator-flow launch proof remains gated on secret rotation
+and an explicitly consenting E2E run; canonical tracking, agreements, and
+payouts are not connected yet. The apex remains on the current studio until the
+creator platform has working authentication, callbacks, monitoring, and
+rollback. The laptop collector gets no public dashboard subdomain. It will
 eventually deliver signed, idempotent batches to a narrow HTTPS ingestion route
 on the new platform.
 
