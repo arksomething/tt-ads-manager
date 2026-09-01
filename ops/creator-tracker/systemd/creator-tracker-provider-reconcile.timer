@@ -3,7 +3,6 @@ Description=Reconcile the transitional Viral provider seed every 12 hours
 
 [Timer]
 Unit=creator-tracker-provider-reconcile.service
-OnActiveSec=10min
 OnCalendar=*-*-* 02,14:17:00 UTC
 AccuracySec=1min
 RandomizedDelaySec=2min

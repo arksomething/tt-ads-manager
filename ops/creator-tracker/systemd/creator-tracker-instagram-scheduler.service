@@ -1,25 +1,52 @@
 [Unit]
 Description=Creator tracker owned Instagram due-work scheduler
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=oneshot
+User=creator-tracker-writer
+Group=creator-tracker-writer
 Slice=creator-tracker.slice
-WorkingDirectory=%h/projects/tt-ads-manager
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-EnvironmentFile=-%h/.config/creator-tracker/env
-ExecStartPre=/usr/bin/nm-online -q --timeout=60
-ExecStart=/bin/bash %h/.local/libexec/creator-tracker/run-contained-job.sh instagram-scheduler
-TimeoutStartSec=10min
+WorkingDirectory=/opt/creator-tracker/current/app
+EnvironmentFile=/etc/creator-tracker/runtime/instagram-scheduler.env
+LoadCredential=role-env:/etc/creator-tracker/credentials/instagram-scheduler.env
+Environment=PATH=/usr/bin:/bin
+UnsetEnvironment=LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT BASH_ENV ENV SHELLOPTS BASHOPTS BASH_LOADABLES_PATH NODE_OPTIONS NODE_PATH PYTHONPATH PYTHONHOME PYTHONSTARTUP PERL5OPT PERL5LIB RUBYOPT RUBYLIB GCONV_PATH TSX_TSCONFIG_PATH CREATOR_TRACKER_RUNTIME_DIR CREATOR_TRACKER_STATE_DIR CREATOR_TRACKER_TEST_ONLY_ALLOW_ARBITRARY_COMMAND CREATOR_TRACKER_TEST_ONLY_SKIP_COVERAGE
+ExecStart=/bin/bash --noprofile --norc -p -- /opt/creator-tracker/current/bin/run-contained-job instagram-scheduler
+TimeoutStartSec=15min
 SuccessExitStatus=75
-UMask=0077
+UMask=0027
 NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
 PrivateDevices=true
 PrivateTmp=true
+PrivateIPC=true
+PrivateMounts=true
+ProtectHome=tmpfs
 ProtectClock=true
 ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
-ProtectSystem=full
+ProtectSystem=strict
+TemporaryFileSystem=/run:ro
+BindPaths=/run/creator-tracker/locks
+BindReadOnlyPaths=/run/systemd/resolve
+BindPaths=/var/lib/creator-tracker/state/instagram-scheduler
+BindPaths=/var/lib/creator-tracker/raw-evidence-v1
+BindPaths=/var/lib/creator-tracker/state
+InaccessiblePaths=/var/lib/creator-tracker/imports
+InaccessiblePaths=/var/lib/creator-tracker/verified-raw-evidence-v1
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+KeyringMode=private
+RemoveIPC=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true

@@ -1,0 +1,14 @@
+[Unit]
+Description=Deliver canonical creator tracker batches every minute
+
+[Timer]
+Unit=creator-tracker-canonical-delivery.service
+OnBootSec=2min
+OnCalendar=*-*-* *:*:00
+AccuracySec=5s
+RandomizedDelaySec=5s
+FixedRandomDelay=true
+Persistent=true
+
+[Install]
+WantedBy=timers.target
