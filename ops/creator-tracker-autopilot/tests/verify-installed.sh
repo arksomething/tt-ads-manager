@@ -4,7 +4,9 @@ set -euo pipefail
 readonly source_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly service_user='creator-tracker-codex'
 readonly verifier_user='creator-tracker-verifier'
+readonly health_user='creator-tracker-health'
 readonly state_root='/var/lib/creator-tracker-autopilot'
+readonly health_root='/var/lib/creator-tracker-autopilot-health'
 
 fail() {
   printf 'installed creator-tracker autopilot verification: %s\n' "$*" >&2
@@ -26,10 +28,13 @@ verify_service_identity() {
 
 verify_service_identity "$service_user"
 verify_service_identity "$verifier_user"
+verify_service_identity "$health_user"
 [[ "$(id -nG "$service_user")" == "$service_user" ]] || \
   fail 'Codex service identity has supplementary groups'
 [[ "$(id -nG "$verifier_user")" == "$verifier_user" ]] || \
   fail 'verifier identity has supplementary groups'
+[[ "$(id -nG "$health_user")" == "$health_user" ]] || \
+  fail 'health identity has supplementary groups'
 
 declare -A installed_files=(
   ["$source_root/bin/creator-tracker-autopilot.py"]='/usr/local/libexec/creator-tracker-autopilot'
@@ -72,6 +77,7 @@ declare -A installed_modes=(
   ['/opt/creator-tracker-autopilot/codex/0.149.0/codex']='root:root:555:1'
   ['/opt/creator-tracker-autopilot/codex/0.149.0/codex-code-mode-host']='root:root:555:1'
   ['/opt/creator-tracker-autopilot/codex/0.149.0/SHA256SUMS']='root:root:444:1'
+  ["$health_root/status.json"]='root:creator-tracker-health:640:1'
 )
 for target in "${!installed_modes[@]}"; do
   [[ ! -L "$target" && -f "$target" ]] || fail "installed file is missing or unsafe: $target"
@@ -94,12 +100,37 @@ declare -A installed_directories=(
   ["$state_root/verification/rejected"]='root:root:700'
   ["$state_root/reports"]='root:root:700'
   ['/var/lib/creator-tracker-autopilot-verifier']='root:root:711'
+  ["$health_root"]='root:creator-tracker-health:750'
 )
 for target in "${!installed_directories[@]}"; do
   [[ ! -L "$target" && -d "$target" ]] || fail "runtime directory is missing: $target"
   [[ "$(stat -c '%U:%G:%a' -- "$target")" == "${installed_directories[$target]}" ]] || \
     fail "runtime directory ownership or mode is unsafe: $target"
 done
+
+/usr/sbin/runuser -u "$health_user" -- /usr/bin/test -r "$health_root/status.json" || \
+  fail 'sanitized health export is not readable by the monitor identity'
+python3 -I - "$health_root/status.json" <<'PY'
+import json, pathlib, sys
+value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+allowed_reasons = {
+    "autopilot_incident_confirmed",
+    "autopilot_incident_pending",
+    "autopilot_integrity_failure",
+    "autopilot_maintenance",
+    "autopilot_operator_required",
+}
+assert isinstance(value, dict)
+assert set(value) == {"format_version", "observed_at_epoch", "health", "reason_codes"}
+assert value["format_version"] == 1 and not isinstance(value["format_version"], bool)
+assert isinstance(value["observed_at_epoch"], int) and not isinstance(value["observed_at_epoch"], bool)
+assert value["observed_at_epoch"] > 0
+assert value["health"] in {"healthy", "degraded", "failing"}
+assert isinstance(value["reason_codes"], list) and len(value["reason_codes"]) <= 1
+assert len(value["reason_codes"]) == len(set(value["reason_codes"]))
+assert all(reason in allowed_reasons for reason in value["reason_codes"])
+assert (value["health"] == "healthy") == (value["reason_codes"] == [])
+PY
 
 python3 -I - /usr/local/libexec/creator-tracker-autopilot <<'PY'
 import runpy, sys

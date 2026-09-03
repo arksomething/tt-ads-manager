@@ -227,11 +227,23 @@ does not activate, restart a service, or enable a timer:
   --ref FULL_GIT_COMMIT
 ```
 
-Activation separately verifies the installed release and refuses until the
-worker, every oneshot service, and every timer are stopped. It installs the
-sealed unit definitions, verifies their exact `/opt` launcher mapping, runs the
-effective unit checks for privileged Bash, environment removal, `PATH`, and
-working directory, runs the
+Activation separately verifies the installed release, quiesces the system and
+legacy-user timers first, and waits up to 95 minutes for an already-running
+oneshot to finish normally. It never sends a stop signal to an active provider
+or writer job. If the bounded drain cannot complete, activation aborts before
+changing the persistent tuple and resumes only the timers and dashboard worker
+that it found running. After a clean drain it stops the non-provider dashboard
+worker, fences every job lock, and continues. This ordering prevents a release
+from stranding the shared paid-provider credit lease halfway through a request.
+With the writer fences held, a read-only database gate also refuses activation
+if the shared lease is still `request_pending`, including a lease orphaned by
+an earlier external stop.
+Do not pre-stop the services by hand; invoke the sealed activator while the
+current runtime is live and let it perform the drain.
+
+Activation then installs the sealed unit definitions, verifies their exact
+`/opt` launcher mapping, runs the effective unit checks for privileged Bash,
+environment removal, `PATH`, and working directory, runs the
 new release's explicit database migration followed by strict schema
 verification, proves that freshly recreated WAL/SHM files remain writable only
 by the writer and readable by each read-only role, and only then atomically
@@ -468,8 +480,8 @@ systemctl show creator-tracker.slice \
 To reinstall reviewed copies after a unit change:
 
 ```bash
-# Build/install a new composite release; activation installs its sealed unit
-# bundle only after all existing jobs are stopped and the migration gate passes.
+# Build/install a new composite release; activation quiesces timers and waits
+# for existing jobs to drain before the migration gate and sealed-unit install.
 /opt/creator-tracker/release-tools/TOOLS_SHA256/bin/install-collector-release.sh \
   --source-repo /home/ark296/projects/gotall-viral-dash \
   --ref FULL_GIT_COMMIT

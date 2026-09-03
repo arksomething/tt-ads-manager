@@ -269,6 +269,106 @@ with tempfile.TemporaryDirectory(prefix="creator-tracker-flat-boundary-") as tem
     else:
         raise AssertionError("recursive legacy imports tree was accepted")
 PY
+python3 -I - "$tracker_dir/bin/activation-database.py" <<'PY'
+import importlib.util
+import json
+from pathlib import Path
+import sqlite3
+import sys
+import tempfile
+
+sys.dont_write_bytecode = True
+path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("creator_tracker_activation_database", path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+with tempfile.TemporaryDirectory(prefix="creator-tracker-provider-lease-") as temporary:
+    database_path = Path(temporary) / "state.db"
+    database = sqlite3.connect(database_path)
+    database.execute(
+        "CREATE TABLE sync_state (source TEXT PRIMARY KEY, status TEXT, message TEXT)"
+    )
+    state = {
+        "version": 1,
+        "state": "ready",
+        "reason": None,
+        "runId": "fixture-run",
+        "requestNumber": 1,
+        "reserveCredits": 100,
+        "creditsRemaining": 2_000,
+        "observedAtMs": 1_788_425_534_563,
+        "claimedAtMs": None,
+    }
+    database.execute(
+        "INSERT INTO sync_state (source, status, message) VALUES (?, ?, ?)",
+        (
+            "instagram_provider_credit_guard",
+            "ok",
+            "instagram_credit_global_v1=" + json.dumps(
+                state, separators=(",", ":")
+            ),
+        ),
+    )
+    database.commit()
+    database.close()
+    module.assert_provider_lease_settled(str(database_path))
+
+    database = sqlite3.connect(database_path)
+    pending = {
+        **state,
+        "state": "request_pending",
+        "reason": "request_pending",
+        "claimedAtMs": 1_788_425_530_000,
+    }
+    database.execute(
+        "UPDATE sync_state SET status = ?, message = ?",
+        (
+            "running",
+            "instagram_credit_global_v1=" + json.dumps(
+                pending, separators=(",", ":")
+            ),
+        ),
+    )
+    database.commit()
+    database.close()
+    try:
+        module.assert_provider_lease_settled(str(database_path))
+    except RuntimeError as error:
+        assert "request_pending" in str(error)
+    else:
+        raise AssertionError("activation accepted an unsettled paid-provider lease")
+
+    database = sqlite3.connect(database_path)
+    database.execute(
+        "UPDATE sync_state SET status = 'error', message = ?",
+        (
+            "instagram_credit_global_v1=" + json.dumps(
+                state, separators=(",", ":")
+            ),
+        ),
+    )
+    database.commit()
+    database.close()
+    try:
+        module.assert_provider_lease_settled(str(database_path))
+    except RuntimeError as error:
+        assert "inconsistent" in str(error)
+    else:
+        raise AssertionError("activation accepted an inconsistent provider lease")
+
+    database = sqlite3.connect(database_path)
+    database.execute(
+        "UPDATE sync_state SET status = 'error', message = 'malformed'"
+    )
+    database.commit()
+    database.close()
+    try:
+        module.assert_provider_lease_settled(str(database_path))
+    except RuntimeError as error:
+        assert "malformed" in str(error)
+    else:
+        raise AssertionError("activation accepted a malformed paid-provider lease")
+PY
 python3 -I - "$system_state_helper" "$user_unit_helper" "$durable_state_helper" <<'PY'
 import importlib.util
 import os
@@ -897,6 +997,238 @@ if (legacy_restore_recovery_action committed committed "$new_release" \
   printf '%s\n' 'committed legacy restore with new selector was accepted' >&2
   exit 1
 fi
+
+# Exercise the activation quiesce protocol independently of systemd. An active
+# paid-provider job must be allowed to settle while only its timer is stopped;
+# activation may stop the non-provider dashboard worker only after the drain.
+activation_quiesce_source=''
+for function_name in \
+  activation_systemctl activation_user_systemctl activation_unit_state \
+  activation_unit_result activation_state_is_busy \
+  activation_state_should_restore activation_append_unique \
+  activation_stop_unit activation_start_unit activation_sleep \
+  stop_activation_timers verify_activation_drained_job_results \
+  wait_for_activation_jobs_to_drain stop_activation_workers \
+  restore_quiesced_runtime quiesce_runtime_for_activation; do
+  function_source="$(sed -n "/^${function_name}()/,/^}/p" "$release_activator")"
+  [[ -n "$function_source" ]]
+  activation_quiesce_source+="$function_source"$'\n'
+done
+eval "$activation_quiesce_source"
+
+(
+  activation_timer_units=(fixture-instagram.timer)
+  activation_drain_service_units=(fixture-instagram.service)
+  activation_worker_units=(fixture-dashboard.service)
+  declare -A fixture_state=(
+    [fixture-instagram.timer]=active
+    [fixture-instagram.service]=active
+    [fixture-dashboard.service]=active
+  )
+  declare -A fixture_result=(
+    [fixture-instagram.service]=success
+  )
+  declare -a fixture_calls=()
+  lease_state=request_pending
+  lease_owner_running=1
+  lease_orphaned=0
+  activation_systemctl() {
+    local operation="$1"
+    local unit="${2:-}"
+    case "$operation" in
+      is-active) printf '%s\n' "${fixture_state[$unit]:-inactive}" ;;
+      show) printf '%s\n' "${fixture_result[$unit]:-success}" ;;
+      stop)
+        fixture_calls+=("stop:$unit")
+        if [[ "$unit" == fixture-instagram.service ]]; then
+          lease_owner_running=0
+          lease_orphaned=1
+        fi
+        fixture_state[$unit]=inactive
+        ;;
+      start)
+        fixture_calls+=("start:$unit")
+        fixture_state[$unit]=active
+        ;;
+      *) return 64 ;;
+    esac
+  }
+  activation_user_systemctl() {
+    case "$1" in
+      is-active) printf '%s\n' inactive ;;
+      show) printf '%s\n' success ;;
+      stop|start) return 0 ;;
+      *) return 64 ;;
+    esac
+  }
+  activation_sleep() {
+    fixture_calls+=(sleep)
+    fixture_state[fixture-instagram.service]=inactive
+    lease_state=ready
+    lease_owner_running=0
+  }
+
+  quiesce_runtime_for_activation 5 0
+  [[ "$lease_state" == ready && "$lease_owner_running" -eq 0 && \
+     "$lease_orphaned" -eq 0 ]]
+  [[ "${activation_observed_system_jobs[*]}" == fixture-instagram.service ]]
+  [[ " ${fixture_calls[*]} " == \
+     *' stop:fixture-instagram.timer sleep stop:fixture-dashboard.service '* ]]
+  [[ " ${fixture_calls[*]} " != *' stop:fixture-instagram.service '* ]]
+  restore_quiesced_runtime
+  [[ " ${fixture_calls[*]} " == \
+     *' start:fixture-dashboard.service start:fixture-instagram.timer '* ]]
+)
+
+# A stuck provider job makes activation abort at the bounded deadline. The
+# activator must not signal it, must not stop the dashboard worker, and must
+# resume a timer it quiesced. The request_pending lease remains owned by the
+# still-running fixture job rather than becoming an orphan.
+(
+  activation_timer_units=(fixture-instagram.timer)
+  activation_drain_service_units=(fixture-instagram.service)
+  activation_worker_units=(fixture-dashboard.service)
+  declare -A fixture_state=(
+    [fixture-instagram.timer]=active
+    [fixture-instagram.service]=active
+    [fixture-dashboard.service]=active
+  )
+  declare -a fixture_calls=()
+  lease_state=request_pending
+  lease_owner_running=1
+  activation_systemctl() {
+    local operation="$1"
+    local unit="${2:-}"
+    case "$operation" in
+      is-active) printf '%s\n' "${fixture_state[$unit]:-inactive}" ;;
+      show) printf '%s\n' success ;;
+      stop) fixture_calls+=("stop:$unit"); fixture_state[$unit]=inactive ;;
+      start) fixture_calls+=("start:$unit"); fixture_state[$unit]=active ;;
+      *) return 64 ;;
+    esac
+  }
+  activation_user_systemctl() {
+    case "$1" in
+      is-active) printf '%s\n' inactive ;;
+      show) printf '%s\n' success ;;
+      stop|start) return 0 ;;
+      *) return 64 ;;
+    esac
+  }
+  activation_sleep() { fixture_calls+=(sleep); }
+
+  if quiesce_runtime_for_activation 0 0 2>/dev/null; then
+    printf '%s\n' 'activation accepted a provider job past its drain deadline' >&2
+    exit 1
+  fi
+  [[ "$lease_state" == request_pending && "$lease_owner_running" -eq 1 ]]
+  [[ " ${fixture_calls[*]} " != *' stop:fixture-instagram.service '* ]]
+  [[ " ${fixture_calls[*]} " != *' stop:fixture-dashboard.service '* ]]
+  restore_quiesced_runtime
+  [[ " ${fixture_calls[*]} " == *' start:fixture-instagram.timer '* ]]
+)
+
+# A job that drains by failing is not a safe cutover boundary. Refuse the
+# activation without signalling the service or stopping the dashboard worker.
+(
+  activation_timer_units=(fixture-instagram.timer)
+  activation_drain_service_units=(fixture-instagram.service)
+  activation_worker_units=(fixture-dashboard.service)
+  declare -A fixture_state=(
+    [fixture-instagram.timer]=active
+    [fixture-instagram.service]=active
+    [fixture-dashboard.service]=active
+  )
+  declare -A fixture_result=(
+    [fixture-instagram.service]=exit-code
+  )
+  declare -a fixture_calls=()
+  activation_systemctl() {
+    local operation="$1"
+    local unit="${2:-}"
+    case "$operation" in
+      is-active) printf '%s\n' "${fixture_state[$unit]:-inactive}" ;;
+      show) printf '%s\n' "${fixture_result[$unit]:-success}" ;;
+      stop) fixture_calls+=("stop:$unit"); fixture_state[$unit]=inactive ;;
+      start) fixture_calls+=("start:$unit"); fixture_state[$unit]=active ;;
+      *) return 64 ;;
+    esac
+  }
+  activation_user_systemctl() {
+    case "$1" in
+      is-active) printf '%s\n' inactive ;;
+      show) printf '%s\n' success ;;
+      stop|start) return 0 ;;
+      *) return 64 ;;
+    esac
+  }
+  activation_sleep() { fixture_state[fixture-instagram.service]=failed; }
+
+  if quiesce_runtime_for_activation 5 0 2>/dev/null; then
+    printf '%s\n' 'activation accepted an unsuccessfully drained provider job' >&2
+    exit 1
+  fi
+  [[ " ${fixture_calls[*]} " != *' stop:fixture-instagram.service '* ]]
+  [[ " ${fixture_calls[*]} " != *' stop:fixture-dashboard.service '* ]]
+  restore_quiesced_runtime
+  [[ " ${fixture_calls[*]} " == *' start:fixture-instagram.timer '* ]]
+)
+
+# The idle path is immediate and deterministic: quiesce the live timer, stop
+# only the long-running non-provider worker, then leave both stopped for the
+# existing migration/cutover gates.
+(
+  activation_timer_units=(fixture-instagram.timer)
+  activation_drain_service_units=(fixture-instagram.service)
+  activation_worker_units=(fixture-dashboard.service)
+  declare -A fixture_state=(
+    [fixture-instagram.timer]=active
+    [fixture-instagram.service]=inactive
+    [fixture-dashboard.service]=active
+  )
+  declare -a fixture_calls=()
+  sleep_calls=0
+  activation_systemctl() {
+    local operation="$1"
+    local unit="${2:-}"
+    case "$operation" in
+      is-active) printf '%s\n' "${fixture_state[$unit]:-inactive}" ;;
+      show) printf '%s\n' success ;;
+      stop) fixture_calls+=("stop:$unit"); fixture_state[$unit]=inactive ;;
+      start) fixture_calls+=("start:$unit"); fixture_state[$unit]=active ;;
+      *) return 64 ;;
+    esac
+  }
+  activation_user_systemctl() {
+    case "$1" in
+      is-active) printf '%s\n' inactive ;;
+      show) printf '%s\n' success ;;
+      stop|start) return 0 ;;
+      *) return 64 ;;
+    esac
+  }
+  activation_sleep() { sleep_calls=$((sleep_calls + 1)); }
+
+  quiesce_runtime_for_activation 0 0
+  [[ "$sleep_calls" -eq 0 && ${#activation_observed_system_jobs[@]} -eq 0 ]]
+  [[ "${fixture_calls[*]}" == \
+     'stop:fixture-instagram.timer stop:fixture-dashboard.service' ]]
+  [[ "$activation_runtime_restore_required" -eq 1 ]]
+)
+
+quiesce_call_line="$(grep -nF 'quiesce_runtime_for_activation \' \
+  "$release_activator" | tail -n1 | cut -d: -f1)"
+fence_call_line="$(grep -nF 'acquire_job_locks' "$release_activator" | \
+  tail -n1 | cut -d: -f1)"
+provider_lease_line="$(grep -nF 'assert-provider-lease-settled' \
+  "$release_activator" | cut -d: -f1)"
+[[ "$quiesce_call_line" -lt "$fence_call_line" && \
+   "$fence_call_line" -lt "$provider_lease_line" && \
+   "$provider_lease_line" -lt "$marker_publish_line" ]]
+grep -Fq 'restore_quiesced_runtime' "$release_activator"
+grep -Fq 'activation_drain_timeout_seconds=5700' "$release_activator"
+grep -Fq 'paid-provider credit lease is still request_pending' \
+  "$tracker_dir/bin/activation-database.py"
 grep -Fq 'ensure_system_identity creator-tracker-raw-verifier creator-tracker-raw-evidence' "$release_activator"
 grep -Fq '"$data_dir/cutover-completeness"' "$release_activator"
 grep -Fq 'd /var/lib/creator-tracker/state/cutover-completeness 0750 root creator-tracker-health -' \

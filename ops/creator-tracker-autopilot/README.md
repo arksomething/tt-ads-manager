@@ -38,6 +38,12 @@ launch an agent every two minutes.
   Credit, storage, disabled-unit, cutover, and release-integrity faults remain
   operator-required instead of wasting Codex runs on actions it cannot safely
   take.
+- Every probe also publishes a separate four-field health export under
+  `/var/lib/creator-tracker-autopilot-health/`. It contains only a timestamp,
+  health level, and one generic reason code; release IDs, issue details, account
+  data, and Codex metadata remain in the private autopilot state. The off-host
+  reporter treats the first two incident probes as degraded, the third as
+  failing, and an export 15 minutes old as failing.
 - Persistent incidents launch `codex exec` against a new isolated clone of the
   exact active sealed source and dependencies. It runs under the dedicated
 no-login `creator-tracker-codex` account with a pinned root-owned Codex binary,
@@ -81,7 +87,8 @@ and its matching `codex-code-mode-host` under
 `/opt/creator-tracker-autopilot/codex/0.149.0/` with a root-owned checksum. Copy
 `auth.json` into the dedicated `codex-home` as a `0600` credential without ever
 printing it, then run `systemd-tmpfiles`, `daemon-reload`, the read-only
-`inspect`, and one manual healthy probe. Run the install verifier with
+`inspect`, and one manual probe to create the sanitized monitor export. Run the
+install verifier with
 `VERIFY_AUTOPILOT_TIMER=0`, enqueue an end-to-end smoke incident, and manually
 run one probe after Codex publishes `READY` so the still-disabled timer routes
 the trusted verifier. Enable the timer only after the smoke report is complete,

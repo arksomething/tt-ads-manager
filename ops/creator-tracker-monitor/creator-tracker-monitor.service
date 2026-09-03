@@ -49,3 +49,5 @@ BindReadOnlyPaths=/var/lib/creator-tracker/state/provider-reconcile
 BindReadOnlyPaths=/var/lib/creator-tracker/state/canonical-delivery
 BindReadOnlyPaths=/var/lib/creator-tracker/state/raw-verifier
 BindReadOnlyPaths=/var/lib/creator-tracker/state/dashboard-health
+BindReadOnlyPaths=/var/lib/creator-tracker-autopilot-health
+InaccessiblePaths=-/var/lib/creator-tracker-autopilot

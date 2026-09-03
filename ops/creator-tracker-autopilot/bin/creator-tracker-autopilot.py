@@ -28,12 +28,14 @@ from typing import Any
 
 
 STATE_ROOT = Path("/var/lib/creator-tracker-autopilot")
+MONITOR_HEALTH_ROOT = Path("/var/lib/creator-tracker-autopilot-health")
 TRACKER_STATE_ROOT = Path("/var/lib/creator-tracker/state")
 SELECTOR = Path("/opt/creator-tracker/current")
 ACTIVATION_MARKER = Path("/opt/creator-tracker/ACTIVATION_IN_PROGRESS")
 ACTIVATION_LOCK = Path("/opt/creator-tracker/activation.lock")
 STATE_FILE = STATE_ROOT / "state.json"
 STATUS_FILE = STATE_ROOT / "status.json"
+MONITOR_HEALTH_FILE = MONITOR_HEALTH_ROOT / "status.json"
 LOCK_FILE = Path("/run/creator-tracker-autopilot/root/probe.lock")
 QUEUE_DIR = STATE_ROOT / "queue"
 INBOX_DIR = STATE_ROOT / "inbox"
@@ -244,17 +246,27 @@ def run(
         return subprocess.CompletedProcess(command, 126, "", f"command failed: {error}")
 
 
-def atomic_json(path: Path, value: Any, *, mode: int = 0o640) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def atomic_json(
+    path: Path,
+    value: Any,
+    *,
+    mode: int = 0o640,
+    owner_gid: int = 0,
+    create_parent: bool = True,
+) -> None:
+    if create_parent:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    elif not path.parent.is_dir():
+        raise RuntimeError(f"required state directory is missing: {path.parent}")
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     payload = json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
     try:
-        # STATE_ROOT is intentionally setgid for the Codex handoff group. Keep
-        # every root-authored state/queue file root-owned despite that inherited
-        # group, matching the loader's fail-closed trust boundary.
+        # STATE_ROOT is intentionally setgid for the Codex handoff group. The
+        # default keeps private state root:root; the dedicated monitor export
+        # explicitly selects its narrow read-only group.
         try:
-            os.fchown(descriptor, 0, 0)
+            os.fchown(descriptor, 0, owner_gid)
         except OSError:
             os.close(descriptor)
             raise
@@ -272,6 +284,78 @@ def atomic_json(path: Path, value: Any, *, mode: int = 0o640) -> None:
     finally:
         if temporary.exists():
             temporary.unlink()
+
+
+def build_monitor_health_export(status: Any) -> dict[str, Any]:
+    """Reduce private sentinel state to the bounded off-host monitor contract."""
+    if (
+        not isinstance(status, dict)
+        or status.get("format_version") != 1
+        or isinstance(status.get("format_version"), bool)
+    ):
+        raise RuntimeError("autopilot status has an unsupported structure")
+    observed_at_epoch = status.get("observed_at_epoch")
+    streak = status.get("streak")
+    state = status.get("state")
+    if (
+        not isinstance(observed_at_epoch, int)
+        or isinstance(observed_at_epoch, bool)
+        or not 0 < observed_at_epoch <= 9_007_199_254_740_991
+        or not isinstance(streak, int)
+        or isinstance(streak, bool)
+        or not 0 <= streak <= 10_000
+        or not isinstance(state, str)
+    ):
+        raise RuntimeError("autopilot status has invalid monitor fields")
+
+    if state == "healthy" and streak == 0:
+        health, reason_codes = "healthy", []
+    elif state == "maintenance" and streak == 0:
+        health, reason_codes = "degraded", ["autopilot_maintenance"]
+    elif state == "incident_pending" and 0 < streak < DISPATCH_STREAK:
+        health, reason_codes = "degraded", ["autopilot_incident_pending"]
+    elif state == "incident_pending" and streak >= DISPATCH_STREAK:
+        health, reason_codes = "failing", ["autopilot_incident_confirmed"]
+    elif state == "codex_queued" and streak >= DISPATCH_STREAK:
+        health, reason_codes = "failing", ["autopilot_incident_confirmed"]
+    elif state == "operator_required" and streak >= DISPATCH_STREAK:
+        health, reason_codes = "failing", ["autopilot_operator_required"]
+    else:
+        # Initial-baseline, corrupt-state, and unknown states all mean that the
+        # sentinel cannot currently vouch for logical collection health.
+        health, reason_codes = "failing", ["autopilot_integrity_failure"]
+
+    return {
+        "format_version": 1,
+        "observed_at_epoch": observed_at_epoch,
+        "health": health,
+        "reason_codes": reason_codes,
+    }
+
+
+def publish_monitor_health(status: Any) -> None:
+    try:
+        health_gid = grp.getgrnam("creator-tracker-health").gr_gid
+    except KeyError as error:
+        raise RuntimeError("creator-tracker-health group is missing") from error
+    try:
+        root_stat = MONITOR_HEALTH_ROOT.lstat()
+    except OSError as error:
+        raise RuntimeError("autopilot monitor health directory is missing") from error
+    if (
+        not stat_module.S_ISDIR(root_stat.st_mode)
+        or root_stat.st_uid != 0
+        or root_stat.st_gid != health_gid
+        or stat_module.S_IMODE(root_stat.st_mode) != 0o750
+    ):
+        raise RuntimeError("autopilot monitor health directory is unsafe")
+    atomic_json(
+        MONITOR_HEALTH_FILE,
+        build_monitor_health_export(status),
+        mode=0o640,
+        owner_gid=health_gid,
+        create_parent=False,
+    )
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -2112,6 +2196,7 @@ def probe() -> int:
                 "codex": None,
             }
             atomic_json(STATUS_FILE, status)
+            publish_monitor_health(status)
             print(json.dumps(status, sort_keys=True, separators=(",", ":")))
             return 1
         pending_from_prior_probe = previous.get("pending_incident")
@@ -2152,6 +2237,7 @@ def probe() -> int:
             }
             atomic_json(STATE_FILE, bootstrap_state)
             atomic_json(STATUS_FILE, status)
+            publish_monitor_health(status)
             print(json.dumps(status, sort_keys=True, separators=(",", ":")))
             return 1
         actions, issues = evaluate_snapshot(snapshot, coverage_baseline)
@@ -2233,6 +2319,7 @@ def probe() -> int:
         }
         atomic_json(STATE_FILE, state)
         atomic_json(STATUS_FILE, status)
+        publish_monitor_health(status)
         print(json.dumps(status, sort_keys=True, separators=(",", ":")))
     return 0
 

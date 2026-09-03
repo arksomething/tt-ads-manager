@@ -16,6 +16,20 @@ time window and backfilling it when necessary.
 - A `failing` heartbeat opens a separate incident immediately.
 - `degraded` remains live and non-paging; its issue codes are retained for the
   alert if the heartbeat later stops.
+- The reporter reads only the autopilot's dedicated four-field health export,
+  never its private state. One or two consecutive incident probes are degraded;
+  the third is failing. A missing, malformed, more-than-60-seconds-future, or
+  15-minute-old export is failing. The autopilot timer itself must remain both
+  active and enabled.
+- The direct coverage probe fails closed if
+  `first_week_targets_imminent_uncovered` is missing or invalid, and pages when
+  it is greater than zero. This forward-looking counter is separate from frozen
+  historical debt, so old unrepairable misses do not page.
+- A direct probe that emits no metrics and carries one of the two exact,
+  verified read-only snapshot contention errors is degraded for that minute,
+  rather than opening and immediately recovering an incident. Any valid metrics
+  are evaluated first, so an imminent uncovered target still pages even if the
+  process also reports contention; unknown probe failures remain failing.
 - An unresolved incident repeats after 30 minutes. An unsent alert is retried
   instead of creating repeat backlog.
 - Provider and network failures remain in the durable outbox and retry
@@ -65,10 +79,16 @@ Vault needs these names:
    `creator-tracker-monitor-tick` with JWT verification enabled.
 4. Store the three named Vault entries. Never embed their values in a migration
    or a `cron.job` command.
-5. Start the laptop reporter and require a committed 201 response from
+5. Install/update the autopilot first and enable its timer. The monitor installer
+   safely creates and validates the dedicated `0750` health directory, runs one
+   autopilot probe, then requires its `status.json` to be a fresh
+   `root:creator-tracker-health` `0640` file before enabling the reporter timer.
+   It fails closed if this boundary or the enabled, active autopilot timer is
+   absent.
+6. Start the laptop reporter and require a committed 201 response from
    `/api/v1/creator-tracker/heartbeat`. An exact retry after response loss gets
    the original receipt as 200 with `replayed: true`.
-6. Through a service-role RPC, call
+7. Through a service-role RPC, call
    `set_creator_tracker_monitor_enabled('creator-tracker-xps', true)`. Enabling
    fails closed unless the database has a heartbeat newer than five minutes.
 

@@ -62,6 +62,31 @@ readonly -a service_units=(
   creator-tracker-scheduler-tick.service
   creator-tracker-worker.service
 )
+readonly -a activation_timer_units=(
+  creator-tracker-roster-refresh.timer
+  creator-tracker-scheduler-tick.timer
+  creator-tracker-instagram-discovery.timer
+  creator-tracker-instagram-scheduler.timer
+  creator-tracker-provider-reconcile.timer
+  creator-tracker-canonical-delivery.timer
+  creator-tracker-raw-verifier.timer
+  creator-tracker-dashboard-health.timer
+)
+readonly -a activation_drain_service_units=(
+  creator-tracker-roster-refresh.service
+  creator-tracker-scheduler-tick.service
+  creator-tracker-instagram-discovery.service
+  creator-tracker-instagram-scheduler.service
+  creator-tracker-provider-reconcile.service
+  creator-tracker-canonical-delivery.service
+  creator-tracker-raw-verifier.service
+  creator-tracker-dashboard-health.service
+)
+readonly -a activation_worker_units=(
+  creator-tracker-worker.service
+)
+readonly activation_drain_timeout_seconds=5700
+readonly activation_drain_poll_seconds=1
 readonly -a managed_units=(
   creator-tracker-worker.service
   creator-tracker-roster-refresh.service creator-tracker-roster-refresh.timer
@@ -79,6 +104,14 @@ readonly -a jobs=(
   provider-reconcile canonical-delivery
   raw-verifier migrate-database owned-tracker-writer
 )
+
+declare -a activation_restore_system_timers=()
+declare -a activation_restore_user_timers=()
+declare -a activation_restore_system_workers=()
+declare -a activation_restore_user_workers=()
+declare -a activation_observed_system_jobs=()
+declare -a activation_observed_user_jobs=()
+activation_runtime_restore_required=0
 
 fail() {
   printf 'creator-tracker activation: %s\n' "$*" >&2
@@ -180,6 +213,259 @@ user_systemctl() {
     PATH=/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/$owner_uid \
     DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$owner_uid/bus \
     /usr/bin/systemctl --user "$@"
+}
+
+activation_systemctl() {
+  /usr/bin/systemctl "$@"
+}
+
+activation_user_systemctl() {
+  user_systemctl "$@"
+}
+
+activation_unit_state() {
+  local manager="$1"
+  local unit="$2"
+  case "$manager" in
+    system) activation_systemctl is-active "$unit" 2>/dev/null || true ;;
+    user) activation_user_systemctl is-active "$unit" 2>/dev/null || true ;;
+    *) return 64 ;;
+  esac
+}
+
+activation_unit_result() {
+  local manager="$1"
+  local unit="$2"
+  case "$manager" in
+    system)
+      activation_systemctl show "$unit" --property=Result --value 2>/dev/null || true
+      ;;
+    user)
+      activation_user_systemctl show "$unit" --property=Result --value 2>/dev/null || true
+      ;;
+    *) return 64 ;;
+  esac
+}
+
+activation_state_is_busy() {
+  case "$1" in
+    active|activating|deactivating|reloading) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+activation_state_should_restore() {
+  case "$1" in
+    active|activating|reloading) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+activation_append_unique() {
+  local array_name="$1"
+  local unit="$2"
+  local existing
+  case "$array_name" in
+    activation_restore_system_timers|activation_restore_user_timers|\
+    activation_restore_system_workers|activation_restore_user_workers|\
+    activation_observed_system_jobs|activation_observed_user_jobs) ;;
+    *) return 64 ;;
+  esac
+  local -n target_array="$array_name"
+  for existing in "${target_array[@]}"; do
+    [[ "$existing" != "$unit" ]] || return 0
+  done
+  target_array+=("$unit")
+}
+
+activation_stop_unit() {
+  local manager="$1"
+  local unit="$2"
+  case "$manager" in
+    system) activation_systemctl stop "$unit" ;;
+    user) activation_user_systemctl stop "$unit" ;;
+    *) return 64 ;;
+  esac
+}
+
+activation_start_unit() {
+  local manager="$1"
+  local unit="$2"
+  case "$manager" in
+    system) activation_systemctl start "$unit" ;;
+    user) activation_user_systemctl start "$unit" ;;
+    *) return 64 ;;
+  esac
+}
+
+activation_sleep() {
+  /bin/sleep "$1"
+}
+
+stop_activation_timers() {
+  local manager unit state restore_array
+  for manager in system user; do
+    if [[ "$manager" == system ]]; then
+      restore_array=activation_restore_system_timers
+    else
+      restore_array=activation_restore_user_timers
+    fi
+    for unit in "${activation_timer_units[@]}"; do
+      state="$(activation_unit_state "$manager" "$unit")"
+      if activation_state_should_restore "$state"; then
+        activation_append_unique "$restore_array" "$unit"
+      fi
+      if activation_state_is_busy "$state"; then
+        if ! activation_stop_unit "$manager" "$unit"; then
+          printf 'creator-tracker activation: could not quiesce %s timer %s\n' \
+            "$manager" "$unit" >&2
+          return 1
+        fi
+      fi
+      state="$(activation_unit_state "$manager" "$unit")"
+      if activation_state_is_busy "$state"; then
+        printf 'creator-tracker activation: %s timer remained %s after quiesce: %s\n' \
+          "$manager" "$state" "$unit" >&2
+        return 1
+      fi
+    done
+  done
+}
+
+verify_activation_drained_job_results() {
+  local manager array_name unit result
+  for manager in system user; do
+    if [[ "$manager" == system ]]; then
+      array_name=activation_observed_system_jobs
+    else
+      array_name=activation_observed_user_jobs
+    fi
+    local -n observed_jobs="$array_name"
+    for unit in "${observed_jobs[@]}"; do
+      result="$(activation_unit_result "$manager" "$unit")"
+      if [[ "$result" != success ]]; then
+        printf 'creator-tracker activation: drained %s job did not finish safely (%s): %s\n' \
+          "$manager" "${result:-unknown}" "$unit" >&2
+        return 1
+      fi
+    done
+  done
+}
+
+wait_for_activation_jobs_to_drain() {
+  local timeout_seconds="$1"
+  local poll_seconds="$2"
+  local started_seconds manager unit state observed_array
+  local -a busy_jobs=()
+  [[ "$timeout_seconds" =~ ^[0-9]+$ && \
+     "$poll_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 64
+  started_seconds=$SECONDS
+  while true; do
+    busy_jobs=()
+    for manager in system user; do
+      if [[ "$manager" == system ]]; then
+        observed_array=activation_observed_system_jobs
+      else
+        observed_array=activation_observed_user_jobs
+      fi
+      for unit in "${activation_drain_service_units[@]}"; do
+        state="$(activation_unit_state "$manager" "$unit")"
+        if activation_state_is_busy "$state"; then
+          busy_jobs+=("$manager:$unit:$state")
+          activation_append_unique "$observed_array" "$unit"
+        fi
+      done
+    done
+    if ((${#busy_jobs[@]} == 0)); then
+      verify_activation_drained_job_results
+      return
+    fi
+    if ((SECONDS - started_seconds >= timeout_seconds)); then
+      printf 'creator-tracker activation: timed out waiting for jobs to drain without termination: %s\n' \
+        "${busy_jobs[*]}" >&2
+      return 1
+    fi
+    activation_sleep "$poll_seconds"
+  done
+}
+
+stop_activation_workers() {
+  local manager unit state restore_array
+  for manager in system user; do
+    if [[ "$manager" == system ]]; then
+      restore_array=activation_restore_system_workers
+    else
+      restore_array=activation_restore_user_workers
+    fi
+    for unit in "${activation_worker_units[@]}"; do
+      state="$(activation_unit_state "$manager" "$unit")"
+      if activation_state_should_restore "$state"; then
+        activation_append_unique "$restore_array" "$unit"
+      fi
+      if activation_state_is_busy "$state"; then
+        if ! activation_stop_unit "$manager" "$unit"; then
+          printf 'creator-tracker activation: could not stop non-provider worker %s:%s\n' \
+            "$manager" "$unit" >&2
+          return 1
+        fi
+      fi
+      state="$(activation_unit_state "$manager" "$unit")"
+      if activation_state_is_busy "$state"; then
+        printf 'creator-tracker activation: non-provider worker remained %s: %s:%s\n' \
+          "$state" "$manager" "$unit" >&2
+        return 1
+      fi
+    done
+  done
+}
+
+restore_quiesced_runtime() {
+  local manager unit failed
+  ((activation_runtime_restore_required != 0)) || return 0
+  failed=0
+  for manager in system user; do
+    local worker_array timer_array
+    if [[ "$manager" == system ]]; then
+      worker_array=activation_restore_system_workers
+      timer_array=activation_restore_system_timers
+    else
+      worker_array=activation_restore_user_workers
+      timer_array=activation_restore_user_timers
+    fi
+    local -n restore_workers="$worker_array"
+    local -n restore_timers="$timer_array"
+    for unit in "${restore_workers[@]}"; do
+      if ! activation_start_unit "$manager" "$unit"; then
+        printf 'creator-tracker activation: could not resume %s worker %s\n' \
+          "$manager" "$unit" >&2
+        failed=1
+      fi
+    done
+    for unit in "${restore_timers[@]}"; do
+      if ! activation_start_unit "$manager" "$unit"; then
+        printf 'creator-tracker activation: could not resume %s timer %s\n' \
+          "$manager" "$unit" >&2
+        failed=1
+      fi
+    done
+  done
+  activation_runtime_restore_required=0
+  ((failed == 0))
+}
+
+quiesce_runtime_for_activation() {
+  local timeout_seconds="$1"
+  local poll_seconds="$2"
+  activation_restore_system_timers=()
+  activation_restore_user_timers=()
+  activation_restore_system_workers=()
+  activation_restore_user_workers=()
+  activation_observed_system_jobs=()
+  activation_observed_user_jobs=()
+  activation_runtime_restore_required=1
+  stop_activation_timers || return
+  wait_for_activation_jobs_to_drain "$timeout_seconds" "$poll_seconds" || return
+  stop_activation_workers || return
 }
 
 durable_text() {
@@ -1206,22 +1492,9 @@ readonly release="$release_parent/$release_id"
 [[ "$canonical_self" == "$release/bin/activate-release" ]] || \
   fail 'the activator must be executed from the candidate release'
 verify_release "$release_id"
-assert_units_inactive
 assert_no_unit_overrides
-[[ "$(current_id)" == "$expected_current" ]] || fail 'expected-current CAS check failed before staging'
-
-prepare_identities_and_state
-for command in setfacl getfacl systemd-tmpfiles systemd-run systemctl systemd-analyze git; do
-  command -v "$command" >/dev/null || fail "required activation command is unavailable: $command"
-done
-
-prepare_runtime_locks
-declare -a lock_fds=()
-acquire_job_locks
-assert_units_inactive
-
 old_current="$(current_id)"
-[[ "$old_current" == "$expected_current" ]] || fail 'expected-current CAS changed while acquiring fences'
+[[ "$old_current" == "$expected_current" ]] || fail 'expected-current CAS check failed before staging'
 if [[ "$old_current" != none && "$old_current" != "$release_id" ]]; then
   old_commit="$(<"$release_parent/$old_current/APP_COMMIT")"
   new_commit="$(<"$release/APP_COMMIT")"
@@ -1235,6 +1508,54 @@ if [[ -f "$history" && "$release_id" != "$old_current" ]] && \
    awk -v candidate="$release_id" 'NF == 4 && $3 == candidate { found = 1 } END { exit !found }' \
      "$history"; then
   ((allow_rollback != 0)) || fail 'previously activated release requires --allow-rollback'
+fi
+
+for command in setfacl getfacl systemd-tmpfiles systemd-run systemctl systemd-analyze git; do
+  command -v "$command" >/dev/null || fail "required activation command is unavailable: $command"
+done
+
+transaction=''
+activation_complete=0
+on_exit() {
+  local code=$?
+  local rollback_safe=1
+  trap - EXIT
+  if ((code != 0 && activation_complete == 0)); then
+    if [[ -n "$transaction" && -f "$marker" && ! -L "$marker" ]]; then
+      printf '%s\n' 'creator-tracker activation: failure detected; restoring the old tuple' >&2
+      durable_text "$transaction/phase" rolling-back
+      if ! rollback_transaction "$transaction"; then
+        printf '%s\n' 'creator-tracker activation: automatic rollback failed; marker retained for --recover' >&2
+        rollback_safe=0
+      else
+        /bin/sync
+        durable_text "$transaction/status" rolled-back
+        durable_text "$transaction/phase" rolled-back
+        durable_unlink "$marker"
+      fi
+    fi
+    if ((rollback_safe != 0)) && ! restore_quiesced_runtime; then
+      printf '%s\n' 'creator-tracker activation: failed to restore one or more pre-activation runtime units' >&2
+    fi
+  fi
+  exit "$code"
+}
+trap on_exit EXIT
+
+quiesce_runtime_for_activation \
+  "$activation_drain_timeout_seconds" "$activation_drain_poll_seconds" || \
+  fail 'could not drain active tracker jobs safely; activation made no persistent tuple change'
+prepare_identities_and_state
+prepare_runtime_locks
+declare -a lock_fds=()
+acquire_job_locks
+assert_units_inactive
+
+[[ "$(current_id)" == "$old_current" && "$old_current" == "$expected_current" ]] || \
+  fail 'expected-current CAS changed while acquiring fences'
+if [[ "$old_current" != none ]]; then
+  "$release/bin/activation-database" assert-provider-lease-settled \
+    "$database" ignored ignored
 fi
 
 transaction="$transaction_parent/$(date -u +%Y%m%dT%H%M%SZ)-$release_id-$$"
@@ -1277,26 +1598,6 @@ durable_text "$transaction/phase" prepared
 "$durable_state" fsync-tree "$transaction"
 "$durable_state" copy "$transaction/marker" "$marker" 0600 0 0
 durable_text "$transaction/phase" mutating
-
-activation_complete=0
-on_exit() {
-  local code=$?
-  trap - EXIT
-  if ((code != 0 && activation_complete == 0)) && [[ -f "$marker" ]]; then
-    printf '%s\n' 'creator-tracker activation: failure detected; restoring the old tuple' >&2
-    durable_text "$transaction/phase" rolling-back
-    if ! rollback_transaction "$transaction"; then
-      printf '%s\n' 'creator-tracker activation: automatic rollback failed; marker retained for --recover' >&2
-    else
-      /bin/sync
-      durable_text "$transaction/status" rolled-back
-      durable_text "$transaction/phase" rolled-back
-      durable_unlink "$marker"
-    fi
-  fi
-  exit "$code"
-}
-trap on_exit EXIT
 
 quarantine_legacy_user_units "$transaction"
 remove_system_unit_state "$transaction"
@@ -1372,6 +1673,7 @@ fi
 durable_text "$transaction/phase" committed
 durable_text "$transaction/status" committed
 durable_unlink "$marker"
+activation_runtime_restore_required=0
 activation_complete=1
 trap - EXIT
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import stat
 import sys
 import tempfile
 import unittest
@@ -104,6 +105,134 @@ class AtomicStateTests(unittest.TestCase):
             fchown.assert_called_once()
             self.assertEqual(fchown.call_args.args[1:], (0, 0))
             self.assertEqual(target.read_text(), '{"format_version":1}\n')
+
+    def test_monitor_health_export_is_bounded_and_group_readable(self) -> None:
+        private_status = {
+            "format_version": 1,
+            "observed_at_epoch": NOW,
+            "state": "incident_pending",
+            "streak": 3,
+            "release_id": "secret-release",
+            "app_commit": "secret-commit",
+            "issues": ["private-account-specific-detail"],
+            "detail": "private diagnostic detail",
+            "codex": {"incident_id": "private-incident"},
+        }
+        expected = {
+            "format_version": 1,
+            "observed_at_epoch": NOW,
+            "health": "failing",
+            "reason_codes": ["autopilot_incident_confirmed"],
+        }
+        self.assertEqual(autopilot.build_monitor_health_export(private_status), expected)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "status.json"
+            safe_root = mock.Mock(
+                st_mode=stat.S_IFDIR | 0o750,
+                st_uid=0,
+                st_gid=1234,
+            )
+            with mock.patch.multiple(
+                autopilot,
+                MONITOR_HEALTH_ROOT=root,
+                MONITOR_HEALTH_FILE=target,
+            ), mock.patch.object(
+                autopilot.Path, "lstat", return_value=safe_root
+            ), mock.patch.object(
+                autopilot.grp, "getgrnam", return_value=mock.Mock(gr_gid=1234)
+            ), mock.patch.object(autopilot.os, "fchown") as fchown:
+                autopilot.publish_monitor_health(private_status)
+            fchown.assert_called_once()
+            self.assertEqual(fchown.call_args.args[1:], (0, 1234))
+            self.assertEqual(target.stat().st_mode & 0o777, 0o640)
+            self.assertEqual(target.read_text(), '{"format_version":1,"health":"failing",'
+                             '"observed_at_epoch":1800000000,'
+                             '"reason_codes":["autopilot_incident_confirmed"]}\n')
+
+    def test_monitor_health_export_maps_only_generic_states(self) -> None:
+        cases = (
+            ("healthy", 0, "healthy", []),
+            ("maintenance", 0, "degraded", ["autopilot_maintenance"]),
+            ("incident_pending", 1, "degraded", ["autopilot_incident_pending"]),
+            ("incident_pending", 2, "degraded", ["autopilot_incident_pending"]),
+            ("incident_pending", 3, "failing", ["autopilot_incident_confirmed"]),
+            ("codex_queued", 3, "failing", ["autopilot_incident_confirmed"]),
+            ("operator_required", 3, "failing", ["autopilot_operator_required"]),
+            ("sentinel_state_invalid", 0, "failing", ["autopilot_integrity_failure"]),
+            (
+                "awaiting_initial_coverage_baseline",
+                0,
+                "failing",
+                ["autopilot_integrity_failure"],
+            ),
+            ("unknown_future_state", 0, "failing", ["autopilot_integrity_failure"]),
+        )
+        for state, streak, health, reason_codes in cases:
+            with self.subTest(state=state, streak=streak):
+                export = autopilot.build_monitor_health_export(
+                    {
+                        "format_version": 1,
+                        "observed_at_epoch": NOW,
+                        "state": state,
+                        "streak": streak,
+                    }
+                )
+                self.assertEqual(set(export), {
+                    "format_version", "observed_at_epoch", "health", "reason_codes"
+                })
+                self.assertEqual(export["health"], health)
+                self.assertEqual(export["reason_codes"], reason_codes)
+
+    def test_monitor_health_export_rejects_malformed_fields_and_unsafe_root(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "invalid monitor fields"):
+            autopilot.build_monitor_health_export(
+                {
+                    "format_version": 1,
+                    "observed_at_epoch": True,
+                    "state": "healthy",
+                    "streak": 0,
+                }
+            )
+        with self.assertRaisesRegex(RuntimeError, "unsupported structure"):
+            autopilot.build_monitor_health_export(
+                {
+                    "format_version": True,
+                    "observed_at_epoch": NOW,
+                    "state": "healthy",
+                    "streak": 0,
+                }
+            )
+        self.assertEqual(
+            autopilot.build_monitor_health_export(
+                {
+                    "format_version": 1,
+                    "observed_at_epoch": NOW,
+                    "state": "healthy",
+                    "streak": 3,
+                }
+            )["reason_codes"],
+            ["autopilot_integrity_failure"],
+        )
+        unsafe_root = mock.Mock(
+            st_mode=stat.S_IFDIR | 0o770,
+            st_uid=0,
+            st_gid=1234,
+        )
+        with mock.patch.object(
+            autopilot.Path, "lstat", return_value=unsafe_root
+        ), mock.patch.object(
+            autopilot.grp, "getgrnam", return_value=mock.Mock(gr_gid=1234)
+        ), self.assertRaisesRegex(RuntimeError, "directory is unsafe"):
+            autopilot.publish_monitor_health(
+                {
+                    "format_version": 1,
+                    "observed_at_epoch": NOW,
+                    "state": "healthy",
+                    "streak": 0,
+                }
+            )
 
 
 class EvaluateTests(unittest.TestCase):

@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import stat
 import sys
@@ -196,15 +197,134 @@ def verify(path: str, manifest_path: str) -> None:
         fail("backup integrity, schema, or row counts changed")
 
 
+def assert_provider_lease_settled(path: str) -> None:
+    """Refuse cutover while a paid-provider request may still own the lease."""
+    path = canonical(path)
+    before = safe_regular(path)
+    before_fds = open_descriptors()
+    database = connect_readonly(path)
+    try:
+        assert_connection_inode(before_fds, before)
+        database.execute("BEGIN")
+        table = database.execute(
+            "SELECT count(*) FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'sync_state'"
+        ).fetchone()
+        if table is None or int(table[0]) != 1:
+            fail("provider lease table is unavailable")
+        rows = database.execute(
+            "SELECT status, message FROM sync_state WHERE source = ?",
+            ("instagram_provider_credit_guard",),
+        ).fetchall()
+        if len(rows) != 1:
+            fail("provider lease state is missing or duplicated")
+        status, message = rows[0]
+        prefix = "instagram_credit_global_v1="
+        if not isinstance(message, str) or not message.startswith(prefix):
+            fail("provider lease state is malformed")
+        try:
+            serialized = message[len(prefix):]
+            state = json.loads(serialized)
+        except json.JSONDecodeError:
+            fail("provider lease state is malformed")
+        expected_keys = {
+            "version", "state", "reason", "runId", "requestNumber",
+            "reserveCredits", "creditsRemaining", "observedAtMs", "claimedAtMs",
+        }
+        if (
+            not isinstance(state, dict)
+            or set(state) != expected_keys
+            or serialized != json.dumps(state, separators=(",", ":"))
+            or state.get("version") != 1
+            or state.get("state") not in {
+                "ready", "blocked_low", "blocked_missing_telemetry",
+                "request_pending",
+            }
+            or not isinstance(state.get("runId"), str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", state["runId"])
+            is None
+        ):
+            fail("provider lease state is malformed")
+        integer_bounds = {
+            "requestNumber": 10_000,
+            "reserveCredits": 100_000_000,
+            "creditsRemaining": 100_000_000,
+            "observedAtMs": 8_640_000_000_000_000,
+            "claimedAtMs": 8_640_000_000_000_000,
+        }
+        for key, maximum in integer_bounds.items():
+            value = state[key]
+            if key in {"creditsRemaining", "observedAtMs", "claimedAtMs"} and value is None:
+                continue
+            if type(value) is not int or value < 0 or value > maximum:
+                fail("provider lease state is malformed")
+        if (
+            state["requestNumber"] < 1
+            or state["reserveCredits"] < 1
+            or (state["creditsRemaining"] is None) != (state["observedAtMs"] is None)
+        ):
+            fail("provider lease state is malformed")
+        state_name = state["state"]
+        reason = state["reason"]
+        claimed_at = state["claimedAtMs"]
+        if (
+            state_name == "ready"
+            and (reason is not None or state["creditsRemaining"] is None or claimed_at is not None)
+        ):
+            fail("provider lease state is malformed")
+        if state_name == "request_pending" and (
+            reason != "request_pending" or claimed_at is None
+        ):
+            fail("provider lease state is malformed")
+        if state_name == "blocked_low" and (
+            reason not in {"balance_below_reserve", "reserve_would_be_crossed"}
+            or state["creditsRemaining"] is None
+            or claimed_at is not None
+        ):
+            fail("provider lease state is malformed")
+        if state_name == "blocked_missing_telemetry" and (
+            reason not in {
+                "provider_telemetry_missing", "provider_charge_invalid",
+                "balance_reconciliation_pending", "balance_reconciliation_failed",
+                "balance_reconciliation_rate_limited", "evidence_malformed",
+                "rearm_identity_invalid", "rearm_launch_balance_below_minimum",
+            }
+            or claimed_at is not None
+        ):
+            fail("provider lease state is malformed")
+        if state_name == "request_pending" or status == "running":
+            fail("paid-provider credit lease is still request_pending")
+        expected_status = {
+            "ready": "ok",
+            "blocked_low": "error",
+            "blocked_missing_telemetry": "error",
+        }.get(state_name)
+        if status != expected_status:
+            fail("provider lease status is inconsistent")
+        database.rollback()
+    finally:
+        database.close()
+    if stable_identity(os.lstat(path)) != stable_identity(before):
+        fail("provider lease database identity changed during inspection")
+
+
 def main() -> None:
     if os.geteuid() != 0:
         fail("helper must run as root")
-    if len(sys.argv) != 5 or sys.argv[1] not in {"backup", "verify"}:
-        fail("usage: activation-database.py backup SOURCE BACKUP MANIFEST | verify BACKUP IGNORED MANIFEST")
+    if len(sys.argv) != 5 or sys.argv[1] not in {
+        "backup", "verify", "assert-provider-lease-settled",
+    }:
+        fail(
+            "usage: activation-database.py backup SOURCE BACKUP MANIFEST | "
+            "verify BACKUP IGNORED MANIFEST | "
+            "assert-provider-lease-settled DATABASE IGNORED IGNORED"
+        )
     if sys.argv[1] == "backup":
         backup(sys.argv[2], sys.argv[3], sys.argv[4])
-    else:
+    elif sys.argv[1] == "verify":
         verify(sys.argv[2], sys.argv[4])
+    else:
+        assert_provider_lease_settled(sys.argv[2])
 
 
 if __name__ == "__main__":

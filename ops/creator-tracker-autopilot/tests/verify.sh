@@ -88,6 +88,10 @@ fi
 grep -Fq 'ACTION_COOLDOWN_SECONDS' "$python"
 grep -Fq 'cutover_gate_not_ready' "$python"
 grep -Fq '2750 root creator-tracker-codex' "$root/tmpfiles.d/creator-tracker-autopilot.conf"
+grep -Fq 'd /var/lib/creator-tracker-autopilot-health 0750 root creator-tracker-health -' \
+  "$root/tmpfiles.d/creator-tracker-autopilot.conf"
+grep -F 'ReadWritePaths=' "$root/systemd/creator-tracker-autopilot.service" | \
+  grep -Fq '/var/lib/creator-tracker-autopilot-health'
 grep -Fq 'User=creator-tracker-codex' "$root/systemd/creator-tracker-codex-incident.service"
 grep -Fq 'creator-tracker-verifier' "$verifier"
 grep -Fq 'actual_paths' "$verifier"
