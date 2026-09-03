@@ -500,29 +500,36 @@ systemctl enable --now \
 The release-bound completeness gate is complete. The intentionally enabled set
 is the worker plus all eight persistent timers: TikTok roster/scheduler,
 Instagram discovery/scheduler, provider reconcile, canonical delivery, raw
-verification, and dashboard health. The final 2026-09-01 deployment record is
-sealed release
-`eb96bee54567c8fb3ea05c2a464ac5912927462fa2e3b5fc848dbbdf53bbbb22`
-(app commit `253d8a30ca43a3daeaaa50adbb3aed1f0ad03aea`), with a complete
-45-page cutover for producer run `0d24dee7-1562-4969-a18e-56a1ac7f0d9b`
+verification, and dashboard health. The current 2026-09-03 deployment is sealed
+release
+`2397a18bf91487231f0c4817ad795cb74906e1cd333d299c87e7f7f38385f76b`
+(app commit `62c5fb56cb8a36aa3c6944a252802f38bf71575e`), with a complete
+45-page cutover for producer run `d3b5fa9f-a6fe-47d4-8602-361ea400adae`
 and capture set
-`2baecc2f84d2c9af12b049f80a43648b68cfdd1a2e450e109da8e560af90ae33`.
+`61c6cd754be5a29a99ddf3417d0724ca223c9c86ed82070ed7fc47c9d8343170`.
 The result has zero pending delivery rows and zero pending raw attestations.
 
 A persisted TikTok circuit-open state suppresses network traffic without
 disabling the timers, so paced collection resumes after cooldown without an
-operator or reboot losing the schedule. The latest planner is feasible at
-134/160 starts in the rolling 24-hour window and 71/80 in the busiest 12-hour
-window, with zero clustered target-window misses. Ordinary daily deferrals stay
-visible but do not masquerade as first-week SLA failures.
+operator or reboot losing the schedule. Failed resource-aware profile retries
+are labeled and admitted only in the 15-start recovery lane; a failed retry or
+permanent account failure cannot reclaim the shared writer until its next
+ordinary 12-hour/24-hour interval. The 2026-09-03 activation smoke planner was
+feasible at 128/160 starts in the rolling 24-hour window and 68/80 in the busiest
+12-hour window, with zero clustered target-window misses. Ordinary daily
+deferrals stay visible but do not masquerade as first-week SLA failures.
 
-Instagram is currently `ready` at 24,724 credits with a 100-credit reserve. If
-future telemetry becomes missing, malformed, or depleted, the spend guard fails
-closed. Rearm only after an operator independently confirms replenished launch
-capacity. The sealed one-shot command accepts the exact confirmations below,
-makes one identity-validated request, requires a reconstructed pre-request
-capacity of at least 1,250 credits, writes durable audit evidence, and enables
-both persistent Instagram timers only after every gate succeeds:
+The activation rearm and live Instagram smoke runs left the shared provider
+guard `ready` at 24,619 credits with a 100-credit reserve as of 00:05 ET on
+2026-09-03. A real discovery pass continued after one zero-charge terminal
+not-found account and evaluated 360 returned videos across six due accounts;
+real observation passes committed 392 rows. If future telemetry becomes
+missing, malformed, or depleted, the spend guard still fails closed. Rearm only
+after an operator independently confirms replenished launch capacity. The
+sealed one-shot command accepts the exact confirmations below, makes one
+identity-validated request, requires a reconstructed pre-request capacity of at
+least 1,250 credits, writes durable audit evidence, and enables both persistent
+Instagram timers only after every gate succeeds:
 
 ```bash
 /opt/creator-tracker/current/bin/run-instagram-credit-rearm \
@@ -530,6 +537,12 @@ both persistent Instagram timers only after every gate succeeds:
   --confirm-provider-launch-balance-at-least-1250 \
   --confirm-provider-top-up-one-request
 ```
+
+The activation smoke proves that collection and scheduling are live; it does
+not erase inherited coverage debt. The 00:05 ET health snapshot still reported
+8 unresolved TikTok accounts, 1 unresolved Instagram account, 380 overdue
+TikTok videos, and 53 overdue Instagram videos. The persistent timers continue
+to drain eligible work, while permanent account failures remain explicit.
 
 Do not invoke that command without the stated capacity and one-request
 confirmations. A low, malformed, missing, or identity-mismatched response
