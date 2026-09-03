@@ -449,6 +449,60 @@ class DispatchTests(unittest.TestCase):
         state, dispatch, _ = autopilot.update_incident_state(state, snapshot, [issue])
         self.assertTrue(dispatch)
 
+    def test_daily_budget_reserves_a_third_independent_incident(self) -> None:
+        snapshot = healthy_snapshot()
+        issue = "tiktok_target_capacity_not_feasible"
+        previous = {
+            "issue_streaks": {
+                issue: {
+                    "count": 2,
+                    "first_seen_epoch": NOW
+                    - autopilot.DISPATCH_MIN_AGE_SECONDS[issue],
+                }
+            },
+            "dispatches": [
+                {
+                    "fingerprint": str(index) * 64,
+                    "at_epoch": NOW - index * 60,
+                    "incident_id": f"20260903T00000{index}Z-{str(index) * 16}",
+                }
+                for index in (1, 2)
+            ],
+        }
+        state, dispatch, incident_id = autopilot.update_incident_state(
+            previous, snapshot, [issue]
+        )
+        self.assertTrue(dispatch)
+        self.assertRegex(incident_id or "", autopilot.INCIDENT_RE)
+        self.assertEqual(len(state["dispatches"]), 3)
+
+    def test_daily_budget_blocks_a_fourth_independent_incident(self) -> None:
+        snapshot = healthy_snapshot()
+        issue = "tiktok_target_capacity_not_feasible"
+        previous = {
+            "issue_streaks": {
+                issue: {
+                    "count": 2,
+                    "first_seen_epoch": NOW
+                    - autopilot.DISPATCH_MIN_AGE_SECONDS[issue],
+                }
+            },
+            "dispatches": [
+                {
+                    "fingerprint": str(index) * 64,
+                    "at_epoch": NOW - index * 60,
+                    "incident_id": f"20260903T00000{index}Z-{str(index) * 16}",
+                }
+                for index in (1, 2, 3)
+            ],
+        }
+        state, dispatch, incident_id = autopilot.update_incident_state(
+            previous, snapshot, [issue]
+        )
+        self.assertFalse(dispatch)
+        self.assertIsNone(incident_id)
+        self.assertEqual(len(state["dispatches"]), 3)
+
     def test_continuous_issue_dispatches_only_once(self) -> None:
         snapshot = healthy_snapshot()
         state: dict = {}

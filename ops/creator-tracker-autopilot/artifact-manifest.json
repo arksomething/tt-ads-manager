@@ -1,7 +1,7 @@
 {
   "format_version": 1,
   "files": {
-    "/usr/local/libexec/creator-tracker-autopilot": {"sha256": "ccc832b051a45e9eb0ea5100caf5f6fb6431bf5bdbaf3490d712bc3e90537851", "size": 90852},
+    "/usr/local/libexec/creator-tracker-autopilot": {"sha256": "71e93241bc395d5abaff2b1af3ba477a1921fdd1bfc944babb16e0f9a0698ce8", "size": 90852},
     "/usr/local/libexec/creator-tracker-codex-incident": {"sha256": "86d5e58b04765d3068d218896145a204dbd3c55bc963dd2b82e8c951bbf4e7d7", "size": 19142},
     "/usr/local/libexec/creator-tracker-codex-verifier": {"sha256": "6e48c7b69c9ce4806898c6b5115cc632d9991088be28ea1d875603f71f63e177", "size": 37710},
     "/usr/local/libexec/creator-tracker-validate-codex-result": {"sha256": "765e8332926fb0d60d3a11358495b7363b2f337270a46b7f6aa880129421f568", "size": 3200},

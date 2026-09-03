@@ -29,7 +29,7 @@ launch an agent every two minutes.
   and clustered TikTok window misses must also persist for at least 45 minutes,
   so ordinary queue wobble does not burn an agent run. A continuous issue is
   dispatched once; if it clears and later returns it becomes a new episode.
-  Dispatches are limited to two per day, with a six-hour same-fingerprint
+  Dispatches are limited to three per day, with a six-hour same-fingerprint
   cooldown.
   Credit, storage, disabled-unit, cutover, and release-integrity faults remain
   operator-required instead of wasting Codex runs on actions it cannot safely
