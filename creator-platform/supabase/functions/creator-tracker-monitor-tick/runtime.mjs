@@ -122,18 +122,73 @@ async function rpc(fetchImpl, config, name, body) {
 }
 
 function isDelivery(value) {
+  const payload = value?.event_payload;
   return (
     value &&
     typeof value === "object" &&
     UUID.test(value.delivery_id ?? "") &&
     UUID.test(value.lease_token ?? "") &&
-    ["opened", "repeat", "recovered"].includes(value.event_kind) &&
-    value.event_payload &&
-    typeof value.event_payload === "object" &&
-    !Array.isArray(value.event_payload) &&
+    ["opened", "repeat"].includes(value.event_kind) &&
+    payload &&
+    typeof payload === "object" &&
+    !Array.isArray(payload) &&
+    ["heartbeat_stale", "runtime_failing"].includes(payload.incidentKind) &&
+    (
+      payload.incidentKind !== "runtime_failing" ||
+      (
+        Array.isArray(payload.issueCodes) &&
+        payload.issueCodes.includes("operator_action_required")
+      )
+    ) &&
     Number.isSafeInteger(value.attempt_number) &&
     value.attempt_number > 0
   );
+}
+
+function leaseIdentity(value) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !UUID.test(value.delivery_id ?? "") ||
+    !UUID.test(value.lease_token ?? "")
+  ) {
+    return null;
+  }
+  return {
+    deliveryId: value.delivery_id,
+    leaseToken: value.lease_token,
+  };
+}
+
+async function authorizeDelivery(fetchImpl, config, leasedDelivery) {
+  const identity = leaseIdentity(leasedDelivery);
+  if (!identity) return { authorized: false, code: "delivery_identity_invalid" };
+  const result = await rpc(
+    fetchImpl,
+    config,
+    "authorize_creator_tracker_monitor_delivery",
+    {
+      target_delivery_id: identity.deliveryId,
+      target_lease_token: identity.leaseToken,
+    },
+  );
+  if (!result || typeof result !== "object" || typeof result.authorized !== "boolean") {
+    throw new MonitorRuntimeError("MONITOR_DATABASE_RESPONSE_INVALID", 503);
+  }
+  if (!result.authorized) {
+    return { authorized: false, code: "delivery_not_authorized" };
+  }
+  const canonical = {
+    delivery_id: result.deliveryId,
+    lease_token: result.leaseToken,
+    event_kind: result.eventKind,
+    event_payload: result.eventPayload,
+    attempt_number: result.attemptNumber,
+  };
+  if (!isDelivery(canonical)) {
+    throw new MonitorRuntimeError("MONITOR_DATABASE_RESPONSE_INVALID", 503);
+  }
+  return { authorized: true, delivery: canonical };
 }
 
 function safeTimestamp(value) {
@@ -158,65 +213,73 @@ function htmlEscape(value) {
 }
 
 export function renderMonitorEmail(eventKind, payload) {
+  if (!["opened", "repeat"].includes(eventKind)) {
+    throw new MonitorRuntimeError("MONITOR_DELIVERY_EVENT_UNSUPPORTED", 503);
+  }
   const monitorId =
     typeof payload.monitorId === "string" ? payload.monitorId : "creator tracker";
   const outageStartedAt = safeTimestamp(payload.outageStartedAt);
   const lastReceivedAt = safeTimestamp(payload.lastReceivedAt);
-  const recoveredAt = safeTimestamp(payload.recoveredAt);
   const issues = safeIssueCodes(payload.issueCodes);
   const runtimeFailure = payload.incidentKind === "runtime_failing";
+  const isRepeat = eventKind === "repeat";
 
-  let subject;
-  let headline;
-  let summary;
-  if (eventKind === "recovered") {
-    subject = runtimeFailure
-      ? `[Recovered] Creator tracker runtime restored`
-      : `[Recovered] Creator tracker heartbeat restored`;
-    headline = runtimeFailure
-      ? "Creator tracker runtime restored"
-      : "Creator tracker heartbeat restored";
-    summary = runtimeFailure
-      ? `The tracker reported a non-failing runtime state at ${recoveredAt}.`
-      : `The off-host monitor received a new heartbeat at ${recoveredAt}.`;
-  } else if (eventKind === "repeat") {
-    subject = runtimeFailure
-      ? `[Still failing] Creator tracker runtime failure`
-      : `[Still down] Creator tracker heartbeat missing`;
-    headline = runtimeFailure
-      ? "Creator tracker is still reporting failure"
-      : "Creator tracker is still not checking in";
-    summary = runtimeFailure
-      ? `The laptop is checking in, but the tracker runtime remains in a failing state.`
-      : `No heartbeat has reached the off-host monitor since ${lastReceivedAt}.`;
-  } else {
-    subject = runtimeFailure
-      ? `[Urgent] Creator tracker runtime failure`
-      : `[Urgent] Creator tracker heartbeat missing`;
-    headline = runtimeFailure
-      ? "Creator tracker reported a runtime failure"
-      : "Creator tracker stopped checking in";
-    summary = runtimeFailure
-      ? `The laptop is checking in, but the tracker reports that its data path is failing.`
-      : `No heartbeat has reached the off-host monitor since ${lastReceivedAt}.`;
-  }
+  const subject = runtimeFailure
+    ? isRepeat
+      ? "Reminder: creator tracker still needs your review"
+      : "Action needed: review the creator tracker repair"
+    : isRepeat
+      ? "Reminder: reconnect the creator tracker laptop"
+      : "Action needed: reconnect the creator tracker laptop";
+  const headline = runtimeFailure
+    ? "Automated repair needs your review"
+    : "Reconnect the creator tracker laptop";
+  const summary = runtimeFailure
+    ? "The laptop is online, but automated repair exhausted its safe options. The tracker now needs a decision from you."
+    : `The tracker laptop has not checked in since ${lastReceivedAt}. Automatic repair cannot run while the laptop is unreachable.`;
+  const actions = runtimeFailure
+    ? [
+        "Open Codex on the tracker laptop.",
+        "Ask it to inspect the latest creator-tracker autopilot report and explain the requested decision.",
+        "Approve only the specific production or account action you want it to take.",
+      ]
+    : [
+        "Make sure the tracker laptop is powered on and connected to its charger.",
+        "Reconnect it to the internet and leave it awake.",
+        "If check-ins do not resume within five minutes, open Codex on that laptop for diagnosis.",
+      ];
 
   const details = [
     `Monitor: ${monitorId}`,
-    `Outage threshold crossed: ${outageStartedAt}`,
-    eventKind === "recovered" ? `Recovered: ${recoveredAt}` : `Last heartbeat: ${lastReceivedAt}`,
+    `Action required since: ${outageStartedAt}`,
+    `Last check-in: ${lastReceivedAt}`,
     `Last reported state: ${typeof payload.lastStatus === "string" ? payload.lastStatus : "unknown"}`,
-    `Last issue codes: ${issues.length ? issues.join(", ") : "none reported"}`,
+    `Diagnostic codes: ${issues.length ? issues.join(", ") : "none reported"}`,
   ];
-  const caution = runtimeFailure
-    ? "This is a live tracker failure. Check the issue codes, repair the data path, and backfill the affected window."
-    : "This alert detects loss of monitoring. It does not prove whether creator data was missed; check the tracker and backfill any affected window.";
-  const text = `${headline}\n\n${summary}\n\n${details.join("\n")}\n\n${caution}`;
+  const impact = runtimeFailure
+    ? "Tracking may remain degraded until the blocked action is reviewed."
+    : "Collection and automatic repair may be paused until the laptop reconnects.";
+  const text = [
+    headline,
+    "",
+    summary,
+    "",
+    "What to do now",
+    ...actions.map((action, index) => `${index + 1}. ${action}`),
+    "",
+    impact,
+    "",
+    "Status",
+    ...details,
+  ].join("\n");
   const html = [
     `<h1>${htmlEscape(headline)}</h1>`,
     `<p>${htmlEscape(summary)}</p>`,
+    "<h2>What to do now</h2>",
+    `<ol>${actions.map((action) => `<li>${htmlEscape(action)}</li>`).join("")}</ol>`,
+    `<p><strong>${htmlEscape(impact)}</strong></p>`,
+    "<h2>Status</h2>",
     `<ul>${details.map((detail) => `<li>${htmlEscape(detail)}</li>`).join("")}</ul>`,
-    `<p><strong>${htmlEscape(caution)}</strong></p>`,
   ].join("");
   return { subject, text, html };
 }
@@ -370,19 +433,45 @@ export function createMonitorTickHandler({
         "lease_creator_tracker_monitor_deliveries",
         { worker_id: "supabase-edge-monitor", max_deliveries: 10, lease_seconds: 120 },
       );
-      if (!Array.isArray(leased) || leased.some((delivery) => !isDelivery(delivery))) {
+      if (!Array.isArray(leased)) {
         throw new MonitorRuntimeError("MONITOR_DATABASE_RESPONSE_INVALID", 503);
       }
 
       const results = [];
-      for (const delivery of leased) {
-        results.push(await deliverEmail(fetchImpl, cryptoImpl, config, delivery));
+      for (const leasedDelivery of leased) {
+        let authorization;
+        try {
+          authorization = await authorizeDelivery(fetchImpl, config, leasedDelivery);
+        } catch (error) {
+          results.push({
+            sent: false,
+            refused: true,
+            authorizationError: true,
+            code: error instanceof MonitorRuntimeError
+              ? error.code.toLowerCase()
+              : "delivery_authorization_failed",
+          });
+          continue;
+        }
+        if (!authorization.authorized) {
+          results.push({ sent: false, refused: true, code: authorization.code });
+          continue;
+        }
+        results.push(await deliverEmail(
+          fetchImpl,
+          cryptoImpl,
+          config,
+          authorization.delivery,
+        ));
       }
-      return json(200, {
-        ok: true,
+      const authorizationErrors = results.filter((result) => result.authorizationError).length;
+      return json(authorizationErrors > 0 ? 503 : 200, {
+        ok: authorizationErrors === 0,
         leased: leased.length,
         sent: results.filter((result) => result.sent).length,
-        retrying: results.filter((result) => !result.sent).length,
+        retrying: results.filter((result) => !result.sent && !result.refused).length,
+        refused: results.filter((result) => result.refused).length,
+        authorizationErrors,
       });
     } catch (error) {
       const known = error instanceof MonitorRuntimeError;

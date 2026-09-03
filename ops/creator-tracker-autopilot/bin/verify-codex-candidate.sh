@@ -873,42 +873,66 @@ else:
         "verification": [],
         "changed_files": [],
         "production_recommendation": "operator_action_required",
+        "operator_action": "none",
     }
 trusted_exit = int(trusted_raw)
 actual = policy["actual_paths"]
 candidate_valid = policy["safe"] and trusted_exit == 0
 if actual and result["status"] == "verified_candidate" and candidate_valid:
     result["production_recommendation"] = "review_candidate"
+    result["operator_action"] = "review_candidate"
     result["verification"].append(
         "Fresh networkless trusted test and typecheck commands passed."
     )
 elif actual:
     result["status"] = "needs_human"
     result["production_recommendation"] = "operator_action_required"
+    result["operator_action"] = "none"
     result["verification"].append(
         "Trusted path policy or isolated verification did not accept the candidate."
     )
 elif result["status"] == "verified_candidate":
     result["status"] = "needs_human"
     result["production_recommendation"] = "operator_action_required"
+    result["operator_action"] = "none"
     result["verification"].append("No candidate diff exists to verify.")
 elif smoke_raw == "true" and candidate_valid and result["status"] == "no_action":
     result["production_recommendation"] = "none"
+    result["operator_action"] = "none"
     result["verification"].append(
         "Pristine sealed release test and typecheck commands passed in the trusted harness."
     )
 elif smoke_raw == "true":
     result["status"] = "needs_human"
     result["production_recommendation"] = "operator_action_required"
+    result["operator_action"] = "none"
     result["verification"].append(
         "The Codex command-execution smoke proof or trusted harness failed."
     )
 elif result["status"] == "no_action" and candidate_valid:
     result["production_recommendation"] = "none"
+    result["operator_action"] = "none"
+elif result["status"] == "external_or_data_issue" and candidate_valid:
+    external_actions = {
+        "replenish_tiktok_credits",
+        "replenish_instagram_credits",
+        "restore_tiktok_access",
+        "restore_instagram_access",
+        "restore_creator_account_access",
+    }
+    if (
+        result.get("production_recommendation") == "operator_action_required"
+        and result.get("operator_action") in external_actions
+    ):
+        pass
+    else:
+        result["production_recommendation"] = "none"
+        result["operator_action"] = "none"
 else:
     if result["status"] == "no_action":
         result["status"] = "needs_human"
     result["production_recommendation"] = "operator_action_required"
+    result["operator_action"] = "none"
 result["changed_files"] = actual
 with open(output_path, "w", encoding="utf-8") as handle:
     json.dump(result, handle, sort_keys=True)

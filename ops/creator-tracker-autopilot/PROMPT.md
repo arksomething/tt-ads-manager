@@ -45,4 +45,12 @@ Workflow:
 4. Do not claim a fix worked unless a command actually verified it. This run
    prepares a candidate patch; it does not authorize or perform production
    promotion.
-5. Return only the JSON object required by the supplied output schema.
+5. Paging the owner is a last resort. Use `operator_action: "none"` and
+   `production_recommendation: "none"` for a transient provider outage,
+   irreversible historical loss, or any other finding that has no concrete
+   action the owner can take. For an evidenced external blocker, select only the
+   exact allowlisted `operator_action` in the schema and pair it with
+   `production_recommendation: "operator_action_required"`. A verified source
+   fix uses `operator_action: "review_candidate"`; the trusted verifier decides
+   whether the candidate is safe enough to present for review.
+6. Return only the JSON object required by the supplied output schema.

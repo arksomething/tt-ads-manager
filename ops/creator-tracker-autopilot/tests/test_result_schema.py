@@ -31,6 +31,7 @@ def valid_result() -> dict[str, object]:
         "verification": ["Inspected the sealed source."],
         "changed_files": [],
         "production_recommendation": "none",
+        "operator_action": "none",
     }
 
 
@@ -71,6 +72,12 @@ class ResultSchemaTests(unittest.TestCase):
     def test_rejects_invalid_enum(self) -> None:
         value = valid_result()
         value["production_recommendation"] = "deploy_now"
+        with self.assertRaises(VALIDATOR.ValidationError):
+            self.validate(value)
+
+    def test_rejects_invalid_operator_action(self) -> None:
+        value = valid_result()
+        value["operator_action"] = "do_whatever_the_model_wants"
         with self.assertRaises(VALIDATOR.ValidationError):
             self.validate(value)
 

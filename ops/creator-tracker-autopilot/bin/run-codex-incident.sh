@@ -65,6 +65,7 @@ with open(sys.argv[1], "w", encoding="utf-8") as handle:
         "verification": [],
         "changed_files": [],
         "production_recommendation": "operator_action_required",
+        "operator_action": "none",
     }, handle, sort_keys=True)
     handle.write("\n")
 PY

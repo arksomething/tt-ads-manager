@@ -114,7 +114,6 @@ python3 -I - "$health_root/status.json" <<'PY'
 import json, pathlib, sys
 value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 allowed_reasons = {
-    "autopilot_incident_confirmed",
     "autopilot_incident_pending",
     "autopilot_integrity_failure",
     "autopilot_maintenance",

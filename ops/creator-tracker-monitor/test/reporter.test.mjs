@@ -7,17 +7,23 @@ import test from "node:test";
 
 import {
   AUTOPILOT_HEALTH_MAX_AGE_SECONDS,
+  AUTOPILOT_RECOVERY_GRACE_SECONDS,
+  OPERATOR_ACTION_REQUIRED_CODE,
+  REPORTER_CONTINUITY_MAX_GAP_SECONDS,
+  advanceReporterContinuity,
   boundIssueCodes,
   canonicalHeartbeat,
   evaluateAutopilotHealth,
   evaluateCoverageMetrics,
   evaluateCoverageProbeResult,
+  evaluateOperatorActionRequirement,
   evaluateStatusFiles,
   evaluateUnitStates,
   nextSequence,
   parseAutopilotHealth,
   parseCoverageMetrics,
   parseStatus,
+  recordReporterRecoveryReadiness,
   requiredUnits,
   signHeartbeat,
 } from "../reporter.mjs";
@@ -136,28 +142,267 @@ test("autopilot missing, invalid, future, and 15-minute-old exports fail closed"
   assert.deepEqual(evaluateAutopilotHealth(null, now), {
     status: "failing",
     issueCodes: ["autopilot_health_missing"],
+    operatorActionRequired: true,
   });
   assert.deepEqual(evaluateAutopilotHealth("not-json", now), {
     status: "failing",
     issueCodes: ["autopilot_health_invalid"],
+    operatorActionRequired: true,
   });
   assert.deepEqual(evaluateAutopilotHealth(exportWith({ observed_at_epoch: now + 61 }), now), {
     status: "failing",
     issueCodes: ["autopilot_health_invalid"],
+    operatorActionRequired: true,
   });
   assert.deepEqual(evaluateAutopilotHealth(exportWith({
     observed_at_epoch: now - AUTOPILOT_HEALTH_MAX_AGE_SECONDS,
   }), now), {
     status: "failing",
     issueCodes: ["autopilot_health_stale"],
+    operatorActionRequired: true,
   });
   assert.deepEqual(evaluateAutopilotHealth(exportWith(), now), {
     status: "degraded",
     issueCodes: ["autopilot_incident_pending"],
+    operatorActionRequired: false,
   });
 });
 
-test("disabled units page and the autopilot timer is mandatory", () => {
+test("a reboot and a later established resume give automatic repair time", async () => {
+  const now = 2_000;
+  const directory = await mkdtemp(join(tmpdir(), "creator-tracker-continuity-"));
+  const continuityPath = join(directory, "continuity.json");
+  const first = await advanceReporterContinuity(
+    now,
+    "11111111-1111-4111-8111-111111111111",
+    continuityPath,
+  );
+  assert.equal(first.automaticRecoveryPending, true);
+  assert.equal(
+    first.automaticRecoveryGraceUntilEpoch,
+    now + AUTOPILOT_RECOVERY_GRACE_SECONDS,
+  );
+  await recordReporterRecoveryReadiness(first, true, continuityPath);
+  for (const text of [null, "not-json", JSON.stringify({
+    format_version: 1,
+    observed_at_epoch: now - AUTOPILOT_HEALTH_MAX_AGE_SECONDS,
+    health: "degraded",
+    reason_codes: ["autopilot_incident_pending"],
+  })]) {
+    assert.equal(
+      evaluateAutopilotHealth(text, now, first.automaticRecoveryPending)
+        .operatorActionRequired,
+      false,
+    );
+  }
+  let current = first;
+  for (let offset = 60; offset <= AUTOPILOT_RECOVERY_GRACE_SECONDS; offset += 60) {
+    current = await advanceReporterContinuity(
+      now + offset,
+      first.bootId,
+      continuityPath,
+    );
+    current = await recordReporterRecoveryReadiness(current, true, continuityPath);
+  }
+  assert.equal(current.automaticRecoveryPending, false);
+  assert.equal(
+    evaluateAutopilotHealth(null, now, current.automaticRecoveryPending)
+      .operatorActionRequired,
+    true,
+  );
+  const resumed = await advanceReporterContinuity(
+    now + AUTOPILOT_RECOVERY_GRACE_SECONDS + REPORTER_CONTINUITY_MAX_GAP_SECONDS + 1,
+    first.bootId,
+    continuityPath,
+  );
+  assert.equal(resumed.automaticRecoveryPending, true);
+  assert.equal(resumed.automaticRecoveryGapRearmAvailable, false);
+});
+
+test("the boot allowance protects an early suspend before readiness is established", async () => {
+  const now = 5_000;
+  const directory = await mkdtemp(join(tmpdir(), "creator-tracker-early-resume-"));
+  const continuityPath = join(directory, "continuity.json");
+  const bootId = "22222222-2222-4222-8222-222222222222";
+  let continuity = await advanceReporterContinuity(now, bootId, continuityPath);
+  continuity = await recordReporterRecoveryReadiness(
+    continuity,
+    false,
+    continuityPath,
+  );
+
+  for (let offset = 60; offset <= 5 * 60; offset += 60) {
+    continuity = await advanceReporterContinuity(
+      now + offset,
+      bootId,
+      continuityPath,
+    );
+    continuity = await recordReporterRecoveryReadiness(
+      continuity,
+      offset === 5 * 60,
+      continuityPath,
+    );
+  }
+  assert.equal(continuity.automaticRecoveryReady, true);
+  assert.equal(continuity.automaticRecoveryGapRearmAvailable, true);
+
+  const resumed = await advanceReporterContinuity(
+    now + 30 * 60,
+    bootId,
+    continuityPath,
+  );
+  assert.equal(resumed.automaticRecoveryPending, true);
+  assert.equal(
+    resumed.automaticRecoveryGraceUntilEpoch,
+    now + 30 * 60 + AUTOPILOT_RECOVERY_GRACE_SECONDS,
+  );
+  assert.equal(resumed.automaticRecoveryGapRearmAvailable, false);
+  assert.equal(
+    evaluateAutopilotHealth(null, now + 30 * 60, resumed.automaticRecoveryPending)
+      .operatorActionRequired,
+    false,
+  );
+});
+
+test("repeated short continuity gaps consume one allowance without renewing forever", async () => {
+  const now = 10_000;
+  const directory = await mkdtemp(join(tmpdir(), "creator-tracker-gap-bound-"));
+  const continuityPath = join(directory, "continuity.json");
+  const bootId = "33333333-3333-4333-8333-333333333333";
+  let continuity = await advanceReporterContinuity(now, bootId, continuityPath);
+  assert.equal(continuity.automaticRecoveryPending, true);
+
+  for (const offset of [4 * 60, 8 * 60, 12 * 60]) {
+    continuity = await advanceReporterContinuity(
+      now + offset,
+      bootId,
+      continuityPath,
+    );
+  }
+
+  assert.equal(continuity.automaticRecoveryPending, true);
+  assert.equal(
+    continuity.automaticRecoveryGraceUntilEpoch,
+    now + 4 * 60 + AUTOPILOT_RECOVERY_GRACE_SECONDS,
+  );
+  assert.equal(continuity.automaticRecoveryGapRearmAvailable, false);
+
+  continuity = await advanceReporterContinuity(
+    now + 16 * 60,
+    bootId,
+    continuityPath,
+  );
+  assert.equal(continuity.automaticRecoveryPending, false);
+  assert.equal(
+    continuity.automaticRecoveryGraceUntilEpoch,
+    now + 4 * 60 + AUTOPILOT_RECOVERY_GRACE_SECONDS,
+  );
+  const unavailable = evaluateAutopilotHealth(
+    null,
+    now + 16 * 60,
+    continuity.automaticRecoveryPending,
+  );
+  assert.equal(unavailable.operatorActionRequired, true);
+  assert.equal(evaluateOperatorActionRequirement(unavailable, {
+    "creator-tracker-autopilot.timer": { active: false, enabled: true },
+  }, continuity.automaticRecoveryPending), true);
+});
+
+test("a confirmed ten-minute recovery rearms once and survives a pre-collection crash", async () => {
+  const now = 20_000;
+  const directory = await mkdtemp(join(tmpdir(), "creator-tracker-crash-rearm-"));
+  const continuityPath = join(directory, "continuity.json");
+  const bootId = "44444444-4444-4444-8444-444444444444";
+  let continuity = await advanceReporterContinuity(now, bootId, continuityPath);
+  continuity = await advanceReporterContinuity(
+    now + 4 * 60,
+    bootId,
+    continuityPath,
+  );
+  assert.equal(continuity.automaticRecoveryGapRearmAvailable, false);
+  continuity = await recordReporterRecoveryReadiness(continuity, true, continuityPath);
+
+  for (let offset = 5 * 60; offset <= 14 * 60; offset += 60) {
+    continuity = await advanceReporterContinuity(
+      now + offset,
+      bootId,
+      continuityPath,
+    );
+    continuity = await recordReporterRecoveryReadiness(
+      continuity,
+      true,
+      continuityPath,
+    );
+  }
+  assert.equal(continuity.automaticRecoveryGapRearmAvailable, true);
+
+  // Simulate the service dying after it persisted continuity but before health
+  // collection could call recordReporterRecoveryReadiness.
+  const crashed = await advanceReporterContinuity(
+    now + 15 * 60,
+    bootId,
+    continuityPath,
+  );
+  assert.equal(crashed.automaticRecoveryGapRearmAvailable, true);
+  assert.equal(crashed.automaticRecoveryReady, true);
+
+  const resumed = await advanceReporterContinuity(
+    now + 30 * 60,
+    bootId,
+    continuityPath,
+  );
+  assert.equal(resumed.automaticRecoveryPending, true);
+  assert.equal(
+    resumed.automaticRecoveryGraceUntilEpoch,
+    now + 30 * 60 + AUTOPILOT_RECOVERY_GRACE_SECONDS,
+  );
+  assert.equal(resumed.automaticRecoveryGapRearmAvailable, false);
+  assert.equal(resumed.automaticRecoveryReady, false);
+});
+
+test("only an unavailable or explicitly blocked autopilot requests operator email", () => {
+  const readyUnits = {
+    "creator-tracker-autopilot.timer": { active: true, enabled: true },
+  };
+  for (const reason of [
+    "autopilot_incident_pending",
+    "autopilot_incident_confirmed",
+    "autopilot_repairing",
+    "autopilot_maintenance",
+  ]) {
+    assert.equal(evaluateOperatorActionRequirement({
+      status: "degraded",
+      issueCodes: [reason],
+      operatorActionRequired: false,
+    }, readyUnits), false, reason);
+  }
+  assert.equal(evaluateOperatorActionRequirement({
+    status: "failing",
+    issueCodes: ["autopilot_operator_required"],
+    operatorActionRequired: true,
+  }, readyUnits), true);
+  assert.equal(evaluateOperatorActionRequirement({
+    status: "failing",
+    issueCodes: ["autopilot_integrity_failure"],
+    operatorActionRequired: true,
+  }, readyUnits), true);
+  assert.equal(evaluateOperatorActionRequirement({
+    status: "healthy",
+    issueCodes: [],
+    operatorActionRequired: false,
+  }, {
+    "creator-tracker-autopilot.timer": { active: false, enabled: true },
+  }), true);
+  assert.equal(evaluateOperatorActionRequirement({
+    status: "failing",
+    issueCodes: ["autopilot_health_stale"],
+    operatorActionRequired: false,
+  }, {
+    "creator-tracker-autopilot.timer": { active: false, enabled: true },
+  }, true), false);
+});
+
+test("disabled units remain diagnostic and the autopilot timer is mandatory", () => {
   assert.ok(requiredUnits.includes("creator-tracker-autopilot.timer"));
   const states = Object.fromEntries(requiredUnits.map((unit) => [unit, {
     active: true,
@@ -177,6 +422,7 @@ test("disabled units page and the autopilot timer is mandatory", () => {
 
 test("heartbeat issue codes stay within the receiver contract under broad failure", () => {
   const broadFailure = [
+    OPERATOR_ACTION_REQUIRED_CODE,
     "autopilot_incident_confirmed",
     "first_week_target_imminent_uncovered",
     ...Array.from({ length: 43 }, (_, index) => `synthetic_failure_${String(index).padStart(2, "0")}`),
@@ -186,6 +432,7 @@ test("heartbeat issue codes stay within the receiver contract under broad failur
   assert.equal(new Set(bounded).size, bounded.length);
   assert.ok(bounded.includes("autopilot_incident_confirmed"));
   assert.ok(bounded.includes("first_week_target_imminent_uncovered"));
+  assert.ok(bounded.includes(OPERATOR_ACTION_REQUIRED_CODE));
   assert.ok(bounded.includes("issue_codes_truncated"));
   assert.deepEqual(boundIssueCodes(["healthy_code", "healthy_code"]), ["healthy_code"]);
   assert.deepEqual(boundIssueCodes(["valid_code", "NOT SAFE"]), [
@@ -202,7 +449,7 @@ test("sequence persists monotonically", async () => {
   assert.equal(await readFile(path, "utf8"), "2\n");
 });
 
-test("coverage capacity and provider safety faults are paging failures", () => {
+test("coverage capacity and provider safety faults remain operational failures", () => {
   const metrics = parseCoverageMetrics(
     "[tracker coverage] tiktok_profile_recovery=feasible " +
       "tiktok_target_capacity=infeasible " +
@@ -264,7 +511,7 @@ test("imminent uncovered first-week targets fail closed without paging historica
   )), []);
 });
 
-test("proven snapshot contention degrades while valid imminent metrics still page", () => {
+test("proven snapshot contention degrades while valid imminent metrics remain failing", () => {
   const contentions = [
     "ReadOnlySnapshotUncheckpointedWalError: " +
       "Read-only database snapshots require a fully checkpointed database.",

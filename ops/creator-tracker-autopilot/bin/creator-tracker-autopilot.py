@@ -39,6 +39,7 @@ MONITOR_HEALTH_FILE = MONITOR_HEALTH_ROOT / "status.json"
 LOCK_FILE = Path("/run/creator-tracker-autopilot/root/probe.lock")
 QUEUE_DIR = STATE_ROOT / "queue"
 INBOX_DIR = STATE_ROOT / "inbox"
+PROCESSING_DIR = STATE_ROOT / "processing"
 DEAD_LETTER_DIR = STATE_ROOT / "dead-letter"
 PRODUCING_DIR = STATE_ROOT / "producing"
 READY_DIR = STATE_ROOT / "ready"
@@ -49,6 +50,8 @@ CUTOVER_STATE_ROOT = TRACKER_STATE_ROOT / "cutover-completeness"
 ACTIVATION_HISTORY = Path("/opt/creator-tracker/activation-history.tsv")
 
 WORKER_UNIT = "creator-tracker-worker.service"
+SCHEDULER_TICK_UNIT = "creator-tracker-scheduler-tick.service"
+INSTAGRAM_SCHEDULER_UNIT = "creator-tracker-instagram-scheduler.service"
 AGENT_UNIT = "creator-tracker-codex-incident.service"
 VERIFIER_UNIT = "creator-tracker-codex-verifier.service"
 HEALTH_UNIT = "creator-tracker-dashboard-health.service"
@@ -110,6 +113,16 @@ JOB_TIMER_UNITS = {
     "raw-verifier": "creator-tracker-raw-verifier.timer",
 }
 
+IMMINENT_TARGET_SCHEDULER_ROLES = (
+    # Start Instagram first so the existing writer-lock priority rule lets it
+    # claim work before a simultaneously requested TikTok tick.
+    "instagram-scheduler",
+    "scheduler-tick",
+)
+IMMINENT_TARGET_SCHEDULER_UNITS = frozenset(
+    JOB_LIMITS[role][0] for role in IMMINENT_TARGET_SCHEDULER_ROLES
+)
+
 RELEASE_RE = re.compile(r"^/opt/creator-tracker/releases/([0-9a-f]{64})$")
 INCIDENT_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{16}$")
 ATTEMPT_RE = re.compile(
@@ -122,7 +135,11 @@ DISPATCH_MIN_AGE_SECONDS = {
 }
 DISPATCH_COOLDOWN_SECONDS = 6 * 60 * 60
 MAX_DISPATCHES_PER_DAY = 3
+STATUS_ONLY_RETRY_COOLDOWN_SECONDS = 6 * 60 * 60
+MAX_STATUS_ONLY_INVESTIGATIONS = 2
 MAX_CODEX_ATTEMPTS_PER_INCIDENT = 2
+INITIAL_BASELINE_MAX_PROBES = 3
+INITIAL_BASELINE_MAX_AGE_SECONDS = 15 * 60
 ACTION_COOLDOWN_SECONDS = 30 * 60
 MAX_AUTOMATIC_ACTIONS_PER_DAY = 12
 MAX_AUTOMATIC_ACTIONS_PER_UNIT_PER_DAY = 3
@@ -222,6 +239,34 @@ OPERATOR_ONLY_ISSUE_PREFIXES = (
     "unit_disabled:",
 )
 
+EXTERNAL_OPERATOR_ACTIONS = frozenset(
+    {
+        "replenish_tiktok_credits",
+        "replenish_instagram_credits",
+        "restore_tiktok_access",
+        "restore_instagram_access",
+        "restore_creator_account_access",
+    }
+)
+
+INITIAL_BASELINE_ISSUE = "initial_coverage_baseline_incomplete"
+INITIAL_BASELINE_INDEPENDENT_ISSUE_PREFIXES = (
+    "activation_lock_invalid",
+    "activation_lock_stuck",
+    "cutover_gate_not_ready",
+    "job_stale:",
+    "release_identity_invalid",
+    "release_integrity_invalid",
+    "stale_activation_marker",
+    "storage_reserve_low_or_unknown",
+    "timer_disabled:",
+    "timer_inactive:",
+    "timer_missing:",
+    "unit_disabled:",
+    "unit_integrity_invalid:",
+    "worker_inactive_or_stale",
+)
+
 
 def run(
     command: list[str],
@@ -312,17 +357,20 @@ def build_monitor_health_export(status: Any) -> dict[str, Any]:
         health, reason_codes = "healthy", []
     elif state == "maintenance" and streak == 0:
         health, reason_codes = "degraded", ["autopilot_maintenance"]
-    elif state == "incident_pending" and 0 < streak < DISPATCH_STREAK:
+    elif state == "incident_pending" and streak > 0:
         health, reason_codes = "degraded", ["autopilot_incident_pending"]
-    elif state == "incident_pending" and streak >= DISPATCH_STREAK:
-        health, reason_codes = "failing", ["autopilot_incident_confirmed"]
     elif state == "codex_queued" and streak >= DISPATCH_STREAK:
-        health, reason_codes = "failing", ["autopilot_incident_confirmed"]
+        health, reason_codes = "degraded", ["autopilot_incident_pending"]
+    elif state == "awaiting_initial_coverage_baseline" and streak == 0:
+        # A partial first read is an expected bootstrap condition. The next
+        # persistent probes finish the baseline; it is not evidence that an
+        # operator must intervene before automatic startup has had a chance.
+        health, reason_codes = "degraded", ["autopilot_incident_pending"]
     elif state == "operator_required" and streak >= DISPATCH_STREAK:
         health, reason_codes = "failing", ["autopilot_operator_required"]
     else:
-        # Initial-baseline, corrupt-state, and unknown states all mean that the
-        # sentinel cannot currently vouch for logical collection health.
+        # Corrupt and unknown states mean that the sentinel cannot currently
+        # vouch for logical collection health.
         health, reason_codes = "failing", ["autopilot_integrity_failure"]
 
     return {
@@ -423,12 +471,38 @@ def state_shape_error(state: Any) -> str | None:
             or INCIDENT_RE.fullmatch(str(item.get("incident_id", ""))) is None
         ):
             return "dispatches contains an invalid identity"
+        target_outcomes = item.get("target_outcomes")
+        if target_outcomes is not None and (
+            not isinstance(target_outcomes, dict)
+            or not set(target_outcomes).issubset(TARGET_OUTCOME_REGRESSION_COUNTERS)
+            or any(
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 0
+                for value in target_outcomes.values()
+            )
+        ):
+            return "dispatches contains invalid target outcomes"
     for item in state.get("automatic_actions", []):
         if (
             not isinstance(item.get("kind"), str)
-            or item.get("kind") not in {"start_timer", "restart_worker"}
+            or item.get("kind")
+            not in {"start_timer", "restart_worker", "start_scheduler_lane"}
             or not isinstance(item.get("unit"), str)
-            or item.get("unit") not in {*TIMER_UNITS, WORKER_UNIT}
+            or item.get("unit")
+            not in {*TIMER_UNITS, WORKER_UNIT, *IMMINENT_TARGET_SCHEDULER_UNITS}
+            or (
+                item.get("kind") == "start_timer"
+                and item.get("unit") not in TIMER_UNITS
+            )
+            or (
+                item.get("kind") == "restart_worker"
+                and item.get("unit") != WORKER_UNIT
+            )
+            or (
+                item.get("kind") == "start_scheduler_lane"
+                and item.get("unit") not in IMMINENT_TARGET_SCHEDULER_UNITS
+            )
             or (item.get("ok") is not None and not isinstance(item.get("ok"), bool))
         ):
             return "automatic_actions contains an invalid action"
@@ -450,12 +524,116 @@ def state_shape_error(state: Any) -> str | None:
             not isinstance(dispatched_at, int) or dispatched_at < record["first_seen_epoch"]
         ):
             return "issue_streaks contains an invalid dispatch marker"
+    operator_requirement = state.get("operator_requirement")
+    if operator_requirement is not None and (
+        not isinstance(operator_requirement, dict)
+        or set(operator_requirement)
+        != {"fingerprint", "incident_id", "reason"}
+        or re.fullmatch(
+            r"[0-9a-f]{64}", str(operator_requirement.get("fingerprint", ""))
+        )
+        is None
+        or operator_requirement.get("fingerprint") != state.get("fingerprint")
+        or state.get("status") != "operator_required"
+        or INCIDENT_RE.fullmatch(str(operator_requirement.get("incident_id", "")))
+        is None
+        or operator_requirement.get("reason")
+        not in {
+            "trusted_report",
+            "dead_letter",
+            "rejected_attempt",
+            "pipeline_unavailable",
+        }
+    ):
+        return "operator_requirement is invalid"
+    status_only_retry = state.get("status_only_retry")
+    if status_only_retry is not None and (
+        not isinstance(status_only_retry, dict)
+        or set(status_only_retry)
+        != {
+            "fingerprint",
+            "incident_id",
+            "investigations",
+            "issues",
+            "retry_after_epoch",
+        }
+        or re.fullmatch(
+            r"[0-9a-f]{64}", str(status_only_retry.get("fingerprint", ""))
+        )
+        is None
+        or (
+            state.get("status") != "maintenance"
+            and (
+                status_only_retry.get("fingerprint") != state.get("fingerprint")
+                or state.get("status")
+                not in {"incident_pending", "codex_queued", "operator_required"}
+            )
+        )
+        or INCIDENT_RE.fullmatch(str(status_only_retry.get("incident_id", "")))
+        is None
+        or not isinstance(status_only_retry.get("investigations"), int)
+        or isinstance(status_only_retry.get("investigations"), bool)
+        or not 1
+        <= status_only_retry["investigations"]
+        <= MAX_STATUS_ONLY_INVESTIGATIONS
+        or not isinstance(status_only_retry.get("issues"), list)
+        or not 1 <= len(status_only_retry["issues"]) <= 500
+        or not all(
+            isinstance(issue, str) and 0 < len(issue) <= 512
+            for issue in status_only_retry["issues"]
+        )
+        or len(status_only_retry["issues"])
+        != len(set(status_only_retry["issues"]))
+        or not isinstance(status_only_retry.get("retry_after_epoch"), int)
+        or isinstance(status_only_retry.get("retry_after_epoch"), bool)
+        or status_only_retry["retry_after_epoch"] < 0
+    ):
+        return "status_only_retry is invalid"
+    current_incident = state.get("current_incident")
+    if current_incident is not None and (
+        not isinstance(current_incident, dict)
+        or set(current_incident)
+        != {"fingerprint", "incident_id", "at_epoch", "target_outcomes"}
+        or re.fullmatch(
+            r"[0-9a-f]{64}", str(current_incident.get("fingerprint", ""))
+        )
+        is None
+        or INCIDENT_RE.fullmatch(str(current_incident.get("incident_id", "")))
+        is None
+        or not isinstance(current_incident.get("at_epoch"), int)
+        or isinstance(current_incident.get("at_epoch"), bool)
+        or current_incident["at_epoch"] < 0
+        or not isinstance(current_incident.get("target_outcomes"), dict)
+        or not set(current_incident["target_outcomes"]).issubset(
+            TARGET_OUTCOME_REGRESSION_COUNTERS
+        )
+        or any(
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or value < 0
+            for value in current_incident["target_outcomes"].values()
+        )
+        or (
+            state.get("status") != "maintenance"
+            and (
+                state.get("status")
+                not in {"incident_pending", "codex_queued", "operator_required"}
+                or current_incident.get("fingerprint") != state.get("fingerprint")
+            )
+        )
+    ):
+        return "current_incident is invalid"
     baseline = state.get("coverage_baseline", {})
     expected_baseline = set(COVERAGE_REGRESSION_LIMITS)
     baseline_keys = set(baseline) if isinstance(baseline, dict) else set()
+    baseline_bootstrap_active = (
+        state.get("status")
+        in {"incident_pending", "operator_required", "codex_queued"}
+        and INITIAL_BASELINE_ISSUE in streaks
+    )
     baseline_shape_ready = (
         baseline_keys.issubset(expected_baseline)
-        if state.get("status") == "awaiting_baseline"
+        if state.get("status") == "awaiting_baseline" or baseline_bootstrap_active
         else baseline_keys == expected_baseline
     )
     if not isinstance(baseline, dict) or not baseline_shape_ready:
@@ -989,6 +1167,29 @@ def integer_field(fields: dict[str, str], key: str) -> int | None:
     return int(value) if value is not None and value.isdigit() else None
 
 
+def scheduler_lane_coverage_ready(role: str, fields: dict[str, str]) -> bool:
+    """Return whether current provider gates authorize an extra scheduler run."""
+    if role == "instagram-scheduler":
+        return (
+            fields.get("instagram_configured") == "true"
+            and fields.get("instagram_credit_status") == "ready"
+        )
+    if role == "scheduler-tick":
+        fallback_mode = fields.get("tiktok_fallback_mode")
+        fallback_status = fields.get("tiktok_fallback_status")
+        fallback_ready = (
+            fallback_mode == "off" and fallback_status == "off"
+        ) or (
+            fallback_mode in {"auto", "force"} and fallback_status == "ready"
+        )
+        return (
+            fields.get("tiktok_target_capacity") == "feasible"
+            and fields.get("tiktok_profile_recovery") == "feasible"
+            and fallback_ready
+        )
+    return False
+
+
 def coverage_regression_issue(key: str, baseline_value: int) -> str:
     if key in TARGET_OUTCOME_REGRESSION_COUNTERS:
         return f"coverage_regressed:{key}:baseline={baseline_value}"
@@ -998,12 +1199,13 @@ def coverage_regression_issue(key: str, baseline_value: int) -> str:
 def accept_dispatched_target_regressions(
     baseline: dict[str, int], snapshot: dict[str, Any], incident_state: dict[str, Any]
 ) -> dict[str, int]:
-    """Advance irreversible target counters only after a durable dispatch reservation.
+    """Advance irreversible target counters after a trusted status-only diagnosis.
 
-    Exact legacy issue names are accepted too. That is the one-time migration
-    path for incidents dispatched before baseline-scoped issue identities were
-    introduced; it prevents an already-reported historical miss from launching
-    Codex forever.
+    Exact legacy issue names remain recognized when their dispatch record has a
+    captured target value. A dispatch alone is not enough: preserving the
+    regression until its trusted outcome arrives ensures a verified candidate
+    or dead letter can still cross the operator gate instead of disappearing on
+    the next probe.
     """
     output = dict(baseline)
     fields = snapshot.get("coverage", {}).get("fields", {})
@@ -1017,18 +1219,48 @@ def accept_dispatched_target_regressions(
             continue
         legacy_issue = f"coverage_regressed:{key}"
         scoped_issue = coverage_regression_issue(key, accepted)
-        dispatched = any(
-            isinstance(issue, str)
-            # A scoped dispatch may acknowledge only the baseline it actually
-            # observed. If the counter rose again before the next clean probe,
-            # the old dispatch must not silently bless that newer outcome.
+        dispatch_epochs = {
+            record["dispatched_at_epoch"]
+            for issue, record in streaks.items()
+            if isinstance(issue, str)
+            # A scoped diagnosis may acknowledge only the baseline it actually
+            # observed. If the counter rose again before completion, the old
+            # result must not silently bless that newer outcome.
             and (issue == legacy_issue or issue == scoped_issue)
             and isinstance(record, dict)
             and isinstance(record.get("dispatched_at_epoch"), int)
-            for issue, record in streaks.items()
-        )
-        if dispatched:
-            output[key] = current
+        }
+        acknowledged_values: list[tuple[int, int]] = []
+        dispatch_records = list(incident_state.get("dispatches", []))
+        current_incident = incident_state.get("current_incident")
+        if isinstance(current_incident, dict):
+            dispatch_records.append(current_incident)
+        for dispatch in dispatch_records:
+            if (
+                not isinstance(dispatch, dict)
+                or dispatch.get("at_epoch") not in dispatch_epochs
+                or INCIDENT_RE.fullmatch(str(dispatch.get("incident_id", "")))
+                is None
+                or trusted_report_disposition_for_incident(
+                    str(dispatch["incident_id"])
+                )
+                != "status_only"
+            ):
+                continue
+            target_outcomes = dispatch.get("target_outcomes")
+            captured = (
+                target_outcomes.get(key)
+                if isinstance(target_outcomes, dict)
+                else None
+            )
+            if (
+                isinstance(captured, int)
+                and not isinstance(captured, bool)
+                and accepted < captured <= current
+            ):
+                acknowledged_values.append((int(dispatch["at_epoch"]), captured))
+        if acknowledged_values:
+            output[key] = max(acknowledged_values)[1]
     return output
 
 
@@ -1192,6 +1424,43 @@ def evaluate_snapshot(
             issues.append("first_week_target_telemetry_missing")
         elif missing_targets > 10 or stale_targets > 10:
             issues.append("first_week_target_materialization_regressed")
+        imminent_uncovered = integer_field(
+            fields, "first_week_targets_imminent_uncovered"
+        )
+        if imminent_uncovered is None:
+            issues.append("first_week_target_imminent_telemetry_missing")
+        elif imminent_uncovered > 0:
+            issues.append("first_week_target_imminent_uncovered")
+            for role in IMMINENT_TARGET_SCHEDULER_ROLES:
+                scheduler_job = snapshot.get("jobs", {}).get(role, {})
+                scheduler_unit = scheduler_job.get("unit", {})
+                scheduler_timer_name = JOB_TIMER_UNITS[role]
+                scheduler_timer = snapshot.get("timers", {}).get(
+                    scheduler_timer_name, {}
+                )
+                scheduler_already_running = scheduler_unit.get("active") in {
+                    "active",
+                    "activating",
+                    "deactivating",
+                    "reloading",
+                }
+                if (
+                    scheduler_job.get("service") == JOB_LIMITS[role][0]
+                    and scheduler_lane_coverage_ready(role, fields)
+                    and scheduler_unit.get("load") == "loaded"
+                    and scheduler_unit.get("integrity_ready") is True
+                    and not scheduler_already_running
+                    and scheduler_timer.get("load") == "loaded"
+                    and scheduler_timer.get("enabled") == "enabled"
+                    and scheduler_timer.get("active") == "active"
+                    and scheduler_timer.get("integrity_ready") is True
+                ):
+                    actions.append(
+                        {
+                            "kind": "start_scheduler_lane",
+                            "unit": JOB_LIMITS[role][0],
+                        }
+                    )
         for key, allowed_delta in COVERAGE_REGRESSION_LIMITS.items():
             current_value = integer_field(fields, key)
             baseline_value = (coverage_baseline or {}).get(key)
@@ -1216,6 +1485,95 @@ def evaluate_snapshot(
         actions = []
     unique_actions = {(item["kind"], item["unit"]): item for item in actions}
     return list(unique_actions.values()), sorted(set(issues))
+
+
+def initial_baseline_probe(
+    previous: dict[str, Any],
+    snapshot: dict[str, Any],
+    coverage_baseline: dict[str, int],
+) -> tuple[bool, list[dict[str, str]], list[str], dict[str, int]]:
+    """Bound initial coverage bootstrap without hiding independent failures.
+
+    The first partial reads are expected and remain silent. Release, unit, and
+    worker faults still enter the normal incident state machine immediately.
+    Once either bootstrap bound is reached, the incomplete baseline itself also
+    enters normal incident evaluation and can launch the constrained investigator.
+    """
+    now = int(snapshot["observed_at_epoch"])
+    prior_streaks = previous.get("issue_streaks")
+    prior_record = (
+        prior_streaks.get(INITIAL_BASELINE_ISSUE)
+        if isinstance(prior_streaks, dict)
+        else None
+    )
+    prior_count = prior_record.get("count", 0) if isinstance(prior_record, dict) else 0
+    prior_first = (
+        prior_record.get("first_seen_epoch", now)
+        if isinstance(prior_record, dict)
+        else now
+    )
+    # Compatibility with the original bootstrap state, which did not persist a
+    # dedicated counter. Count that already-observed partial read once.
+    if (
+        prior_count == 0
+        and previous.get("status") == "awaiting_baseline"
+        and isinstance(previous.get("last_probe_epoch"), int)
+    ):
+        prior_count = 1
+        prior_first = previous["last_probe_epoch"]
+    if not isinstance(prior_count, int) or isinstance(prior_count, bool) or prior_count < 0:
+        prior_count = 0
+    if (
+        not isinstance(prior_first, int)
+        or isinstance(prior_first, bool)
+        or prior_first < 0
+        or prior_first > now
+    ):
+        prior_first = now
+    record = {
+        "count": min(10_000, prior_count + 1),
+        "first_seen_epoch": prior_first,
+    }
+    actions, observed_issues = evaluate_snapshot(snapshot, coverage_baseline)
+    independent_issues = sorted(
+        issue
+        for issue in observed_issues
+        if any(
+            issue == prefix or issue.startswith(prefix)
+            for prefix in INITIAL_BASELINE_INDEPENDENT_ISSUE_PREFIXES
+        )
+    )
+    expired = (
+        record["count"] >= INITIAL_BASELINE_MAX_PROBES
+        or now - record["first_seen_epoch"] >= INITIAL_BASELINE_MAX_AGE_SECONDS
+    )
+    if snapshot.get("maintenance_in_progress") or (
+        not expired and not independent_issues
+    ):
+        return True, [], [INITIAL_BASELINE_ISSUE], record
+    if not expired:
+        # Coverage-dependent scheduler actions are not trustworthy until the
+        # first complete read. Preserve only actions backed by the independent
+        # timer/worker issues that caused bootstrap to be bypassed.
+        actions = [
+            action
+            for action in actions
+            if (
+                action.get("kind") == "start_timer"
+                and f"timer_inactive:{action.get('unit')}" in independent_issues
+            )
+            or (
+                action.get("kind") == "restart_worker"
+                and "worker_inactive_or_stale" in independent_issues
+            )
+        ]
+        observed_issues = independent_issues
+    return (
+        False,
+        actions,
+        sorted(set(observed_issues) | {INITIAL_BASELINE_ISSUE}),
+        record,
+    )
 
 
 def next_coverage_baseline(previous: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, int]:
@@ -1267,10 +1625,21 @@ def update_incident_state(
         "dispatches": recent_dispatches,
         "last_probe_epoch": now,
     }
+    prior_status_only_retry = previous.get("status_only_retry")
+    prior_current_incident = previous.get("current_incident")
+    if isinstance(prior_current_incident, dict):
+        state["current_incident"] = prior_current_incident
     if snapshot.get("maintenance_in_progress"):
+        if isinstance(prior_status_only_retry, dict):
+            state["status_only_retry"] = prior_status_only_retry
+            prior_issue_streaks = previous.get("issue_streaks")
+            if isinstance(prior_issue_streaks, dict):
+                state["issue_streaks"] = prior_issue_streaks
         state.update({"status": "maintenance", "fingerprint": None, "streak": 0})
         return state, False, None
     if not issues:
+        state.pop("status_only_retry", None)
+        state.pop("current_incident", None)
         state.update({"status": "healthy", "fingerprint": None, "streak": 0})
         return state, False, None
 
@@ -1301,6 +1670,9 @@ def update_incident_state(
         and now - value["first_seen_epoch"] >= DISPATCH_MIN_AGE_SECONDS.get(issue, 0)
     )
     codex_issues = [issue for issue in persistent_issues if codex_actionable_issue(issue)]
+    operator_issues = [
+        issue for issue in persistent_issues if not codex_actionable_issue(issue)
+    ]
     undispatched_codex_issues = [
         issue
         for issue in codex_issues
@@ -1311,7 +1683,7 @@ def update_incident_state(
     current_fingerprint = fingerprint(snapshot.get("release_id"), fingerprint_issues)
     state.update(
         {
-            "status": "incident_pending" if codex_issues or not persistent_issues else "operator_required",
+            "status": "operator_required" if operator_issues else "incident_pending",
             "fingerprint": current_fingerprint,
             "streak": streak,
             "first_seen_epoch": min(value["first_seen_epoch"] for value in issue_streaks.values()),
@@ -1319,6 +1691,111 @@ def update_incident_state(
             "issue_streaks": issue_streaks,
         }
     )
+    prior_retry_issues = (
+        prior_status_only_retry.get("issues")
+        if isinstance(prior_status_only_retry, dict)
+        else None
+    )
+    remaining_retry_issues = (
+        sorted(
+            issue
+            for issue in prior_retry_issues
+            if isinstance(issue, str) and issue in issue_streaks
+        )
+        if isinstance(prior_retry_issues, list)
+        else []
+    )
+    if isinstance(prior_status_only_retry, dict) and remaining_retry_issues:
+        state["status_only_retry"] = {
+            **prior_status_only_retry,
+            "fingerprint": current_fingerprint,
+            "issues": remaining_retry_issues,
+        }
+    else:
+        state.pop("status_only_retry", None)
+    if (
+        isinstance(prior_current_incident, dict)
+        and prior_current_incident.get("fingerprint") == current_fingerprint
+    ):
+        state["current_incident"] = prior_current_incident
+    else:
+        # Migrate a still-current dispatch written by the previous state format
+        # before its 24-hour budget record is pruned. This keeps the trusted
+        # report/dead-letter identity durable across later reboots.
+        matching_dispatches = [
+            item
+            for item in recent_dispatches
+            if item.get("fingerprint") == current_fingerprint
+            and INCIDENT_RE.fullmatch(str(item.get("incident_id", ""))) is not None
+        ]
+        if matching_dispatches:
+            latest = max(matching_dispatches, key=lambda item: item["at_epoch"])
+            target_outcomes = latest.get("target_outcomes")
+            state["current_incident"] = {
+                "fingerprint": current_fingerprint,
+                "incident_id": latest["incident_id"],
+                "at_epoch": latest["at_epoch"],
+                "target_outcomes": (
+                    target_outcomes if isinstance(target_outcomes, dict) else {}
+                ),
+            }
+        else:
+            state.pop("current_incident", None)
+    prior_requirement = previous.get("operator_requirement")
+    if isinstance(prior_requirement, dict):
+        requirement_incident_id = prior_requirement.get("incident_id")
+        source_incident: dict[str, Any] | None = None
+        if (
+            isinstance(prior_current_incident, dict)
+            and prior_current_incident.get("incident_id") == requirement_incident_id
+        ):
+            source_incident = prior_current_incident
+        else:
+            matching_requirement_dispatches = [
+                item
+                for item in previous.get("dispatches", [])
+                if isinstance(item, dict)
+                and item.get("incident_id") == requirement_incident_id
+                and isinstance(item.get("at_epoch"), int)
+            ]
+            if matching_requirement_dispatches:
+                source_incident = max(
+                    matching_requirement_dispatches,
+                    key=lambda item: item["at_epoch"],
+                )
+        dispatch_epoch = (
+            source_incident.get("at_epoch")
+            if isinstance(source_incident, dict)
+            else None
+        )
+        operator_incident_still_live = (
+            isinstance(dispatch_epoch, int)
+            and any(
+                issue in issue_streaks
+                and isinstance(record, dict)
+                and record.get("dispatched_at_epoch") == dispatch_epoch
+                for issue, record in prior_streaks.items()
+            )
+        )
+        if operator_incident_still_live:
+            # A completed trusted/operator boundary belongs to the dispatched
+            # issues, not to an incidental aggregate fingerprint. If another
+            # issue clears or joins on the same probe, keep the operator latch
+            # while at least one issue from that exact dispatch remains live.
+            state["operator_requirement"] = {
+                **prior_requirement,
+                "fingerprint": current_fingerprint,
+            }
+            target_outcomes = source_incident.get("target_outcomes")
+            state["current_incident"] = {
+                "fingerprint": current_fingerprint,
+                "incident_id": requirement_incident_id,
+                "at_epoch": dispatch_epoch,
+                "target_outcomes": (
+                    target_outcomes if isinstance(target_outcomes, dict) else {}
+                ),
+            }
+            state["status"] = "operator_required"
     same_dispatches = [
         item
         for item in recent_dispatches
@@ -1344,12 +1821,36 @@ def update_incident_state(
     )
     if dispatch:
         incident_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now)) + "-" + current_fingerprint[:16]
-        state["dispatches"].append(
-            {"at_epoch": now, "fingerprint": current_fingerprint, "incident_id": incident_id}
-        )
+        dispatch_record: dict[str, Any] = {
+            "at_epoch": now,
+            "fingerprint": current_fingerprint,
+            "incident_id": incident_id,
+        }
+        coverage_fields = snapshot.get("coverage", {}).get("fields", {})
+        if isinstance(coverage_fields, dict):
+            target_outcomes = {
+                key: value
+                for key in TARGET_OUTCOME_REGRESSION_COUNTERS
+                if any(
+                    issue == f"coverage_regressed:{key}"
+                    or issue.startswith(f"coverage_regressed:{key}:baseline=")
+                    for issue in codex_issues
+                )
+                and (value := integer_field(coverage_fields, key)) is not None
+            }
+            if target_outcomes:
+                dispatch_record["target_outcomes"] = target_outcomes
+        state["dispatches"].append(dispatch_record)
+        state["current_incident"] = {
+            "fingerprint": current_fingerprint,
+            "incident_id": incident_id,
+            "at_epoch": now,
+            "target_outcomes": dispatch_record.get("target_outcomes", {}),
+        }
         for issue in codex_issues:
             issue_streaks[issue]["dispatched_at_epoch"] = now
-        state["status"] = "codex_queued"
+        if not operator_issues and "operator_requirement" not in state:
+            state["status"] = "codex_queued"
         state["dispatch_issues"] = codex_issues
         return state, True, incident_id
     return state, False, None
@@ -1373,7 +1874,11 @@ def select_automatic_actions(
         required_issue = (
             "worker_inactive_or_stale"
             if action.get("kind") == "restart_worker"
-            else f"timer_inactive:{action.get('unit')}"
+            else (
+                "first_week_target_imminent_uncovered"
+                if action.get("kind") == "start_scheduler_lane"
+                else f"timer_inactive:{action.get('unit')}"
+            )
         )
         prior_streak = prior_streaks.get(required_issue, {}) if isinstance(prior_streaks, dict) else {}
         prior_count = prior_streak.get("count", 0) if isinstance(prior_streak, dict) else 0
@@ -1420,7 +1925,11 @@ def verify_installed_release(snapshot: dict[str, Any]) -> tuple[bool, str]:
 
 def verify_effective_unit(snapshot: dict[str, Any], unit: str) -> tuple[bool, str]:
     release_path = snapshot.get("release_path")
-    if not isinstance(release_path, str) or unit not in {*TIMER_UNITS, WORKER_UNIT}:
+    if not isinstance(release_path, str) or unit not in {
+        *TIMER_UNITS,
+        WORKER_UNIT,
+        *IMMINENT_TARGET_SCHEDULER_UNITS,
+    }:
         return False, "unit is not allowlisted"
     expected = Path(release_path) / "systemd" / unit
     actual = Path("/etc/systemd/system") / unit
@@ -1453,6 +1962,18 @@ def verify_effective_unit(snapshot: dict[str, Any], unit: str) -> tuple[bool, st
     ):
         return False, "effective unit has drift, a drop-in, or a pending daemon reload"
     return True, "verified"
+
+
+def automatic_action_command(item: dict[str, str]) -> list[str] | None:
+    kind = item.get("kind")
+    unit = item.get("unit")
+    if kind == "start_timer" and unit in set(TIMER_UNITS):
+        return ["/usr/bin/systemctl", "start", str(unit)]
+    if kind == "restart_worker" and unit == WORKER_UNIT:
+        return ["/usr/bin/systemctl", "restart", WORKER_UNIT]
+    if kind == "start_scheduler_lane" and unit in IMMINENT_TARGET_SCHEDULER_UNITS:
+        return ["/usr/bin/systemctl", "start", "--no-block", str(unit)]
+    return None
 
 
 def execute_actions(snapshot: dict[str, Any], actions: list[dict[str, str]]) -> list[dict[str, Any]]:
@@ -1497,18 +2018,106 @@ def execute_actions(snapshot: dict[str, Any], actions: list[dict[str, str]]) -> 
                 for item in actions
             ]
         results: list[dict[str, Any]] = []
+        current_coverage: dict[str, Any] | None = None
         for item in actions:
             kind = item.get("kind")
             unit = item.get("unit")
-            command: list[str] | None = None
+            command = automatic_action_command(item)
             unit_verified, unit_detail = verify_effective_unit(snapshot, str(unit))
             if not unit_verified:
                 results.append({"action": item, "ok": False, "detail": unit_detail})
                 continue
-            if kind == "start_timer" and unit in set(TIMER_UNITS):
-                command = ["/usr/bin/systemctl", "start", unit]
-            elif kind == "restart_worker" and unit == WORKER_UNIT:
-                command = ["/usr/bin/systemctl", "restart", unit]
+            if kind == "start_scheduler_lane":
+                role = next(
+                    (
+                        candidate
+                        for candidate in IMMINENT_TARGET_SCHEDULER_ROLES
+                        if JOB_LIMITS[candidate][0] == unit
+                    ),
+                    None,
+                )
+                if role is None:
+                    results.append(
+                        {
+                            "action": item,
+                            "ok": False,
+                            "detail": "scheduler lane is not allowlisted",
+                        }
+                    )
+                    continue
+                scheduler_state = unit_snapshot(str(unit))
+                if scheduler_state.get("active") in {
+                    "active",
+                    "activating",
+                    "deactivating",
+                    "reloading",
+                }:
+                    results.append(
+                        {
+                            "action": item,
+                            "ok": True,
+                            "detail": "scheduler lane is already in progress",
+                        }
+                    )
+                    continue
+                scheduler_timer = JOB_TIMER_UNITS[role]
+                timer_verified, timer_detail = verify_effective_unit(
+                    snapshot, scheduler_timer
+                )
+                timer_state = unit_snapshot(scheduler_timer)
+                if (
+                    not timer_verified
+                    or timer_state.get("load") != "loaded"
+                    or timer_state.get("enabled") != "enabled"
+                    or timer_state.get("active") != "active"
+                ):
+                    detail = (
+                        timer_detail
+                        if not timer_verified
+                        else "scheduler timer is no longer enabled and active"
+                    )
+                    results.append({"action": item, "ok": False, "detail": detail})
+                    continue
+                if current_coverage is None:
+                    current_coverage = latest_coverage(int(time.time()))
+                current_coverage_epoch = current_coverage.get("observed_at_epoch")
+                current_fields = current_coverage.get("fields")
+                coverage_now = int(time.time())
+                coverage_fresh = (
+                    isinstance(current_coverage_epoch, int)
+                    and 0 <= coverage_now - current_coverage_epoch <= COVERAGE_MAX_AGE
+                    and isinstance(current_fields, dict)
+                )
+                if not coverage_fresh:
+                    results.append(
+                        {
+                            "action": item,
+                            "ok": False,
+                            "detail": "scheduler coverage gates are no longer fresh",
+                        }
+                    )
+                    continue
+                if integer_field(current_fields, "first_week_targets_imminent_uncovered") == 0:
+                    results.append(
+                        {
+                            "action": item,
+                            "ok": True,
+                            "detail": "imminent uncovered target risk cleared before launch",
+                        }
+                    )
+                    continue
+                if (
+                    integer_field(current_fields, "first_week_targets_imminent_uncovered") is None
+                    or not scheduler_lane_coverage_ready(role, current_fields)
+                ):
+                    results.append(
+                        {
+                            "action": item,
+                            "ok": False,
+                            "detail": "scheduler provider gates no longer authorize this lane",
+                        }
+                    )
+                    continue
             if command is None:
                 results.append({"action": item, "ok": False, "detail": "action rejected by allowlist"})
                 continue
@@ -1699,10 +2308,12 @@ def _digest_safe_regular(
 
 
 def _attempt_directories(root: Path, incident_id: str) -> list[Path]:
-    if INCIDENT_RE.fullmatch(incident_id) is None or not root.exists():
+    if INCIDENT_RE.fullmatch(incident_id) is None:
         return []
     output: list[Path] = []
     try:
+        if not root.exists():
+            return []
         candidates = root.iterdir()
         for path in candidates:
             match = ATTEMPT_RE.fullmatch(path.name)
@@ -1717,10 +2328,10 @@ def _attempt_directories(root: Path, incident_id: str) -> list[Path]:
 
 
 def _all_attempt_directories(root: Path) -> list[Path]:
-    if not root.exists():
-        return []
     output: list[Path] = []
     try:
+        if not root.exists():
+            return []
         for path in root.iterdir():
             if ATTEMPT_RE.fullmatch(path.name) is None:
                 continue
@@ -1732,125 +2343,197 @@ def _all_attempt_directories(root: Path) -> list[Path]:
     return sorted(output)
 
 
-def trusted_report_is_terminal(trusted_exit_raw: bytes, result_raw: bytes) -> bool:
-    """Accept only a verified diagnosis or candidate as a terminal incident outcome."""
+def trusted_report_disposition(
+    trusted_exit_raw: bytes, result_raw: bytes
+) -> str | None:
+    """Return the notification disposition of a coherent trusted result.
+
+    Reports produced before the explicit operator-action field existed are
+    accepted conservatively. In particular, the old verifier forced every
+    external/data diagnosis to ``operator_action_required`` even when there was
+    nothing an owner could do. Such legacy external results are terminal but
+    status-only; only a new allowlisted concrete action may page.
+    """
     try:
-        if trusted_exit_raw != b"0\n":
-            return False
+        if re.fullmatch(rb"(?:0|[1-9][0-9]{0,2})\n", trusted_exit_raw) is None:
+            return None
         result = json.loads(result_raw.decode("utf-8"))
         if not isinstance(result, dict):
-            return False
-        expected_recommendations = {
-            "no_action": "none",
-            "external_or_data_issue": "operator_action_required",
-            "verified_candidate": "review_candidate",
-        }
+            return None
         status = result.get("status")
-        if status not in expected_recommendations:
-            return False
-        if result.get("production_recommendation") != expected_recommendations[status]:
-            return False
+        recommendation = result.get("production_recommendation")
+        operator_action = result.get("operator_action")
         changed_files = result.get("changed_files")
         if not isinstance(changed_files, list) or not all(
             isinstance(path, str) for path in changed_files
         ):
-            return False
-        if status == "verified_candidate" and not changed_files:
-            return False
-        if status == "no_action" and changed_files:
-            return False
-        return True
+            return None
+        if (
+            status
+            not in {
+                "no_action",
+                "external_or_data_issue",
+                "verified_candidate",
+                "needs_human",
+                "failed",
+            }
+            or recommendation
+            not in {"none", "review_candidate", "operator_action_required"}
+            or operator_action
+            not in {None, "none", "review_candidate", *EXTERNAL_OPERATOR_ACTIONS}
+        ):
+            return None
+        if trusted_exit_raw != b"0\n":
+            # A checksummed report with a nonzero root-owned trusted verifier
+            # result is itself a concrete operator boundary. Another model run
+            # cannot repair the trusted harness or release/cutover proof.
+            return "operator_required"
+        if status == "no_action":
+            if recommendation == "none" and operator_action in {None, "none"} and not changed_files:
+                return "status_only"
+            return None
+        if status == "external_or_data_issue":
+            if changed_files:
+                return None
+            if operator_action is None and recommendation in {
+                "none",
+                "operator_action_required",
+            }:
+                return "status_only"
+            if operator_action == "none" and recommendation == "none":
+                return "status_only"
+            if (
+                operator_action in EXTERNAL_OPERATOR_ACTIONS
+                and recommendation == "operator_action_required"
+            ):
+                return "operator_required"
+            return None
+        if status == "verified_candidate":
+            if (
+                recommendation == "review_candidate"
+                and operator_action in {None, "review_candidate"}
+                and bool(changed_files)
+            ):
+                return "operator_required"
+            return None
+        if status in {"needs_human", "failed"}:
+            if (
+                recommendation == "operator_action_required"
+                and operator_action in {None, "none"}
+            ):
+                return "operator_required"
+            return None
+        return None
     except (UnicodeDecodeError, json.JSONDecodeError):
-        return False
+        return None
+
+
+def trusted_report_is_terminal(trusted_exit_raw: bytes, result_raw: bytes) -> bool:
+    return trusted_report_disposition(trusted_exit_raw, result_raw) is not None
+
+
+def _trusted_report_directory_disposition(report_dir: Path) -> tuple[int, str] | None:
+    directory_info = report_dir.lstat()
+    if (
+        directory_info.st_uid != 0
+        or directory_info.st_gid != 0
+        or stat_module.S_IMODE(directory_info.st_mode) != 0o700
+    ):
+        return None
+    expected_names = set(REPORT_HASHED_FILES) | {"SHA256SUMS", "COMPLETE"}
+    if {entry.name for entry in report_dir.iterdir()} != expected_names:
+        return None
+    marker_bytes = _read_safe_regular(
+        report_dir / "COMPLETE",
+        owner_uid=0,
+        owner_gid=0,
+        mode=0o400,
+        limit=4096,
+    )
+    manifest_bytes = _read_safe_regular(
+        report_dir / "SHA256SUMS",
+        owner_uid=0,
+        owner_gid=0,
+        mode=0o600,
+        limit=64 * 1024,
+    )
+    marker = json.loads(marker_bytes.decode("utf-8"))
+    now = int(time.time())
+    if (
+        not isinstance(marker, dict)
+        or set(marker) != {"format_version", "manifest_sha256", "completed_at_epoch"}
+        or marker.get("format_version") != 1
+        or re.fullmatch(r"[0-9a-f]{64}", str(marker.get("manifest_sha256", ""))) is None
+        or hashlib.sha256(manifest_bytes).hexdigest() != marker["manifest_sha256"]
+        or not isinstance(marker.get("completed_at_epoch"), int)
+        or marker["completed_at_epoch"] > now + 60
+    ):
+        return None
+    hashes: dict[str, str] = {}
+    for line in manifest_bytes.decode("ascii").splitlines():
+        digest, separator, filename = line.partition("  ")
+        if (
+            separator != "  "
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            or filename in hashes
+        ):
+            raise ValueError("invalid report manifest")
+        hashes[filename] = digest
+    if set(hashes) != set(REPORT_HASHED_FILES):
+        return None
+    total_size = 0
+    for filename, expected_hash in hashes.items():
+        actual_hash, size = _digest_safe_regular(
+            report_dir / filename,
+            owner_uid=0,
+            owner_gid=0,
+            mode=0o400 if filename == "READY" else 0o600,
+            limit=REPORT_FILE_LIMITS.get(filename, 64 * 1024),
+        )
+        total_size += size
+        if total_size > REPORT_TOTAL_SIZE_LIMIT or actual_hash != expected_hash:
+            return None
+    disposition = trusted_report_disposition(
+        _read_safe_regular(
+            report_dir / "trusted-verification-exit",
+            owner_uid=0,
+            owner_gid=0,
+            mode=0o600,
+            limit=REPORT_FILE_LIMITS.get("trusted-verification-exit", 64 * 1024),
+        ),
+        _read_safe_regular(
+            report_dir / "result.json",
+            owner_uid=0,
+            owner_gid=0,
+            mode=0o600,
+            limit=REPORT_FILE_LIMITS.get("result.json", 64 * 1024),
+        ),
+    )
+    if disposition is None:
+        return None
+    return marker["completed_at_epoch"], disposition
+
+
+def trusted_report_disposition_for_incident(incident_id: str) -> str | None:
+    if INCIDENT_RE.fullmatch(incident_id) is None:
+        return None
+    outcomes: list[tuple[int, str]] = []
+    for report_dir in _attempt_directories(REPORTS_DIR, incident_id):
+        try:
+            outcome = _trusted_report_directory_disposition(report_dir)
+            if outcome is not None:
+                outcomes.append(outcome)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            continue
+    if not outcomes:
+        return None
+    # A tie is fail-closed: a request for operator review wins over a status-only
+    # diagnosis. Otherwise the most recently completed trusted report is final.
+    return max(outcomes, key=lambda item: (item[0], item[1] == "operator_required"))[1]
 
 
 def terminal_report_exists(incident_id: str) -> bool:
-    if INCIDENT_RE.fullmatch(incident_id) is None:
-        return False
-    for report_dir in _attempt_directories(REPORTS_DIR, incident_id):
-        try:
-            directory_info = report_dir.lstat()
-            if (
-                directory_info.st_uid != 0
-                or directory_info.st_gid != 0
-                or stat_module.S_IMODE(directory_info.st_mode) != 0o700
-            ):
-                continue
-            expected_names = set(REPORT_HASHED_FILES) | {"SHA256SUMS", "COMPLETE"}
-            if {entry.name for entry in report_dir.iterdir()} != expected_names:
-                continue
-            marker_bytes = _read_safe_regular(
-                report_dir / "COMPLETE",
-                owner_uid=0,
-                owner_gid=0,
-                mode=0o400,
-                limit=4096,
-            )
-            manifest_bytes = _read_safe_regular(
-                report_dir / "SHA256SUMS",
-                owner_uid=0,
-                owner_gid=0,
-                mode=0o600,
-                limit=64 * 1024,
-            )
-            marker = json.loads(marker_bytes.decode("utf-8"))
-            now = int(time.time())
-            if (
-                not isinstance(marker, dict)
-                or set(marker) != {"format_version", "manifest_sha256", "completed_at_epoch"}
-                or marker.get("format_version") != 1
-                or re.fullmatch(r"[0-9a-f]{64}", str(marker.get("manifest_sha256", ""))) is None
-                or hashlib.sha256(manifest_bytes).hexdigest() != marker["manifest_sha256"]
-                or not isinstance(marker.get("completed_at_epoch"), int)
-                or marker["completed_at_epoch"] > now + 60
-            ):
-                continue
-            hashes: dict[str, str] = {}
-            for line in manifest_bytes.decode("ascii").splitlines():
-                digest, separator, filename = line.partition("  ")
-                if (
-                    separator != "  "
-                    or re.fullmatch(r"[0-9a-f]{64}", digest) is None
-                    or filename in hashes
-                ):
-                    raise ValueError("invalid report manifest")
-                hashes[filename] = digest
-            if set(hashes) != set(REPORT_HASHED_FILES):
-                continue
-            total_size = 0
-            valid = True
-            for filename, expected_hash in hashes.items():
-                actual_hash, size = _digest_safe_regular(
-                    report_dir / filename,
-                    owner_uid=0,
-                    owner_gid=0,
-                    mode=0o400 if filename == "READY" else 0o600,
-                    limit=REPORT_FILE_LIMITS.get(filename, 64 * 1024),
-                )
-                total_size += size
-                if total_size > REPORT_TOTAL_SIZE_LIMIT or actual_hash != expected_hash:
-                    valid = False
-                    break
-            if valid and trusted_report_is_terminal(
-                _read_safe_regular(
-                    report_dir / "trusted-verification-exit",
-                    owner_uid=0,
-                    owner_gid=0,
-                    mode=0o600,
-                    limit=REPORT_FILE_LIMITS.get("trusted-verification-exit", 64 * 1024),
-                ),
-                _read_safe_regular(
-                    report_dir / "result.json",
-                    owner_uid=0,
-                    owner_gid=0,
-                    mode=0o600,
-                    limit=REPORT_FILE_LIMITS.get("result.json", 64 * 1024),
-                ),
-            ):
-                return True
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
-            continue
-    return False
+    return trusted_report_disposition_for_incident(incident_id) is not None
 
 
 def staged_attempts(incident_id: str) -> list[Path]:
@@ -1874,6 +2557,237 @@ def incident_attempt_count(incident_id: str) -> int:
         for path in _attempt_directories(root, incident_id)
     }
     return len(names)
+
+
+def current_dispatched_incident_id(state: dict[str, Any]) -> str | None:
+    current_fingerprint = state.get("fingerprint")
+    if re.fullmatch(r"[0-9a-f]{64}", str(current_fingerprint or "")) is None:
+        return None
+    matching = [
+        item
+        for item in state.get("dispatches", [])
+        if isinstance(item, dict)
+        and item.get("fingerprint") == current_fingerprint
+        and isinstance(item.get("at_epoch"), int)
+        and INCIDENT_RE.fullmatch(str(item.get("incident_id", ""))) is not None
+    ]
+    if matching:
+        return str(max(matching, key=lambda item: item["at_epoch"])["incident_id"])
+    current_incident = state.get("current_incident")
+    if (
+        isinstance(current_incident, dict)
+        and current_incident.get("fingerprint") == current_fingerprint
+        and INCIDENT_RE.fullmatch(str(current_incident.get("incident_id", "")))
+        is not None
+    ):
+        return str(current_incident["incident_id"])
+    # Compatibility fallback for a retry record created before current_incident
+    # was persisted separately from the 24-hour dispatch budget history.
+    retry = state.get("status_only_retry")
+    if (
+        isinstance(retry, dict)
+        and retry.get("fingerprint") == current_fingerprint
+        and INCIDENT_RE.fullmatch(str(retry.get("incident_id", ""))) is not None
+    ):
+        return str(retry["incident_id"])
+    return None
+
+
+def dead_letter_incident_exists(incident_id: str) -> bool:
+    if INCIDENT_RE.fullmatch(incident_id) is None:
+        return False
+    path = DEAD_LETTER_DIR / f"{incident_id}.json"
+    try:
+        info = path.lstat()
+        return (
+            not path.is_symlink()
+            and stat_module.S_ISREG(info.st_mode)
+            and info.st_uid == 0
+            and info.st_gid == 0
+            and info.st_nlink == 1
+            and stat_module.S_IMODE(info.st_mode) == 0o640
+            and info.st_size <= 2 * 1024 * 1024
+        )
+    except OSError:
+        return False
+
+
+def rejected_incident_attempt_exists(incident_id: str) -> bool:
+    return bool(_attempt_directories(VERIFICATION_REJECTED_DIR, incident_id))
+
+
+def incident_pipeline_has_work(incident_id: str) -> bool:
+    if INCIDENT_RE.fullmatch(incident_id) is None:
+        return False
+    for root in (QUEUE_DIR, INBOX_DIR, PROCESSING_DIR):
+        path = root / f"{incident_id}.json"
+        try:
+            info = path.lstat()
+            if not path.is_symlink() and stat_module.S_ISREG(info.st_mode):
+                return True
+        except OSError:
+            pass
+    return any(
+        _attempt_directories(root, incident_id)
+        for root in (
+            PRODUCING_DIR,
+            READY_DIR,
+            VERIFICATION_PROCESSING_DIR,
+        )
+    )
+
+
+def fold_pipeline_notification_state(
+    state: dict[str, Any], agent_request: dict[str, Any] | None
+) -> None:
+    """Page only after the current incident crosses a trusted human boundary."""
+    if state.get("status") in {"healthy", "maintenance", "operator_required"}:
+        return
+    incident_id = current_dispatched_incident_id(state)
+    if incident_id is None:
+        # Confirmation can outlive the daily dispatch budget. That remains a
+        # visible degraded condition, not an unactionable owner page.
+        return
+    current_fingerprint = str(state["fingerprint"])
+
+    def require_operator(reason: str) -> None:
+        state["status"] = "operator_required"
+        state["operator_requirement"] = {
+            "fingerprint": current_fingerprint,
+            "incident_id": incident_id,
+            "reason": reason,
+        }
+
+    disposition = trusted_report_disposition_for_incident(incident_id)
+    if disposition == "operator_required":
+        require_operator("trusted_report")
+        return
+    if disposition == "status_only":
+        state["status"] = "incident_pending"
+        state.pop("operator_requirement", None)
+        now = state.get("last_probe_epoch")
+        if not isinstance(now, int) or isinstance(now, bool) or now < 0:
+            now = int(time.time())
+        prior_retry = state.get("status_only_retry")
+        if (
+            isinstance(prior_retry, dict)
+            and prior_retry.get("fingerprint") == current_fingerprint
+            and prior_retry.get("incident_id") == incident_id
+            and isinstance(prior_retry.get("investigations"), int)
+            and 1
+            <= prior_retry["investigations"]
+            <= MAX_STATUS_ONLY_INVESTIGATIONS
+            and isinstance(prior_retry.get("issues"), list)
+            and bool(prior_retry["issues"])
+            and all(isinstance(issue, str) for issue in prior_retry["issues"])
+            and isinstance(prior_retry.get("retry_after_epoch"), int)
+        ):
+            retry = prior_retry
+        else:
+            prior_investigations = (
+                prior_retry.get("investigations", 0)
+                if isinstance(prior_retry, dict)
+                and prior_retry.get("fingerprint") == current_fingerprint
+                else 0
+            )
+            if (
+                not isinstance(prior_investigations, int)
+                or isinstance(prior_investigations, bool)
+                or prior_investigations < 0
+            ):
+                prior_investigations = 0
+            dispatch_epoch = None
+            current_incident = state.get("current_incident")
+            if (
+                isinstance(current_incident, dict)
+                and current_incident.get("incident_id") == incident_id
+                and isinstance(current_incident.get("at_epoch"), int)
+            ):
+                dispatch_epoch = current_incident["at_epoch"]
+            if dispatch_epoch is None:
+                for dispatch in state.get("dispatches", []):
+                    if (
+                        isinstance(dispatch, dict)
+                        and dispatch.get("incident_id") == incident_id
+                        and isinstance(dispatch.get("at_epoch"), int)
+                    ):
+                        dispatch_epoch = dispatch["at_epoch"]
+                        break
+            streaks = state.get("issue_streaks")
+            retry_issues = (
+                sorted(
+                    issue
+                    for issue, record in streaks.items()
+                    if isinstance(issue, str)
+                    and codex_actionable_issue(issue)
+                    and isinstance(record, dict)
+                    and isinstance(record.get("dispatched_at_epoch"), int)
+                    and (
+                        dispatch_epoch is None
+                        or record["dispatched_at_epoch"] == dispatch_epoch
+                    )
+                )
+                if isinstance(streaks, dict)
+                else []
+            )
+            if not retry_issues:
+                # A trusted legacy incident may not have per-issue dispatch
+                # timestamps. Keep any current actionable issue eligible for
+                # the same bounded retry instead of losing it silently.
+                retry_issues = (
+                    sorted(
+                        issue
+                        for issue in streaks
+                        if isinstance(issue, str) and codex_actionable_issue(issue)
+                    )
+                    if isinstance(streaks, dict)
+                    else []
+                )
+            if not retry_issues:
+                require_operator("pipeline_unavailable")
+                return
+            retry = {
+                "fingerprint": current_fingerprint,
+                "incident_id": incident_id,
+                "investigations": min(
+                    MAX_STATUS_ONLY_INVESTIGATIONS,
+                    prior_investigations + 1,
+                ),
+                "issues": retry_issues,
+                "retry_after_epoch": now + STATUS_ONLY_RETRY_COOLDOWN_SECONDS,
+            }
+            state["status_only_retry"] = retry
+        if (
+            retry["investigations"] < MAX_STATUS_ONLY_INVESTIGATIONS
+            and now >= retry["retry_after_epoch"]
+        ):
+            # Release only the current Codex-actionable issue markers. The
+            # normal fingerprint cooldown and daily dispatch budget still
+            # apply, and a second trusted status-only investigation is final
+            # for this continuous episode. Irreversible target regressions are
+            # already removed by their accepted baseline before this point.
+            streaks = state.get("issue_streaks")
+            if isinstance(streaks, dict):
+                for issue in retry["issues"]:
+                    record = streaks.get(issue)
+                    if isinstance(record, dict):
+                        record.pop("dispatched_at_epoch", None)
+        return
+    if dead_letter_incident_exists(incident_id):
+        require_operator("dead_letter")
+        return
+    if rejected_incident_attempt_exists(incident_id):
+        require_operator("rejected_attempt")
+        return
+    if isinstance(agent_request, dict) and agent_request.get("ok") is False:
+        require_operator("pipeline_unavailable")
+        return
+    if incident_pipeline_has_work(incident_id):
+        state["status"] = "codex_queued"
+        return
+    # A durably dispatched incident with no report, dead letter, or recoverable
+    # handoff cannot be fixed by the automatic pipeline.
+    require_operator("pipeline_unavailable")
 
 
 def verify_autopilot_artifacts() -> tuple[bool, str]:
@@ -2205,14 +3119,28 @@ def probe() -> int:
             previous = dict(previous)
             previous.pop("pending_incident", None)
             atomic_json(STATE_FILE, previous)
+        # Fold any completed trusted outcome before it can advance an
+        # irreversible target baseline. This captures the original dispatched
+        # issue membership for a bounded status-only retry; otherwise removing
+        # one target issue could change the fingerprint and orphan another
+        # still-live issue from the same incident.
+        fold_pipeline_notification_state(previous, None)
         coverage_baseline = next_coverage_baseline(previous, snapshot)
         coverage_baseline = accept_dispatched_target_regressions(
             coverage_baseline, snapshot, previous
         )
-        if (
-            (not previous or previous.get("status") == "awaiting_baseline")
-            and set(coverage_baseline) != set(COVERAGE_REGRESSION_LIMITS)
-        ):
+        baseline_incomplete = set(coverage_baseline) != set(
+            COVERAGE_REGRESSION_LIMITS
+        )
+        if baseline_incomplete:
+            bootstrap_wait, actions, issues, bootstrap_record = initial_baseline_probe(
+                previous, snapshot, coverage_baseline
+            )
+        else:
+            bootstrap_wait = False
+            bootstrap_record = None
+            actions, issues = evaluate_snapshot(snapshot, coverage_baseline)
+        if bootstrap_wait and bootstrap_record is not None:
             bootstrap_state = {
                 "format_version": 1,
                 "dispatches": previous.get("dispatches", []),
@@ -2223,14 +3151,19 @@ def probe() -> int:
                 "status": "awaiting_baseline",
                 "fingerprint": None,
                 "streak": 0,
+                "issue_streaks": {INITIAL_BASELINE_ISSUE: bootstrap_record},
             }
+            if activation_first_seen is not None:
+                bootstrap_state["activation_lock_first_seen_epoch"] = (
+                    activation_first_seen
+                )
             status = {
                 "format_version": 1,
                 "observed_at_epoch": snapshot["observed_at_epoch"],
                 "state": "awaiting_initial_coverage_baseline",
                 "release_id": snapshot.get("release_id"),
                 "app_commit": snapshot.get("app_commit"),
-                "issues": ["initial_coverage_baseline_incomplete"],
+                "issues": [INITIAL_BASELINE_ISSUE],
                 "streak": 0,
                 "automatic_remediation": [],
                 "codex": None,
@@ -2240,7 +3173,22 @@ def probe() -> int:
             publish_monitor_health(status)
             print(json.dumps(status, sort_keys=True, separators=(",", ":")))
             return 1
-        actions, issues = evaluate_snapshot(snapshot, coverage_baseline)
+        if baseline_incomplete and bootstrap_record is not None:
+            prior_streaks = previous.get("issue_streaks")
+            if not isinstance(prior_streaks, dict) or not isinstance(
+                prior_streaks.get(INITIAL_BASELINE_ISSUE), dict
+            ):
+                # Seed the predecessor count for an old awaiting-baseline state
+                # that predates explicit bootstrap history. update_incident_state
+                # will add this probe exactly once.
+                previous = dict(previous)
+                previous["issue_streaks"] = (
+                    dict(prior_streaks) if isinstance(prior_streaks, dict) else {}
+                )
+                previous["issue_streaks"][INITIAL_BASELINE_ISSUE] = {
+                    "count": max(0, bootstrap_record["count"] - 1),
+                    "first_seen_epoch": bootstrap_record["first_seen_epoch"],
+                }
         selected, suppressed, action_history = select_automatic_actions(
             previous, actions, int(snapshot["observed_at_epoch"])
         )
@@ -2306,6 +3254,7 @@ def probe() -> int:
             queue_incident_payload(pending_incident)
             state.pop("pending_incident", None)
         agent_request = start_agent_if_queued(snapshot)
+        fold_pipeline_notification_state(state, agent_request)
         status = {
             "format_version": 1,
             "observed_at_epoch": snapshot["observed_at_epoch"],

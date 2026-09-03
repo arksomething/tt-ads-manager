@@ -15,16 +15,22 @@ launch an agent every two minutes.
   edge-triggered: an increase must still be confirmed and durably dispatched,
   then that observed count becomes the accepted baseline so the historical miss
   cannot relaunch Codex forever. A later increase has a new baseline-scoped
-  identity and pages again. It watches release identity, the release-bound
+  incident identity. It watches release identity, the release-bound
   cutover proof, disk reserve, enabled/active timers, worker heartbeat,
   successful job-marker ages, coverage telemetry freshness, TikTok capacity,
   the shared credit guard, per-target misses, and the three-hour TikTok
   freshness ceiling.
-- It may only start an enabled reviewed timer, restart the dashboard worker,
-  and never launches provider jobs directly. A disabled timer is escalated
-  because it may represent intentional maintenance. Before any action it holds
-  the tracker activation lock, verifies the current cutover proof, the complete
-  sealed release, and the exact effective unit with no drop-ins. It suppresses
+- It may start an enabled reviewed timer, restart the dashboard worker, and,
+  after two confirming probes of an uncovered target near its first-week
+  deadline, request non-blocking starts of the already-authorized TikTok and
+  Instagram scheduler services. The risk counter is source-neutral, so each
+  scheduler lane is evaluated independently. A lane must be idle, loaded,
+  sealed, and backed by its own enabled/active sealed timer. TikTok capacity and
+  fallback gates and Instagram configuration and credit gates must also be
+  ready. The sentinel never enables a lane or bypasses a provider guard. Before
+  any action it holds the tracker activation lock, rechecks the current provider
+  gates, verifies the current cutover proof, the complete sealed release, and
+  the exact effective service and timer units with no drop-ins. It suppresses
   itself during activation and the post-activation cutover grace period.
 - Automatic actions have a 30-minute per-unit cooldown and a twelve-action
   daily ceiling. The sentinel never resets systemd rate limits, rearms credits,
@@ -32,21 +38,35 @@ launch an agent every two minutes.
 - The same incident must survive three consecutive probes. Capacity pressure
   and clustered TikTok window misses must also persist for at least 45 minutes,
   so ordinary queue wobble does not burn an agent run. A continuous issue is
-  dispatched once; if it clears and later returns it becomes a new episode.
-  Dispatches are limited to three per day, with a six-hour same-fingerprint
-  cooldown.
-  Credit, storage, disabled-unit, cutover, and release-integrity faults remain
-  operator-required instead of wasting Codex runs on actions it cannot safely
-  take.
+  dispatched once initially. A trusted status-only or no-action diagnosis may
+  receive one more investigation after six hours; the second status-only result
+  is final for that continuous episode. If the issue clears and later returns it
+  becomes a new episode. Dispatches are limited to three per day, with a
+  six-hour same-fingerprint cooldown. Historical target-outcome regressions are
+  accepted into their edge-triggered baseline only after a trusted status-only
+  result, so a candidate or dead letter cannot disappear while the baseline
+  prevents an irreversible old miss from consuming the retry.
+  Persistent credit, storage, disabled-unit, cutover, and release-integrity
+  faults are treated as operator-only instead of wasting Codex runs on actions
+  it cannot safely take. They still require the normal three-probe confirmation.
 - Every probe also publishes a separate four-field health export under
   `/var/lib/creator-tracker-autopilot-health/`. It contains only a timestamp,
   health level, and one generic reason code; release IDs, issue details, account
-  data, and Codex metadata remain in the private autopilot state. The off-host
-  reporter treats the first two incident probes as degraded, the third as
-  failing, and an export 15 minutes old as failing.
+  data, and Codex metadata remain in the private autopilot state. Confirming
+  incidents and queued/running Codex work remain degraded and silent, including
+  an incident that could not be dispatched because the daily budget is full.
+  Only a true `operator_required` outcome or an integrity/unknown state exports
+  failing. The first two incomplete coverage-baseline reads are expected
+  bootstrap and remain degraded while later probes finish them. On the third
+  partial read, or after 15 minutes from the first one, the missing baseline
+  enters normal incident evaluation instead of remaining silent indefinitely.
+  Release, cutover, storage, timer, unit-integrity, and worker faults bypass this
+  bootstrap grace immediately; intentional activation maintenance remains
+  suppressed. An export 15 minutes old is failing at the off-host reporter,
+  subject to the reporter's reboot/resume automatic-recovery grace.
 - Persistent incidents launch `codex exec` against a new isolated clone of the
   exact active sealed source and dependencies. It runs under the dedicated
-no-login `creator-tracker-codex` account with a pinned root-owned Codex binary,
+  no-login `creator-tracker-codex` account with a pinned root-owned Codex binary,
   a dedicated auth store, a 25-minute agent timeout, 4 GiB memory cap, 2 GiB
   ephemeral workspace cap, 150% CPU cap, and one global lock. A named permission profile denies filesystem reads
   outside the workspace and minimal tool/runtime paths and disables network for
@@ -61,11 +81,16 @@ no-login `creator-tracker-codex` account with a pinned root-owned Codex binary,
   marker. Its test namespace has no network interfaces and a private empty
   `/run`, so host resolver, service-manager, container, VPN, and logging sockets
   are unavailable to candidate code.
-- Only a checksummed report with a zero trusted-verification exit and a coherent
-  final outcome acknowledges the incident. An internal runner or verifier
-  failure receives one bounded retry. The verifier also persists a two-start
-  limit for each claimed handoff. Exhausted or structurally rejected work moves
-  to the durable dead-letter path instead of looping or silently disappearing.
+- Only a structurally complete checksummed report with a parseable trusted
+  verification exit and a coherent final outcome is folded into notification
+  state. A verified candidate that needs review, an allowlisted concrete
+  external/operator action, a complete `needs_human` or `failed` outcome, a
+  nonzero trusted-verification exit, an exhausted or rejected attempt, or an
+  unavailable pipeline becomes `operator_required`. A no-action result and an
+  external/data diagnosis without a concrete safe owner action remain
+  status-only and do not page. An incomplete or malformed attempt can receive
+  one bounded retry; the verifier also persists a two-start limit for each
+  claimed handoff, so failures cannot loop or silently disappear.
 - Codex can diagnose and prepare a tested candidate patch. It cannot deploy,
   mutate production data, rearm credits, alter payouts, or contact creators.
   Candidate paths are independently restricted to `src/sync/` and `tests/`;
@@ -79,8 +104,9 @@ LLM can safely guarantee a correct unattended production code deployment.
 
 ## Production bootstrap
 
-The production install uses two dedicated system identities with no login or
-supplementary groups: one for Codex and one for candidate verification. Install
+The production install uses three dedicated system identities with no login or
+supplementary groups: one each for Codex, candidate verification, and the
+sanitized health reader. Install
 root-owned copies of the four executables, prompt, schema, permission profile,
 artifact manifest, tmpfiles policy, and units. Pin both the Codex 0.149.0 binary
 and its matching `codex-code-mode-host` under

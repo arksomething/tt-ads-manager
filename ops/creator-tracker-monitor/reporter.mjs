@@ -15,6 +15,7 @@ const AUTOPILOT_HEALTH_PATH = process.env.CREATOR_TRACKER_AUTOPILOT_HEALTH_PATH
 const SEQUENCE_PATH = `${STATE_ROOT}/sequence`;
 const BOOT_ID_PATH = process.env.CREATOR_TRACKER_BOOT_ID_PATH
   ?? "/proc/sys/kernel/random/boot_id";
+const CONTINUITY_PATH = `${STATE_ROOT}/continuity.json`;
 const CURRENT_RELEASE_PATH = process.env.CREATOR_TRACKER_CURRENT_RELEASE_PATH
   ?? "/opt/creator-tracker/current/RELEASE_ID";
 const COVERAGE_COMMAND = process.env.CREATOR_TRACKER_COVERAGE_COMMAND
@@ -23,7 +24,10 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const COVERAGE_TIMEOUT_MS = 20_000;
 const MAX_LATEST_TIKTOK_DIRECT_AGE_SECONDS = 3 * 60 * 60;
 const MAX_HEARTBEAT_ISSUE_CODES = 32;
+export const OPERATOR_ACTION_REQUIRED_CODE = "operator_action_required";
 export const AUTOPILOT_HEALTH_MAX_AGE_SECONDS = 15 * 60;
+export const AUTOPILOT_RECOVERY_GRACE_SECONDS = 10 * 60;
+export const REPORTER_CONTINUITY_MAX_GAP_SECONDS = 3 * 60;
 
 export const requiredUnits = [
   "creator-tracker-worker.service",
@@ -50,8 +54,13 @@ export function boundIssueCodes(codes) {
     .sort();
   const needsMarker = valid.length !== unique.size || valid.length > MAX_HEARTBEAT_ISSUE_CODES;
   if (!needsMarker) return valid;
+  const mustKeep = valid.includes(OPERATOR_ACTION_REQUIRED_CODE)
+    ? [OPERATOR_ACTION_REQUIRED_CODE]
+    : [];
+  const remaining = valid.filter((code) => code !== OPERATOR_ACTION_REQUIRED_CODE);
   return [
-    ...valid.slice(0, MAX_HEARTBEAT_ISSUE_CODES - 1),
+    ...mustKeep,
+    ...remaining.slice(0, MAX_HEARTBEAT_ISSUE_CODES - mustKeep.length - 1),
     "issue_codes_truncated",
   ].sort();
 }
@@ -62,6 +71,7 @@ const autopilotReasonCodes = new Set([
   "autopilot_integrity_failure",
   "autopilot_maintenance",
   "autopilot_operator_required",
+  "autopilot_repairing",
 ]);
 
 async function optionalText(path) {
@@ -123,9 +133,173 @@ export function parseAutopilotHealth(text) {
   };
 }
 
-export function evaluateAutopilotHealth(text, nowEpochSeconds) {
+function isAutomaticRecoveryPending(value) {
+  return value === true;
+}
+
+function parseReporterContinuity(text) {
+  if (typeof text !== "string") return null;
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (value == null || Array.isArray(value) || typeof value !== "object") return null;
+  if (Object.keys(value).sort().join("\n") !== [
+    "automaticRecoveryGapRearmAvailable",
+    "automaticRecoveryGraceUntilEpoch",
+    "automaticRecoveryReady",
+    "automaticRecoveryReadySinceEpoch",
+    "bootId",
+    "continuityEstablishedAtEpoch",
+    "formatVersion",
+    "lastRunEpoch",
+  ].sort().join("\n")) return null;
+  if (value.formatVersion !== 3 || typeof value.bootId !== "string") return null;
+  if (typeof value.automaticRecoveryGapRearmAvailable !== "boolean") return null;
+  if (typeof value.automaticRecoveryReady !== "boolean") return null;
+  if (!Number.isSafeInteger(value.lastRunEpoch) || value.lastRunEpoch <= 0) return null;
+  if (
+    !Number.isSafeInteger(value.continuityEstablishedAtEpoch) ||
+    value.continuityEstablishedAtEpoch <= 0 ||
+    value.continuityEstablishedAtEpoch > value.lastRunEpoch
+  ) return null;
+  if (
+    !Number.isSafeInteger(value.automaticRecoveryGraceUntilEpoch) ||
+    value.automaticRecoveryGraceUntilEpoch <= 0
+  ) return null;
+  if (
+    value.automaticRecoveryReadySinceEpoch !== null && (
+      !Number.isSafeInteger(value.automaticRecoveryReadySinceEpoch) ||
+      value.automaticRecoveryReadySinceEpoch <= 0 ||
+      value.automaticRecoveryReadySinceEpoch > value.lastRunEpoch
+    )
+  ) return null;
+  if (
+    value.automaticRecoveryReady !==
+      (value.automaticRecoveryReadySinceEpoch !== null)
+  ) return null;
+  return value;
+}
+
+export async function advanceReporterContinuity(
+  nowEpochSeconds,
+  bootId,
+  path = CONTINUITY_PATH,
+) {
+  if (!Number.isSafeInteger(nowEpochSeconds) || nowEpochSeconds <= 0) {
+    throw new Error("Monitor continuity time is invalid.");
+  }
+  if (typeof bootId !== "string" || bootId.length === 0) {
+    throw new Error("Monitor continuity boot ID is invalid.");
+  }
+  const previous = parseReporterContinuity(await optionalText(path));
+  const bootBoundary = previous == null || previous.bootId !== bootId;
+  const clockMovedBackward = previous != null &&
+    previous.lastRunEpoch > nowEpochSeconds + 60;
+  const continuityGap = previous != null && !bootBoundary && (
+    clockMovedBackward ||
+    nowEpochSeconds - previous.lastRunEpoch > REPORTER_CONTINUITY_MAX_GAP_SECONDS
+  );
+  // Boot grants one durable, unconsumed same-boot gap allowance. The first
+  // reporter gap spends it even if startup has not yet been continuously
+  // healthy for ten minutes. Later gaps may extend grace only after successful
+  // collections explicitly rearm the allowance.
+  const gapRearmAvailable = bootBoundary ||
+    previous?.automaticRecoveryGapRearmAvailable === true;
+  const consumeGapRearm = continuityGap && gapRearmAvailable;
+  const rearmGrace = bootBoundary || consumeGapRearm;
+  const automaticRecoveryGraceUntilEpoch = rearmGrace
+    ? nowEpochSeconds + AUTOPILOT_RECOVERY_GRACE_SECONDS
+    : previous.automaticRecoveryGraceUntilEpoch;
+  const continuityEstablishedAtEpoch = bootBoundary || continuityGap
+    ? nowEpochSeconds
+    : previous.continuityEstablishedAtEpoch;
+  const next = {
+    formatVersion: 3,
+    bootId,
+    lastRunEpoch: nowEpochSeconds,
+    automaticRecoveryGraceUntilEpoch,
+    automaticRecoveryGapRearmAvailable: bootBoundary
+      ? true
+      : consumeGapRearm
+        ? false
+        : previous.automaticRecoveryGapRearmAvailable,
+    automaticRecoveryReady: bootBoundary || continuityGap
+      ? false
+      : previous.automaticRecoveryReady,
+    automaticRecoveryReadySinceEpoch: bootBoundary || continuityGap
+      ? null
+      : previous.automaticRecoveryReadySinceEpoch,
+    continuityEstablishedAtEpoch,
+  };
+  const temporary = `${path}.tmp.${process.pid}`;
+  await writeFile(temporary, `${JSON.stringify(next)}\n`, { mode: 0o600, flag: "wx" });
+  await rename(temporary, path);
+  return {
+    ...next,
+    automaticRecoveryPending: nowEpochSeconds < automaticRecoveryGraceUntilEpoch,
+  };
+}
+
+export async function recordReporterRecoveryReadiness(
+  continuity,
+  automaticRecoveryReady,
+  path = CONTINUITY_PATH,
+) {
+  if (typeof automaticRecoveryReady !== "boolean") {
+    throw new Error("Monitor recovery readiness is invalid.");
+  }
+  const next = {
+    formatVersion: continuity?.formatVersion,
+    bootId: continuity?.bootId,
+    lastRunEpoch: continuity?.lastRunEpoch,
+    automaticRecoveryGraceUntilEpoch:
+      continuity?.automaticRecoveryGraceUntilEpoch,
+    automaticRecoveryGapRearmAvailable:
+      continuity?.automaticRecoveryGapRearmAvailable,
+    automaticRecoveryReady,
+    automaticRecoveryReadySinceEpoch: automaticRecoveryReady
+      ? continuity?.automaticRecoveryReady
+        ? continuity?.automaticRecoveryReadySinceEpoch
+        : continuity?.lastRunEpoch
+      : null,
+    continuityEstablishedAtEpoch: continuity?.continuityEstablishedAtEpoch,
+  };
+  if (
+    !next.automaticRecoveryGapRearmAvailable &&
+    next.automaticRecoveryReady &&
+    Number.isSafeInteger(next.automaticRecoveryReadySinceEpoch) &&
+    next.lastRunEpoch - next.automaticRecoveryReadySinceEpoch >=
+      AUTOPILOT_RECOVERY_GRACE_SECONDS
+  ) {
+    next.automaticRecoveryGapRearmAvailable = true;
+  }
+  if (parseReporterContinuity(JSON.stringify(next)) == null) {
+    throw new Error("Monitor continuity update is invalid.");
+  }
+  const temporary = `${path}.tmp.${process.pid}`;
+  await writeFile(temporary, `${JSON.stringify(next)}\n`, { mode: 0o600, flag: "wx" });
+  await rename(temporary, path);
+  return {
+    ...next,
+    automaticRecoveryPending:
+      next.lastRunEpoch < next.automaticRecoveryGraceUntilEpoch,
+  };
+}
+
+export function evaluateAutopilotHealth(
+  text,
+  nowEpochSeconds,
+  automaticRecoveryPending = false,
+) {
   if (text == null) {
-    return { status: "failing", issueCodes: ["autopilot_health_missing"] };
+    return {
+      status: "failing",
+      issueCodes: ["autopilot_health_missing"],
+      operatorActionRequired: !isAutomaticRecoveryPending(automaticRecoveryPending),
+    };
   }
   const health = parseAutopilotHealth(text);
   if (
@@ -133,12 +307,39 @@ export function evaluateAutopilotHealth(text, nowEpochSeconds) {
     !Number.isSafeInteger(nowEpochSeconds) ||
     health.observedAtEpoch > nowEpochSeconds + 60
   ) {
-    return { status: "failing", issueCodes: ["autopilot_health_invalid"] };
+    return {
+      status: "failing",
+      issueCodes: ["autopilot_health_invalid"],
+      operatorActionRequired: !isAutomaticRecoveryPending(automaticRecoveryPending),
+    };
   }
   if (nowEpochSeconds - health.observedAtEpoch >= AUTOPILOT_HEALTH_MAX_AGE_SECONDS) {
-    return { status: "failing", issueCodes: ["autopilot_health_stale"] };
+    return {
+      status: "failing",
+      issueCodes: ["autopilot_health_stale"],
+      operatorActionRequired: !isAutomaticRecoveryPending(automaticRecoveryPending),
+    };
   }
-  return { status: health.status, issueCodes: health.issueCodes };
+  return {
+    status: health.status,
+    issueCodes: health.issueCodes,
+    operatorActionRequired: health.issueCodes.some((code) =>
+      code === "autopilot_operator_required" ||
+      code === "autopilot_integrity_failure"
+    ),
+  };
+}
+
+export function evaluateOperatorActionRequirement(
+  autopilotHealth,
+  unitStates,
+  automaticRecoveryPending = false,
+) {
+  const autopilotTimer = unitStates?.["creator-tracker-autopilot.timer"];
+  return autopilotHealth?.operatorActionRequired === true ||
+    (!isAutomaticRecoveryPending(automaticRecoveryPending) && (
+      autopilotTimer?.active !== true || autopilotTimer?.enabled !== true
+    ));
 }
 
 export function evaluateStatusFiles(statuses, nowEpochSeconds) {
@@ -425,7 +626,7 @@ async function readMonitorSecret() {
   return secret;
 }
 
-async function collectHealth() {
+async function collectHealth(automaticRecoveryPending = false) {
   const jobs = [
     "collector-worker",
     "scheduler-tick",
@@ -454,7 +655,11 @@ async function collectHealth() {
     health.status = "failing";
     health.issueCodes.push(...unitIssues);
   }
-  const autopilotHealth = evaluateAutopilotHealth(autopilotText, nowEpochSeconds);
+  const autopilotHealth = evaluateAutopilotHealth(
+    autopilotText,
+    nowEpochSeconds,
+    automaticRecoveryPending,
+  );
   if (autopilotHealth.status === "failing") {
     health.status = "failing";
   } else if (autopilotHealth.status === "degraded" && health.status === "healthy") {
@@ -468,8 +673,24 @@ async function collectHealth() {
     health.status = "degraded";
   }
   health.issueCodes.push(...criticalCoverage.issueCodes);
+  if (evaluateOperatorActionRequirement(
+    autopilotHealth,
+    unitStates,
+    automaticRecoveryPending,
+  )) {
+    health.issueCodes.push(OPERATOR_ACTION_REQUIRED_CODE);
+  }
   health.issueCodes = boundIssueCodes(health.issueCodes);
-  return health;
+  const automaticRecoveryReady =
+    autopilotHealth.operatorActionRequired !== true &&
+    !autopilotHealth.issueCodes.some((code) =>
+      code === "autopilot_health_missing" ||
+      code === "autopilot_health_invalid" ||
+      code === "autopilot_health_stale"
+    ) &&
+    unitStates["creator-tracker-autopilot.timer"]?.active === true &&
+    unitStates["creator-tracker-autopilot.timer"]?.enabled === true;
+  return { health, automaticRecoveryReady };
 }
 
 async function main() {
@@ -477,12 +698,11 @@ async function main() {
   if (endpoint.protocol !== "https:" || endpoint.pathname !== HEARTBEAT_PATH || endpoint.search) {
     throw new Error(`Monitor endpoint must be HTTPS with exact path ${HEARTBEAT_PATH}.`);
   }
-  const [secret, bootId, releaseId, sequence, health] = await Promise.all([
+  const [secret, bootId, releaseId, sequence] = await Promise.all([
     readMonitorSecret(),
     optionalText(BOOT_ID_PATH),
     optionalText(CURRENT_RELEASE_PATH),
     nextSequence(),
-    collectHealth(),
   ]);
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(bootId ?? "")) {
     throw new Error("Host boot ID is invalid.");
@@ -490,6 +710,16 @@ async function main() {
   if (releaseId != null && !/^[A-Za-z0-9._:-]{1,128}$/.test(releaseId)) {
     throw new Error("Tracker release ID is invalid.");
   }
+  const continuity = await advanceReporterContinuity(
+    Math.floor(Date.now() / 1_000),
+    bootId,
+  );
+  const collected = await collectHealth(continuity.automaticRecoveryPending);
+  await recordReporterRecoveryReadiness(
+    continuity,
+    collected.automaticRecoveryReady,
+  );
+  const health = collected.health;
   const body = JSON.stringify({
     schemaVersion: 1,
     monitorId: MONITOR_ID,

@@ -30,6 +30,18 @@
     "production_recommendation": {
       "type": "string",
       "enum": ["none", "review_candidate", "operator_action_required"]
+    },
+    "operator_action": {
+      "type": "string",
+      "enum": [
+        "none",
+        "review_candidate",
+        "replenish_tiktok_credits",
+        "replenish_instagram_credits",
+        "restore_tiktok_access",
+        "restore_instagram_access",
+        "restore_creator_account_access"
+      ]
     }
   },
   "required": [
@@ -39,6 +51,7 @@
     "actions_taken",
     "verification",
     "changed_files",
-    "production_recommendation"
+    "production_recommendation",
+    "operator_action"
   ]
 }
