@@ -1,0 +1,18 @@
+{
+  "format_version": 1,
+  "files": {
+    "/usr/local/libexec/creator-tracker-autopilot": {"sha256": "ccc832b051a45e9eb0ea5100caf5f6fb6431bf5bdbaf3490d712bc3e90537851", "size": 90852},
+    "/usr/local/libexec/creator-tracker-codex-incident": {"sha256": "86d5e58b04765d3068d218896145a204dbd3c55bc963dd2b82e8c951bbf4e7d7", "size": 19142},
+    "/usr/local/libexec/creator-tracker-codex-verifier": {"sha256": "6e48c7b69c9ce4806898c6b5115cc632d9991088be28ea1d875603f71f63e177", "size": 37710},
+    "/usr/local/libexec/creator-tracker-validate-codex-result": {"sha256": "765e8332926fb0d60d3a11358495b7363b2f337270a46b7f6aa880129421f568", "size": 3200},
+    "/usr/local/share/creator-tracker-autopilot/PROMPT.md": {"sha256": "ba9c840ff4414ab91a413073e46b4a0b5a9e54073175e3b01480f6b41b95778f", "size": 2669},
+    "/usr/local/share/creator-tracker-autopilot/result.schema.json": {"sha256": "80aa4cd0243a84bf6daa5682a1d6e037be236cfc43fd838a0501b0f92dae85f2", "size": 977},
+    "/usr/local/share/creator-tracker-autopilot/autopilot.config.toml": {"sha256": "988e9af04a840400b3007c19080a1895801d7dada233dfd5084c459dff1b692b", "size": 1315},
+    "/opt/creator-tracker-autopilot/codex/0.149.0/SHA256SUMS": {"sha256": "3fe761edff9ac3146179c005c53f95fe6e5a9cb5deb440d825447ceb1afa917a", "size": 159},
+    "/etc/systemd/system/creator-tracker-autopilot.service": {"sha256": "06d52c04f735a8974bc76a8174c19b79dd6b93b8ff6c10a073235444f60ecf78", "size": 1013},
+    "/etc/systemd/system/creator-tracker-autopilot.timer": {"sha256": "5806feb41444571c592034a66749e6ddf8b01456b580becca7a453bd0d5c320b", "size": 285},
+    "/etc/systemd/system/creator-tracker-codex-incident.service": {"sha256": "72d2d0b520c3219bb13768d91f10f15e0c2bbdda612ed012263f39ccca015a41", "size": 1513},
+    "/etc/systemd/system/creator-tracker-codex-verifier.service": {"sha256": "b21d7312b824277554ef683347f06d43f52e0d877584abda2de211620f50f103", "size": 2099},
+    "/etc/tmpfiles.d/creator-tracker-autopilot.conf": {"sha256": "c73019f2fe6f0db2772c0f385f93c16617a6d4112bbe18199b561a37bc06f1e1", "size": 1370}
+  }
+}

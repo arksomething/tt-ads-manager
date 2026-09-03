@@ -1,0 +1,58 @@
+default_permissions = "creator-tracker-workspace"
+allow_login_shell = false
+
+[tools]
+web_search = false
+
+[agents]
+enabled = false
+
+[features]
+apps = false
+auth_elicitation = false
+browser_use = false
+browser_use_external = false
+browser_use_full_cdp_access = false
+code_mode_host = true
+computer_use = false
+goals = false
+hooks = false
+image_generation = false
+in_app_browser = false
+memories = false
+multi_agent = false
+multi_agent_v2 = false
+plugins = false
+recommended_plugins = false
+remote_plugin = false
+shell_snapshot = false
+skill_env_var_dependency_prompt = false
+skill_mcp_dependency_install = false
+skill_search = false
+tool_call_mcp_elicitation = false
+tool_suggest = false
+view_image = false
+workspace_dependencies = false
+
+[shell_environment_policy]
+inherit = "none"
+
+[permissions.creator-tracker-workspace]
+description = "Creator tracker incident workspace only"
+extends = ":workspace"
+
+[permissions.creator-tracker-workspace.filesystem]
+":root" = "deny"
+":minimal" = "read"
+":slash_tmp" = "deny"
+"/opt/creator-tracker/releases" = "read"
+"/opt/creator-tracker/node/v24.20.0" = "read"
+glob_scan_max_depth = 5
+
+[permissions.creator-tracker-workspace.filesystem.":workspace_roots"]
+".git" = "read"
+"**/.env" = "deny"
+"**/.env.*" = "deny"
+
+[permissions.creator-tracker-workspace.network]
+enabled = false

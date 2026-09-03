@@ -1,0 +1,48 @@
+[Unit]
+Description=Sandboxed Codex investigation for a persistent creator tracker incident
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=6h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=creator-tracker-codex
+Group=creator-tracker-codex
+SupplementaryGroups=
+ExecStart=/bin/bash --noprofile --norc -- /usr/local/libexec/creator-tracker-codex-incident
+TimeoutStartSec=50min
+TimeoutStopSec=30s
+KillMode=control-group
+Restart=no
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+PrivateIPC=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ProtectHome=tmpfs
+ReadWritePaths=/var/lib/creator-tracker-autopilot /run/creator-tracker-autopilot
+BindReadOnlyPaths=/usr/local/share/creator-tracker-autopilot/autopilot.config.toml:/var/lib/creator-tracker-autopilot/codex-home/autopilot.config.toml
+TemporaryFileSystem=/var/lib/creator-tracker-autopilot/runs:rw,nosuid,nodev,noexec,size=2G,mode=1777
+InaccessiblePaths=/etc/creator-tracker /var/lib/creator-tracker /run/creator-tracker /run/docker.sock
+InaccessiblePaths=-/run/systemd/private -/run/dbus/system_bus_socket -/run/user/1000/bus -/run/user/1000/systemd/private
+ProtectProc=invisible
+ProcSubset=all
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryHigh=3G
+MemoryMax=4G
+MemorySwapMax=512M
+LimitFSIZE=512M
+CPUQuota=150%
+TasksMax=192
+StandardOutput=journal
+StandardError=journal

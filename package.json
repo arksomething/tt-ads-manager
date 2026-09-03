@@ -18,6 +18,7 @@
     "creator:test": "npm --prefix creator-platform run test",
     "creator:lint": "npm --prefix creator-platform run lint",
     "creator:typecheck": "npm --prefix creator-platform run typecheck",
-    "creator:verify": "npm --prefix creator-platform run verify"
+    "creator:verify": "npm --prefix creator-platform run verify",
+    "tracker:autopilot:verify": "bash ops/creator-tracker-autopilot/tests/verify.sh"
   }
 }

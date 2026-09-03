@@ -1,0 +1,55 @@
+[Unit]
+Description=Trusted networkless verification of a creator tracker Codex candidate
+After=creator-tracker-codex-incident.service
+StartLimitIntervalSec=1h
+StartLimitBurst=6
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/bin/bash --noprofile --norc -- /usr/local/libexec/creator-tracker-codex-verifier
+TimeoutStartSec=30min
+TimeoutStopSec=30s
+KillMode=control-group
+Restart=no
+SuccessExitStatus=75
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateIPC=true
+PrivateNetwork=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/creator-tracker/releases /usr/local/libexec /usr/local/share/creator-tracker-autopilot
+ReadWritePaths=/var/lib/creator-tracker-autopilot /var/lib/creator-tracker-autopilot-verifier
+TemporaryFileSystem=/var/lib/creator-tracker-autopilot-verifier:rw,nosuid,nodev,noexec,size=2G,mode=0711
+TemporaryFileSystem=/tmp:rw,nosuid,nodev,noexec,size=256M,mode=1777
+TemporaryFileSystem=/var/tmp:rw,nosuid,nodev,noexec,size=64M,mode=1777
+TemporaryFileSystem=/run:ro,nosuid,nodev,noexec,size=1M,mode=0755
+InaccessiblePaths=/etc/creator-tracker
+InaccessiblePaths=/var/lib/creator-tracker-autopilot/codex-home /var/lib/creator-tracker-autopilot/queue /var/lib/creator-tracker-autopilot/inbox /var/lib/creator-tracker-autopilot/processing /var/lib/creator-tracker-autopilot/producing /var/lib/creator-tracker-autopilot/runs /var/lib/creator-tracker-autopilot/dead-letter
+InaccessiblePaths=-/var/lib/creator-tracker-autopilot/state.json -/var/lib/creator-tracker-autopilot/status.json
+ProtectProc=invisible
+ProcSubset=all
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_READ_SEARCH CAP_FOWNER CAP_SETGID CAP_SETUID
+AmbientCapabilities=CAP_SETGID CAP_SETUID
+MemoryHigh=3G
+MemoryMax=4G
+MemorySwapMax=512M
+LimitFSIZE=192M
+CPUQuota=200%
+TasksMax=256
+StandardOutput=journal
+StandardError=journal

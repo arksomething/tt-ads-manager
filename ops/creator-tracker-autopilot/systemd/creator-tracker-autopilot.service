@@ -1,0 +1,38 @@
+[Unit]
+Description=Detect and safely remediate creator tracker incidents
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/creator-tracker-autopilot probe
+TimeoutStartSec=3min
+UMask=0027
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_CHOWN
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_CHOWN
+PrivateDevices=true
+PrivateNetwork=true
+PrivateTmp=true
+PrivateIPC=true
+ProtectHome=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadOnlyPaths=/opt/creator-tracker /var/lib/creator-tracker
+ReadWritePaths=/var/lib/creator-tracker-autopilot /run/creator-tracker-autopilot
+ProtectProc=invisible
+KeyringMode=private
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryMax=192M
+TasksMax=64
+StandardOutput=journal
+StandardError=journal
