@@ -1,0 +1,13 @@
+[Unit]
+Description=Send creator tracker heartbeat every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+AccuracySec=5s
+RandomizedDelaySec=5s
+Persistent=true
+Unit=creator-tracker-monitor.service
+
+[Install]
+WantedBy=timers.target

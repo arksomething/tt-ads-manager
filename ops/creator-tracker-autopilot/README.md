@@ -11,7 +11,11 @@ launch an agent every two minutes.
   `Persistent=true`.
 - It ignores historical overdue/unresolved totals and harmless lock-contention
   exit 75. It freezes a best-observed baseline for inherited debt and detects
-  new regressions above it. It watches release identity, the release-bound
+  new regressions above it. Irreversible target miss/outside-window counters are
+  edge-triggered: an increase must still be confirmed and durably dispatched,
+  then that observed count becomes the accepted baseline so the historical miss
+  cannot relaunch Codex forever. A later increase has a new baseline-scoped
+  identity and pages again. It watches release identity, the release-bound
   cutover proof, disk reserve, enabled/active timers, worker heartbeat,
   successful job-marker ages, coverage telemetry freshness, TikTok capacity,
   the shared credit guard, per-target misses, and the three-hour TikTok

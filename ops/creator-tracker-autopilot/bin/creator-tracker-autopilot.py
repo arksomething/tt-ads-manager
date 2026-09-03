@@ -187,6 +187,22 @@ COVERAGE_REGRESSION_LIMITS = {
     "first_week_targets_current_enforced_outside_target": 0,
 }
 
+# These target-quality counters describe completed observation-window outcomes.
+# Unlike unresolved/overdue work, a miss cannot be repaired back out of the
+# aggregate, and a current miss can remain visible until the video freezes. A
+# regression therefore needs edge-triggered semantics: confirm and dispatch it
+# once, then advance the accepted baseline to the exact value captured by that
+# durable dispatch. Including the baseline in the issue identity makes a later
+# increment a new incident even if it happens before a clean probe in between.
+TARGET_OUTCOME_REGRESSION_COUNTERS = frozenset(
+    {
+        "first_week_targets_enforced_missed",
+        "first_week_targets_enforced_outside_target",
+        "first_week_targets_current_enforced_missed",
+        "first_week_targets_current_enforced_outside_target",
+    }
+)
+
 OPERATOR_ONLY_ISSUE_PREFIXES = (
     "activation_lock_invalid",
     "activation_lock_stuck",
@@ -889,6 +905,49 @@ def integer_field(fields: dict[str, str], key: str) -> int | None:
     return int(value) if value is not None and value.isdigit() else None
 
 
+def coverage_regression_issue(key: str, baseline_value: int) -> str:
+    if key in TARGET_OUTCOME_REGRESSION_COUNTERS:
+        return f"coverage_regressed:{key}:baseline={baseline_value}"
+    return f"coverage_regressed:{key}"
+
+
+def accept_dispatched_target_regressions(
+    baseline: dict[str, int], snapshot: dict[str, Any], incident_state: dict[str, Any]
+) -> dict[str, int]:
+    """Advance irreversible target counters only after a durable dispatch reservation.
+
+    Exact legacy issue names are accepted too. That is the one-time migration
+    path for incidents dispatched before baseline-scoped issue identities were
+    introduced; it prevents an already-reported historical miss from launching
+    Codex forever.
+    """
+    output = dict(baseline)
+    fields = snapshot.get("coverage", {}).get("fields", {})
+    streaks = incident_state.get("issue_streaks", {})
+    if not isinstance(fields, dict) or not isinstance(streaks, dict):
+        return output
+    for key in TARGET_OUTCOME_REGRESSION_COUNTERS:
+        current = integer_field(fields, key)
+        accepted = output.get(key)
+        if current is None or not isinstance(accepted, int) or current <= accepted:
+            continue
+        legacy_issue = f"coverage_regressed:{key}"
+        scoped_issue = coverage_regression_issue(key, accepted)
+        dispatched = any(
+            isinstance(issue, str)
+            # A scoped dispatch may acknowledge only the baseline it actually
+            # observed. If the counter rose again before the next clean probe,
+            # the old dispatch must not silently bless that newer outcome.
+            and (issue == legacy_issue or issue == scoped_issue)
+            and isinstance(record, dict)
+            and isinstance(record.get("dispatched_at_epoch"), int)
+            for issue, record in streaks.items()
+        )
+        if dispatched:
+            output[key] = current
+    return output
+
+
 def evaluate_snapshot(
     snapshot: dict[str, Any], coverage_baseline: dict[str, int] | None = None
 ) -> tuple[list[dict[str, str]], list[str]]:
@@ -1059,7 +1118,7 @@ def evaluate_snapshot(
                 and isinstance(baseline_value, int)
                 and current_value > baseline_value + allowed_delta
             ):
-                issues.append(f"coverage_regressed:{key}")
+                issues.append(coverage_regression_issue(key, baseline_value))
     else:
         issues.append("coverage_snapshot_invalid")
 
@@ -2008,6 +2067,9 @@ def inspection() -> dict[str, Any]:
     previous, state_error = load_probe_state()
     apply_activation_deadman(previous, snapshot)
     baseline = next_coverage_baseline(previous if state_error is None else {}, snapshot)
+    baseline = accept_dispatched_target_regressions(
+        baseline, snapshot, previous if state_error is None else {}
+    )
     actions, issues = evaluate_snapshot(snapshot, baseline)
     if state_error is not None:
         issues = sorted(set(issues + ["sentinel_state_invalid"]))
@@ -2059,6 +2121,9 @@ def probe() -> int:
             previous.pop("pending_incident", None)
             atomic_json(STATE_FILE, previous)
         coverage_baseline = next_coverage_baseline(previous, snapshot)
+        coverage_baseline = accept_dispatched_target_regressions(
+            coverage_baseline, snapshot, previous
+        )
         if (
             (not previous or previous.get("status") == "awaiting_baseline")
             and set(coverage_baseline) != set(COVERAGE_REGRESSION_LIMITS)
@@ -2094,6 +2159,9 @@ def probe() -> int:
             previous, actions, int(snapshot["observed_at_epoch"])
         )
         state, should_dispatch, incident_id = update_incident_state(previous, snapshot, issues)
+        coverage_baseline = accept_dispatched_target_regressions(
+            coverage_baseline, snapshot, state
+        )
         state["coverage_baseline_release"] = snapshot.get("release_id")
         state["coverage_baseline"] = coverage_baseline
         if activation_first_seen is not None:

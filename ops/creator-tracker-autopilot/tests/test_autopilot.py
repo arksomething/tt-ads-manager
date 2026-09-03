@@ -273,6 +273,83 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(actions, [])
         self.assertIn("coverage_regressed:failed_tiktok_videos", issues)
 
+    def test_target_outcome_regression_is_scoped_to_accepted_baseline(self) -> None:
+        snapshot = healthy_snapshot()
+        key = "first_week_targets_enforced_missed"
+        baseline = {
+            item: int(snapshot["coverage"]["fields"][item])
+            for item in autopilot.COVERAGE_REGRESSION_LIMITS
+        }
+        snapshot["coverage"]["fields"][key] = str(baseline[key] + 1)
+        _, issues = autopilot.evaluate_snapshot(snapshot, baseline)
+        self.assertIn(
+            f"coverage_regressed:{key}:baseline={baseline[key]}", issues
+        )
+
+    def test_dispatched_target_regression_advances_baseline_once(self) -> None:
+        snapshot = healthy_snapshot()
+        key = "first_week_targets_current_enforced_outside_target"
+        baseline = {
+            item: int(snapshot["coverage"]["fields"][item])
+            for item in autopilot.COVERAGE_REGRESSION_LIMITS
+        }
+        snapshot["coverage"]["fields"][key] = str(baseline[key] + 1)
+        _, issues = autopilot.evaluate_snapshot(snapshot, baseline)
+        issue = f"coverage_regressed:{key}:baseline={baseline[key]}"
+        self.assertIn(issue, issues)
+
+        state: dict = {}
+        for _ in range(3):
+            state, dispatch, _ = autopilot.update_incident_state(
+                state, snapshot, [issue]
+            )
+            snapshot["observed_at_epoch"] += 300
+        self.assertTrue(dispatch)
+
+        accepted = autopilot.accept_dispatched_target_regressions(
+            baseline, snapshot, state
+        )
+        self.assertEqual(accepted[key], baseline[key] + 1)
+        _, repeated_issues = autopilot.evaluate_snapshot(snapshot, accepted)
+        self.assertNotIn(issue, repeated_issues)
+
+        snapshot["coverage"]["fields"][key] = str(accepted[key] + 1)
+        still_accepted = autopilot.accept_dispatched_target_regressions(
+            accepted, snapshot, state
+        )
+        self.assertEqual(still_accepted[key], accepted[key])
+        _, new_issues = autopilot.evaluate_snapshot(snapshot, accepted)
+        self.assertIn(
+            f"coverage_regressed:{key}:baseline={accepted[key]}", new_issues
+        )
+
+    def test_legacy_dispatched_target_regression_is_accepted(self) -> None:
+        snapshot = healthy_snapshot()
+        key = "first_week_targets_enforced_outside_target"
+        current = int(snapshot["coverage"]["fields"][key])
+        baseline = {
+            item: int(snapshot["coverage"]["fields"][item])
+            for item in autopilot.COVERAGE_REGRESSION_LIMITS
+        }
+        baseline[key] = current - 1
+        previous = {
+            "issue_streaks": {
+                f"coverage_regressed:{key}": {
+                    "count": 9,
+                    "first_seen_epoch": NOW - 900,
+                    "dispatched_at_epoch": NOW - 600,
+                }
+            }
+        }
+        accepted = autopilot.accept_dispatched_target_regressions(
+            baseline, snapshot, previous
+        )
+        self.assertEqual(accepted[key], current)
+        _, issues = autopilot.evaluate_snapshot(snapshot, accepted)
+        self.assertFalse(
+            any(issue.startswith(f"coverage_regressed:{key}") for issue in issues)
+        )
+
     def test_automatic_actions_have_a_cooldown(self) -> None:
         action = {"kind": "restart_worker", "unit": autopilot.WORKER_UNIT}
         previous = {
