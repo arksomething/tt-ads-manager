@@ -608,3 +608,33 @@ errors. The following observation run wrote 43 observations and satisfied all
 coverage debt or upstream inaccessible accounts have disappeared. In
 particular, `aeronmoggz` still returned an empty Instagram response without a
 verifiable account identity during this investigation.
+
+### Expected account states
+
+The September 7 follow-up is deployed as release
+`f31b68af3b251e3b1383bf77383daf9df001065f12c9a0b918c7eb545235e24e`
+(app commit `622d563b428862b8821d821d3381033257f26adc`). Health now reports
+explicit `private` and `no_public_posts` account outcomes separately from
+`needs_recovery`. The account-state log includes the last evidence timestamp
+and a `recheckDue` flag after 48 hours; an overdue recheck does not relabel the
+last known account state as a collector failure. Ordinary collection remains
+scheduled. New private/empty TikTok outcomes do not create failure ledger rows,
+increment consecutive failures, or trigger paid fallback requests. Instagram
+privacy is classified only after the response matches the native account ID.
+
+Definitive retained yt-dlp private-profile messages are recognized only for the
+current handle. A newer handle-history entry, newer failed attempt, unknown
+source, generic 404/auth error, or ambiguous private/embedding warning remains
+recoverable. Historical evidence is retained. Videos affected by an explicit
+account state remain visible as unavailable, without inventing observations or
+counting them as collector failures/overdue work; a newer direct observation
+supersedes that account-state evidence for the video's coverage calculation.
+Historical target outcomes and actual collection faults remain visible.
+
+The sealed package passed 815 tests, typechecking, and production build; the
+46-page cutover completeness gate passed. At 09:10 EDT the production health
+report showed two private accounts, four accounts with no public posts, nine
+TikTok accounts needing recovery, and one Instagram account needing recovery.
+Instagram overdue videos remained zero. TikTok coverage remained degraded
+(336 overdue videos and 239 failed videos), with the worker and all eight
+collection timers enabled.
