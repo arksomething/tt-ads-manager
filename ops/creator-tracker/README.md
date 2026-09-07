@@ -566,3 +566,45 @@ Resolve the adapter, credential, capacity, or network cause before re-enabling a
 direct timer. Networked system units order after `network-online.target` and
 collector paths still use bounded request timeouts, typed retries, idempotency,
 and explicit coverage state.
+
+## 2026-09-07 scraper recovery
+
+The September 7 repair is deployed as sealed release
+`d27950b1ee2061aed66677919f0961a3f135e4f1fc1aa9151fbb92c2808a17f9`,
+from app commit `f33d64e73b4979a06b8354474c46c07c7094f918` on
+`codex/scraper-health-repair` in `gotall-viral-dash`.
+
+- Automatic recovery from missing billing telemetry remains a one-request,
+  exact-balance reconciliation under the shared durable credit lease and
+  100-credit reserve. Its account-wide limits are now one attempt per
+  30 minutes and 24 attempts per rolling day. This prevents a few malformed
+  content responses from exhausting the old two-per-day recovery allowance.
+  This changes neither the manual top-up confirmations nor permission to
+  continue collection while billing evidence is unknown.
+- Live Viral captures can refresh a username without a changed provider
+  `updatedAt`, but only with matching stable native/provider identities,
+  unchanged settings, and a newer handle observation. Older captures and
+  identity/settings conflicts still fail closed. This repaired the
+  `breezehorizonxy` to `heightible` rename that had blocked reconciliation.
+- Instagram accepts exactly representable numeric owner IDs alongside string
+  IDs, normalizes provider `/username/p/SHORTCODE/` and related video routes
+  after native-owner validation, and recognizes embedded profile not-found
+  responses. Invalid or conflicting IDs, shortcodes, hosts, and URL query
+  strings remain rejected. Profile parsing failures now retain raw evidence.
+
+The sealed build passed 811 tests, typechecking, and the production build.
+The release-bound cutover check completed for capture
+`52d0d59af67487259d7935cfc23b8b6e3bb0c45628fd22c90fa0ee2a75bb061b`
+(producer `e422d0c5-6888-45a5-8cd1-d878639a029b`): all 46 pages delivered and
+independently attested, with 102 accounts and 4,389 videos matched centrally.
+One timed-out delivery was acknowledged on retry as an existing commit.
+
+Five Instagram discovery accounts affected by the URL parser were requeued
+under the shared writer lock; only their next-discovery timestamps were
+advanced, and failure history was preserved. The subsequent production run
+scanned 360 videos and wrote 88 direct observations with zero account/item
+errors. The following observation run wrote 43 observations and satisfied all
+20 admitted videos. These are recovery proofs, not a claim that historical
+coverage debt or upstream inaccessible accounts have disappeared. In
+particular, `aeronmoggz` still returned an empty Instagram response without a
+verifiable account identity during this investigation.
