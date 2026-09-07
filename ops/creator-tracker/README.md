@@ -638,3 +638,55 @@ TikTok accounts needing recovery, and one Instagram account needing recovery.
 Instagram overdue videos remained zero. TikTok coverage remained degraded
 (336 overdue videos and 239 failed videos), with the worker and all eight
 collection timers enabled.
+
+### TikTok recovery and operational health
+
+The September 7 recovery update is deployed as sealed release
+`d960f2dbf32db94d3fb9981ac1d31be84f4ae5b71883c19b15727c6b3e207545`
+(app commit `605dc6aa63b180432cea087d7159b4c01b2c6b58`). The sealed package
+passed 824 tests, typechecking, production build, and the release-bound
+46-page cutover completeness gate.
+
+- Current-handle changes invalidate old account backoff for planning. A durable
+  successful credit rearm also admits one fresh attempt for older account
+  faults when paid fallback is available; failures after that rearm retain
+  their backoff. Known private/empty outcomes are excluded from this recovery.
+- A successful public profile response can recover omitted due videos through
+  at most ten direct provider requests, within a shared 180-second recovery
+  budget and the existing credit guard. Native video/account identity and
+  per-item provider provenance are preserved. Productive retries can continue
+  bounded recovery; no-progress attempts still exhaust their retry allowance.
+- Recovery can use spare public slots when deadline feasibility and the
+  rolling retry allowance permit it. Exhausted retry demand no longer removes
+  ordinary account work from planning. Public rate limits are unchanged.
+- Closed missed/outside-target windows remain explicit historical data-quality
+  debt. They no longer permanently fail operational health by themselves.
+  Overdue observations, unresolved accounts, imminent uncovered targets,
+  missing target materialization, capacity faults, and credit faults still do.
+
+Live recovery collected 57 fresh observations for renamed account `heightible`.
+Ten omitted-video checks for that account and ten paid-only checks for
+`gotallkae` returned HTTP 404 without recovering additional observations.
+Generic 404 responses remain unresolved evidence, not confirmed deletion or
+private-profile classifications. The temporary manual recovery units were
+removed after completion; ordinary production collection remains enabled.
+
+Paid discovery also stops pagination at the shared run request/page/credit
+allowance and saves validated pages as capped inventory. Previously a
+300-item discovery could exceed its 20-request allowance and discard the
+collected pages as an account failure. A regression test verifies retained
+items, evidence, capped status, and no extra request at the budget boundary.
+An initially exhausted budget still fails through the normal credit guard.
+
+The corrected paid path recovered `audrius_ma` at 10:09 EDT: 100 inventory
+items, two new video rows, and 97 direct observations, with zero errors and
+exactly ten requests/credits. Its result correctly remained capped at 100/300.
+The normal full-roster planner at 10:10 reported feasible capacity and zero
+clustered window misses. Health at 10:10:51 showed 231 overdue TikTok videos,
+five unresolved TikTok accounts, one unresolved Instagram account, zero
+overdue Instagram videos, and a ready credit guard with 22,565 credits.
+One target still needed realignment. Historical quality debt remains visible
+(44 missed and 596 outside-target enforced windows); recovery does not turn
+late observations into on-time evidence. The worker and all eight collection
+timers were enabled, HTTP health passed, and temporary recovery units were
+removed. Repository operations verification also passed.
