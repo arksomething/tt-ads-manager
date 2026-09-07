@@ -1,0 +1,307 @@
+.flash {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid #aceebb;
+  border-radius: 6px;
+  background: #dafbe1;
+  color: #116329;
+  font-size: 13px;
+}
+
+.flashError {
+  border-color: #ffcecb;
+  background: #fff8f7;
+  color: #82071e;
+}
+
+.secondaryButton,
+.primaryButton,
+.dangerButton {
+  min-height: 36px;
+  padding: 8px 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #afb8c1;
+  border-radius: 6px;
+  background: #f6f8fa;
+  color: #24292f;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.primaryButton {
+  border-color: #1f2328;
+  background: #24292f;
+  color: #fff;
+}
+
+.dangerButton {
+  border-color: #ff8182;
+  background: #fff8f7;
+  color: #cf222e;
+}
+
+.queue {
+  display: grid;
+  gap: 12px;
+}
+
+.queueCard {
+  border: 1px solid #d0d7de;
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 1px 0 rgb(27 31 36 / 4%);
+  overflow: hidden;
+}
+
+.queueHeader {
+  padding: 15px 17px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid #d8dee4;
+  background: #f6f8fa;
+}
+
+.queueHeader h2 {
+  margin: 5px 0 0;
+  font-size: 16px;
+}
+
+.queueHeader p,
+.queueHeader small {
+  margin: 0;
+  color: #656d76;
+  font-size: 12px;
+}
+
+.queueBody {
+  padding: 17px;
+  display: grid;
+  grid-template-columns: minmax(220px, .75fr) minmax(0, 1.25fr);
+  gap: 20px;
+}
+
+.claimFacts {
+  margin: 0;
+  display: grid;
+  align-content: start;
+  gap: 11px;
+}
+
+.claimFacts div {
+  display: grid;
+  gap: 4px;
+}
+
+.claimFacts dt {
+  color: #656d76;
+  font-size: 12px;
+}
+
+.claimFacts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.claimFacts a {
+  color: #0969da;
+}
+
+.forms {
+  display: grid;
+  gap: 12px;
+}
+
+.form,
+.matchForm {
+  padding: 13px;
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d8dee4;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.field {
+  display: grid;
+  gap: 5px;
+  color: #57606a;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.fieldWide {
+  grid-column: 1 / -1;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid #afb8c1;
+  border-radius: 6px;
+  background: #fff;
+  color: #1f2328;
+  font: inherit;
+  font-size: 13px;
+}
+
+.field textarea {
+  min-height: 62px;
+  resize: vertical;
+}
+
+.formActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.truthNote {
+  margin: 0;
+  color: #656d76;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.details summary {
+  color: #0969da;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.details[open] summary {
+  margin-bottom: 9px;
+}
+
+.providerWarning {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  border: 1px solid #d4a72c;
+  border-radius: 7px;
+  background: #fff8c5;
+  color: #633c01;
+}
+
+.providerWarning strong {
+  display: block;
+  font-size: 14px;
+}
+
+.providerWarning p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.transitionForm {
+  min-width: 230px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.transitionForm input {
+  min-width: 130px;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid #afb8c1;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.evidence {
+  display: grid;
+  gap: 3px;
+}
+
+.settlementGroups {
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.settlementGroup {
+  padding: 14px;
+  border: 1px solid #d8dee4;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.settlementGroup header {
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.settlementGroup h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.settlementGroup p {
+  margin: 4px 0 0;
+  color: #656d76;
+  font-size: 12px;
+}
+
+.checkList {
+  display: grid;
+  gap: 1px;
+  border: 1px solid #d8dee4;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.checkRow {
+  padding: 9px 10px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  background: #f6f8fa;
+  font-size: 12px;
+}
+
+.checkRow + .checkRow {
+  border-top: 1px solid #d8dee4;
+}
+
+.checkRow strong {
+  font-size: 13px;
+}
+
+.settlementActions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 800px) {
+  .queueBody { grid-template-columns: 1fr; }
+  .formGrid { grid-template-columns: 1fr; }
+  .fieldWide { grid-column: auto; }
+  .transitionForm { min-width: 0; align-items: stretch; flex-direction: column; }
+}

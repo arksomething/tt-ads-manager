@@ -1,6 +1,7 @@
-// Minimal stdio MCP server exposing read-only Discord access through the
-// archived GoTall bot. The bot token is read at runtime from the archived
-// bot's .env and is never stored in this repo.
+// Minimal stdio MCP server exposing read-only Discord access through the live
+// GoTall - Management bot. The bot token is read at runtime from Hermes and is
+// never stored in this repo. Do not switch this back to the legacy GoTall bot;
+// that application cannot read the private creator channels.
 //
 // Note: Discord hides message `content` from bots unless the application has
 // the privileged "Message Content Intent" enabled (Discord Developer Portal →
@@ -10,15 +11,16 @@
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
-const BOT_ENV_PATH = "/home/ark296/projects/archive/gotall-discord-bot/.env";
+const BOT_ENV_PATH = "/home/ark296/.hermes/.env";
+const BOT_ENV_KEY = "DISCORD_BOT_TOKEN";
 const API_BASE = "https://discord.com/api/v10";
 
 function getBotToken() {
   const envText = readFileSync(BOT_ENV_PATH, "utf8");
-  const match = envText.match(/^DISCORD_TOKEN=(.*)$/m);
+  const match = envText.match(new RegExp(`^${BOT_ENV_KEY}=(.*)$`, "m"));
 
   if (!match || match[1].trim().length === 0) {
-    throw new Error(`DISCORD_TOKEN not found in ${BOT_ENV_PATH}`);
+    throw new Error(`${BOT_ENV_KEY} not found in ${BOT_ENV_PATH}`);
   }
 
   return match[1].trim();
@@ -132,7 +134,7 @@ readline.on("line", async (line) => {
       respond(id, {
         protocolVersion: params?.protocolVersion ?? "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "gotall-discord", version: "1.0.0" },
+        serverInfo: { name: "gotall-management-discord", version: "1.1.0" },
       });
     } else if (method === "tools/list") {
       respond(id, {

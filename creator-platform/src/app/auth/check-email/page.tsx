@@ -30,14 +30,14 @@ export default async function CheckEmailPage({ searchParams }: CheckEmailPagePro
     <AuthFormShell
       eyebrow="One quick step"
       title="Confirm your email."
-      description="Open the message from GoTall and use the confirmation link. That securely connects this browser to your creator account."
+      description="New account? Open the message from GoTall and use the confirmation link. Already confirmed? No new confirmation email will be sent, so sign in instead."
       error={
         getSearchParamValue(params, "error") ??
         (configured ? null : "Email confirmation is being configured. Please check back shortly.")
       }
       notice={
         getSearchParamValue(params, "notice") ??
-        "We sent a confirmation link if that address can be registered."
+        "We sent a confirmation link if that address can be registered. Delivery and resend requests can take up to a minute."
       }
       footer={
         <div className="auth-footer-links">

@@ -521,6 +521,8 @@ export default async function CreatorsPage({
       await trackCreatorAccountForOrganization(organizationSlug, {
         profileUrl: getTrimmedFormValue(formData, "profileUrl"),
         campaignId: getTrimmedFormValue(formData, "campaignId"),
+        creatorId:
+          getTrimmedFormValue(formData, "creatorId") || undefined,
         maxVideos: getTrimmedFormValue(formData, "maxVideos"),
       });
 
@@ -924,6 +926,36 @@ export default async function CreatorsPage({
                   </select>
                 </label>
               </div>
+
+              <label className="block">
+                <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Attach to creator
+                </span>
+                <select
+                  className="h-11 w-full rounded-[0.95rem] border border-white/[0.08] bg-black/[0.24] px-3.5 text-sm text-foreground outline-none transition focus:border-white/[0.16]"
+                  defaultValue=""
+                  name="creatorId"
+                >
+                  <option value="">Create a new creator</option>
+                  {workspace.accountAssociationCreatorOptions.map((creator) => {
+                    const tiktokAccount = creator.platformAccounts.find(
+                      (account: { platform: Platform; handle: string }) =>
+                        account.platform === Platform.TIKTOK,
+                    );
+
+                    return (
+                      <option key={creator.id} value={creator.id}>
+                        {creator.displayName}
+                        {tiktokAccount ? ` (@${tiktokAccount.handle})` : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+                <span className="mt-1.5 block text-xs text-muted-foreground">
+                  Choose an existing creator to permanently associate a differently
+                  named Instagram, TikTok, or YouTube account with them.
+                </span>
+              </label>
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <button

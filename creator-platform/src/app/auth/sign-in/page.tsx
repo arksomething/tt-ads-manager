@@ -3,6 +3,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { AuthFormShell } from "@/components/auth-form-shell";
+import { GoogleAuthButton } from "@/components/google-auth-button";
+import { PasswordField } from "@/components/password-field";
 import { getSearchParamValue, sanitizeNextPath } from "@/lib/auth-navigation";
 import { hasSupabaseAuthEnv } from "@/lib/server-env";
 import { getCurrentAccount } from "@/server/auth/session";
@@ -51,6 +53,7 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
         </div>
       }
     >
+      <GoogleAuthButton configured={configured} nextPath={nextPath} />
       <form className="auth-form" action="/api/auth/sign-in" method="post">
         <input type="hidden" name="next" value={nextPath} />
         <label>
@@ -64,17 +67,14 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
             type="email"
           />
         </label>
-        <label>
-          <span>Password</span>
-          <input
-            autoComplete="current-password"
-            minLength={10}
-            name="password"
-            placeholder="Your password"
-            required
-            type="password"
-          />
-        </label>
+        <PasswordField
+          autoComplete="current-password"
+          label="Password"
+          minLength={10}
+          name="password"
+          placeholder="Your password"
+          required
+        />
         <button className="button button--ink button--large" disabled={!configured} type="submit">
           Sign in
         </button>

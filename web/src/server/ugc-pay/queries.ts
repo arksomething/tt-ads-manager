@@ -9,6 +9,13 @@ import {
 import { prisma } from "@/lib/db";
 import { logServerTiming } from "@/lib/server-timing";
 import { getDefaultUgcPayStartDateForEndDate } from "@/lib/ugc-pay-date-defaults";
+import {
+  getMatchedUgcPayTrackedCreatorOptions,
+  getPayoutWarningCampaignCreators,
+  isCreatorDealApplicableToRange,
+  isExternallyPaidMomCreator,
+  isExternallyPaidMomCreatorRow,
+} from "@/lib/ugc-pay-creator-matching";
 import { requireOrganizationMembership } from "@/server/auth/organizations";
 import {
   getAccessibleCampaignOptionsForMembership,
@@ -138,6 +145,7 @@ type CampaignCreatorUgcPayRow = {
     platformAccounts: Array<{
       handle: string;
       platform: Platform;
+      sourceAccountId: string | null;
     }>;
   };
   deals: CampaignCreatorDealUgcPayRow[];
@@ -725,6 +733,10 @@ function setUniqueLookupValue<T>(
   }
 
   if (map.has(key)) {
+    if (map.get(key) === value) {
+      return;
+    }
+
     map.set(key, null);
     return;
   }
@@ -737,71 +749,6 @@ function getTikTokHandle(row: CampaignCreatorUgcPayRow) {
     row.creator.platformAccounts.find((account) => account.platform === Platform.TIKTOK)?.handle ??
     null
   );
-}
-
-function getCampaignCreatorTikTokHandles(row: CampaignCreatorUgcPayRow) {
-  return row.creator.platformAccounts
-    .filter((account) => account.platform === Platform.TIKTOK)
-    .map((account) => normalizeHandle(account.handle))
-    .filter((handle): handle is string => Boolean(handle));
-}
-
-function getMatchedViewTallyCreatorOptions(args: {
-  campaignCreators: CampaignCreatorUgcPayRow[];
-  creatorOptions: ViewTallyCreatorOption[];
-}) {
-  const optionsByHandle = new Map<string, ViewTallyCreatorOption | null>();
-  const optionsByName = new Map<string, ViewTallyCreatorOption | null>();
-
-  for (const option of args.creatorOptions) {
-    setUniqueLookupValue(optionsByHandle, normalizeHandle(option.meta), option);
-    setUniqueLookupValue(optionsByHandle, normalizeHandle(option.label), option);
-    setUniqueLookupValue(optionsByName, normalizeName(option.label), option);
-  }
-
-  const matchedOptions: ViewTallyCreatorOption[] = [];
-  const matchedOptionIds = new Set<string>();
-  const unmatchedCampaignCreators: CampaignCreatorUgcPayRow[] = [];
-
-  for (const campaignCreator of args.campaignCreators) {
-    const matches = new Map<string, ViewTallyCreatorOption>();
-
-    for (const handle of getCampaignCreatorTikTokHandles(campaignCreator)) {
-      const option = optionsByHandle.get(handle) ?? null;
-
-      if (option) {
-        matches.set(option.id, option);
-      }
-    }
-
-    if (matches.size === 0) {
-      const option =
-        optionsByName.get(normalizeName(campaignCreator.creator.displayName) ?? "") ?? null;
-
-      if (option) {
-        matches.set(option.id, option);
-      }
-    }
-
-    if (matches.size === 0) {
-      unmatchedCampaignCreators.push(campaignCreator);
-      continue;
-    }
-
-    for (const option of matches.values()) {
-      if (matchedOptionIds.has(option.id)) {
-        continue;
-      }
-
-      matchedOptionIds.add(option.id);
-      matchedOptions.push(option);
-    }
-  }
-
-  return {
-    matchedOptions,
-    unmatchedCampaignCreators,
-  };
 }
 
 function mergeViewTallyRowsBySourceVideoId(rowGroups: ViewTallyListItem[][]) {
@@ -945,11 +892,18 @@ async function getPerCreatorViewTallyRows(args: {
   includeInstagram?: boolean;
 }) {
   const { matchedOptions, unmatchedCampaignCreators } =
-    getMatchedViewTallyCreatorOptions({
+    getMatchedUgcPayTrackedCreatorOptions({
       campaignCreators: args.campaignCreators,
       creatorOptions: args.baseData.creatorOptions,
     });
   const warnings: string[] = [];
+
+  if (args.campaignCreators.length === 0) {
+    return {
+      rows: args.baseData.rows,
+      warnings,
+    };
+  }
 
   if (matchedOptions.length === 0) {
     return {
@@ -999,10 +953,7 @@ function isDealActiveInRange(
   start: Date,
   end: Date,
 ) {
-  const dealStart = startOfUtcDay(deal.effectiveStartDate);
-  const dealEnd = deal.effectiveEndDate ? startOfUtcDay(deal.effectiveEndDate) : null;
-
-  return dealStart <= end && (!dealEnd || dealEnd >= start);
+  return isCreatorDealApplicableToRange(deal, start, end);
 }
 
 function isDealActiveOnDate(deal: CampaignCreatorDealUgcPayRow, date: Date) {
@@ -1877,6 +1828,7 @@ async function getCreatorAccessLocalViewTallyData(args: {
             select: {
               handle: true,
               platform: true,
+              sourceAccountId: true,
             },
           },
         },
@@ -2516,7 +2468,17 @@ export async function getOrganizationUgcPayData(args: {
       },
     },
   })) as CampaignCreatorUgcPayRow[];
-  const campaignCreatorIds = campaignCreators.map((campaignCreator) => campaignCreator.id);
+  const payoutCampaignCreators = campaignCreators.filter(
+    (campaignCreator) => !isExternallyPaidMomCreator(campaignCreator.creator),
+  );
+  const payoutWarningCampaignCreators = getPayoutWarningCampaignCreators(
+    payoutCampaignCreators,
+    start,
+    end,
+  );
+  const campaignCreatorIds = payoutCampaignCreators.map(
+    (campaignCreator) => campaignCreator.id,
+  );
   const videoDealOverrides = campaignCreatorIds.length
     ? ((await prisma.campaignCreatorVideoDeal.findMany({
         where: {
@@ -2550,7 +2512,7 @@ export async function getOrganizationUgcPayData(args: {
   const byHandle = new Map<string, CampaignCreatorUgcPayRow | null>();
   const byName = new Map<string, CampaignCreatorUgcPayRow | null>();
 
-  for (const campaignCreator of campaignCreators) {
+  for (const campaignCreator of payoutCampaignCreators) {
     setUniqueLookupValue(byName, normalizeName(campaignCreator.creator.displayName), campaignCreator);
 
     for (const account of campaignCreator.creator.platformAccounts) {
@@ -2560,7 +2522,7 @@ export async function getOrganizationUgcPayData(args: {
 
   markTiming("db-creators-and-deals");
   const creatorAccessViewTallyCreatorId = null;
-  const creatorAccessCampaignCreator = campaignCreators[0] ?? null;
+  const creatorAccessCampaignCreator = payoutCampaignCreators[0] ?? null;
   const viewTallyData = args.creatorAccess
     ? await getCreatorAccessLocalViewTallyData({
         organizationSlug: args.organizationSlug,
@@ -2598,7 +2560,7 @@ export async function getOrganizationUgcPayData(args: {
     const perCreatorRows = await getPerCreatorViewTallyRows({
       organizationSlug: args.organizationSlug,
       organizationId,
-      campaignCreators,
+      campaignCreators: payoutWarningCampaignCreators,
       baseData: viewTallyData,
       startDate,
       endDate,
@@ -2610,16 +2572,19 @@ export async function getOrganizationUgcPayData(args: {
     warnings.push(...perCreatorRows.warnings);
   }
 
+  const payoutViewTallyRows = viewTallyRows.filter(
+    (row) => !isExternallyPaidMomCreatorRow(row),
+  );
   const candidatePayableRows = args.creatorAccess
     ? filterCreatorAccessPayableRowsByMode({
         payMode,
-        rows: viewTallyRows,
+        rows: payoutViewTallyRows,
         periodStart: reportDateBounds.start,
         periodEndExclusive: reportDateBounds.endExclusive,
         videoWindowStart: videoWindowDateBounds.start,
       })
     : payMode === "gained"
-      ? viewTallyRows.filter((row) => {
+      ? payoutViewTallyRows.filter((row) => {
           return (
             (row.views ?? 0) > 0 &&
             isVideoPostedInVideoWindow({
@@ -2629,7 +2594,7 @@ export async function getOrganizationUgcPayData(args: {
             })
           );
         })
-      : viewTallyRows.filter((row) =>
+      : payoutViewTallyRows.filter((row) =>
           isVideoPostedInReportDateRange({
             row,
             start: reportDateBounds.start,
@@ -2705,7 +2670,7 @@ export async function getOrganizationUgcPayData(args: {
   const accumulators = new Map<string, CreatorAccumulator>();
   let missingGainedViewCapContextCount = 0;
 
-  for (const campaignCreator of campaignCreators) {
+  for (const campaignCreator of payoutCampaignCreators) {
     const fixedPay = getActiveDealsInRange(campaignCreator.deals, start, end)
       .map((deal) => resolveUgcPayDeal(deal, start))
       .reduce(

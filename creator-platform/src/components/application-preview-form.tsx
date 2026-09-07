@@ -45,28 +45,45 @@ function DefaultDealCard({ titleId }: { titleId: string }) {
         <span>Assigned automatically</span>
         <strong id={titleId}>{PROGRAM_DEFAULT_DEAL.label}</strong>
         <p>If accepted, you will review the exact standard-deal version assigned before onboarding. No agreement is active until those terms are available to you.</p>
+        <Link className="application-default-deal__link" href="/standard-agreement">
+          Preview the sample agreement
+        </Link>
       </div>
     </section>
   );
 }
 
-export function ApplicationPreviewForm({ accountEmail }: { accountEmail?: string | null }) {
+export function ApplicationPreviewForm({
+  accountEmail,
+  initialApplication,
+  mode = "apply",
+}: {
+  accountEmail?: string | null;
+  initialApplication?: CreatorApplicationInput;
+  mode?: "apply" | "revise";
+}) {
   const [step, setStep] = useState<ApplicationStep>("details");
   const [identity, setIdentity] = useState<IdentityFields>({
-    name: "",
-    phoneNumber: "",
-    discordUsername: "",
+    name: initialApplication?.name ?? "",
+    phoneNumber: initialApplication?.phoneNumber ?? "",
+    discordUsername: initialApplication?.discordUsername ?? "",
   });
-  const [accounts, setAccounts] = useState<AccountRow[]>([
-    { id: 1, platform: "TIKTOK", handle: "" },
-  ]);
+  const [accounts, setAccounts] = useState<AccountRow[]>(() =>
+    initialApplication?.accounts.length
+      ? initialApplication.accounts.map((account, index) => ({
+          id: index + 1,
+          platform: account.platform,
+          handle: account.handle,
+        }))
+      : [{ id: 1, platform: "TIKTOK", handle: "" }],
+  );
   const [reviewDraft, setReviewDraft] = useState<CreatorApplicationInput | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [invalidAccountId, setInvalidAccountId] = useState<number | null>(null);
   const [accountAnnouncement, setAccountAnnouncement] = useState("");
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const nextAccountId = useRef(2);
+  const nextAccountId = useRef((initialApplication?.accounts.length ?? 1) + 1);
   const pendingFocus = useRef<ApplicationStep | number | null>(null);
   const handleRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
@@ -205,7 +222,7 @@ export function ApplicationPreviewForm({ accountEmail }: { accountEmail?: string
     return (
       <section className="application-form application-complete" role="status" aria-labelledby="application-complete-title">
         <div className="application-complete__icon"><Check aria-hidden="true" size={22} /></div>
-        <p className="eyebrow">Application submitted</p>
+        <p className="eyebrow">Application {mode === "revise" ? "resubmitted" : "submitted"}</p>
         <h2 id="application-complete-title" ref={focusStepHeading("complete")} tabIndex={-1}>Your application is with the creator team.</h2>
         <p>
           You can return to your account at any time to see the current review and onboarding state.
@@ -415,7 +432,9 @@ export function ApplicationPreviewForm({ accountEmail }: { accountEmail?: string
             <button className="application-edit-button" type="button" onClick={editDetails}><ArrowLeft aria-hidden="true" size={15} /> Edit details</button>
             <span><LockKeyhole aria-hidden="true" size={14} /> Submitted to your verified account</span>
             <button className="button button--ink button--large" disabled={submitting} type="submit">
-              {submitting ? "Submitting…" : "Submit application"} <ArrowRight aria-hidden="true" size={17} />
+              {submitting
+                ? mode === "revise" ? "Resubmitting…" : "Submitting…"
+                : mode === "revise" ? "Resubmit application" : "Submit application"} <ArrowRight aria-hidden="true" size={17} />
             </button>
           </div>
           {submissionError ? <p className="application-submit-error" role="alert">{submissionError}</p> : null}

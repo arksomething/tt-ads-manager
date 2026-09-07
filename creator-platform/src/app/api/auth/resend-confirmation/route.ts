@@ -21,7 +21,8 @@ export async function POST(request: NextRequest) {
 
   const response = NextResponse.redirect(
     authRedirectUrl(request, "/auth/check-email", {
-      notice: "If that address still needs confirmation, a new link is on its way.",
+      notice:
+        "If that address is still unconfirmed, we requested a new link. Confirmed accounts do not receive another confirmation email, so sign in instead. Requests are limited to once per minute.",
       next: nextPath,
     }),
     303,
@@ -30,13 +31,21 @@ export async function POST(request: NextRequest) {
   const confirmationUrl = new URL("/auth/confirm", getAppOrigin(request.url));
   confirmationUrl.searchParams.set("next", nextPath);
 
-  await supabase.auth.resend({
+  const { error } = await supabase.auth.resend({
     type: "signup",
     email: getFormString(formData, "email").toLowerCase(),
     options: {
       emailRedirectTo: confirmationUrl.toString(),
     },
   });
+
+  if (error) {
+    const authError = error as { code?: unknown; status?: unknown };
+    console.warn("[creator-auth] confirmation resend was not accepted", {
+      code: typeof authError.code === "string" ? authError.code : "unknown",
+      status: typeof authError.status === "number" ? authError.status : null,
+    });
+  }
 
   // Always return the same response so this endpoint cannot enumerate accounts.
   return response;

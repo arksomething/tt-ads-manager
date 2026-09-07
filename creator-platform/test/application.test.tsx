@@ -125,4 +125,40 @@ describe("application preview", () => {
     expect(screen.queryByRole("textbox", { name: "Creator handle 2" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Creator handle 1" })).toHaveFocus();
   });
+
+  it("prefills and resubmits only after a staff-requested revision", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ applicationId: "application-1", status: "submitted" }),
+    } as Response);
+
+    render(<ApplicationPreviewForm
+      mode="revise"
+      initialApplication={{
+        name: "Dylan Smith",
+        phoneNumber: "+15555550123",
+        discordUsername: "dylan",
+        accounts: [{ platform: "INSTAGRAM_REELS", handle: "@old.handle" }],
+      }}
+    />);
+
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Dylan Smith");
+    expect(screen.getByRole("textbox", { name: "Creator handle 1" })).toHaveValue("@old.handle");
+
+    await user.clear(screen.getByRole("textbox", { name: "Creator handle 1" }));
+    await user.type(screen.getByRole("textbox", { name: "Creator handle 1" }), "@new.handle");
+    await user.click(screen.getByRole("button", { name: /Review application/i }));
+    await user.click(screen.getByRole("button", { name: "Resubmit application" }));
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/applications",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining('"handle":"@new.handle"'),
+      }),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Application resubmitted");
+    fetchSpy.mockRestore();
+  });
 });

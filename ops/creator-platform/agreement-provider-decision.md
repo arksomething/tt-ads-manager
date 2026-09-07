@@ -53,8 +53,11 @@ storage, backups, updates, and evidentiary reliability are included.
 
 The database remains provider-neutral. A future adapter must:
 
-1. create an agreement from the exact immutable deal version assigned at
-   approval;
+1. create an agreement only when the template binding matches the exact
+   immutable combined legal-and-economics snapshot assigned at approval, and
+   take the template ID and snapshot from the exactly-one database-verified
+   production binding for that assigned version, including after default
+   rollover; process-wide template ID/hash variables are obsolete and ignored;
 2. support creator, optional guardian, and optional GoTall countersigner roles;
 3. authenticate and deduplicate webhook events before changing state;
 4. never treat a browser return URL as completion evidence;

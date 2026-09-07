@@ -2,6 +2,7 @@ import { NextRequest, type NextResponse } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST as forgotPassword } from "@/app/api/auth/forgot-password/route";
+import { POST as googleSignIn } from "@/app/api/auth/google/route";
 import { POST as resendConfirmation } from "@/app/api/auth/resend-confirmation/route";
 import { POST as resetPassword } from "@/app/api/auth/reset-password/route";
 import { POST as signUp } from "@/app/api/auth/sign-up/route";
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   exchangeCodeForSession: vi.fn(),
   resend: vi.fn(),
   resetPasswordForEmail: vi.fn(),
+  signInWithOAuth: vi.fn(),
   signUp: vi.fn(),
   updateUser: vi.fn(),
   verifyOtp: vi.fn(),
@@ -37,6 +39,7 @@ vi.mock("@/lib/supabase/server", async (importOriginal) => {
           exchangeCodeForSession: mocks.exchangeCodeForSession,
           resend: mocks.resend,
           resetPasswordForEmail: mocks.resetPasswordForEmail,
+          signInWithOAuth: mocks.signInWithOAuth,
           signUp: mocks.signUp,
           updateUser: mocks.updateUser,
           verifyOtp: mocks.verifyOtp,
@@ -84,6 +87,7 @@ describe("creator auth routes", () => {
     mocks.exchangeCodeForSession.mockReset();
     mocks.resend.mockReset();
     mocks.resetPasswordForEmail.mockReset();
+    mocks.signInWithOAuth.mockReset();
     mocks.signUp.mockReset();
     mocks.updateUser.mockReset();
     mocks.verifyOtp.mockReset();
@@ -91,6 +95,41 @@ describe("creator auth routes", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it("starts Google OAuth through the canonical callback and preserves the PKCE cookie", async () => {
+    mocks.signInWithOAuth.mockImplementation(async () => {
+      mocks.authResponse?.cookies.set("sb-test-code-verifier", "google-pkce", {
+        httpOnly: true,
+        path: "/",
+      });
+      return {
+        data: {
+          provider: "google",
+          url: "https://project.supabase.co/auth/v1/authorize?provider=google",
+        },
+        error: null,
+      };
+    });
+
+    const response = await googleSignIn(
+      formRequest("/api/auth/google", { next: "/apply?step=profile" }),
+    );
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(
+      "https://project.supabase.co/auth/v1/authorize?provider=google",
+    );
+    expect(response.cookies.get("sb-test-code-verifier")?.value).toBe(
+      "google-pkce",
+    );
+    expect(mocks.signInWithOAuth).toHaveBeenCalledWith({
+      provider: "google",
+      options: {
+        redirectTo:
+          "https://creators.gotall.com/auth/confirm?next=%2Fapply%3Fstep%3Dprofile",
+      },
+    });
   });
 
   it("preserves the Supabase PKCE verifier cookie on the email-confirmation redirect", async () => {
@@ -131,8 +170,37 @@ describe("creator auth routes", () => {
     });
   });
 
+  it("sends an obfuscated repeated-signup response to sign in instead of promising an email", async () => {
+    mocks.signUp.mockResolvedValue({
+      data: {
+        session: null,
+        user: {
+          id: "obfuscated-user",
+          identities: [],
+        },
+      },
+      error: null,
+    });
+
+    const response = await signUp(
+      formRequest("/api/auth/sign-up", {
+        email: "existing@example.com",
+        password: "a secure password",
+        passwordConfirm: "a secure password",
+        next: "/account",
+      }),
+    );
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toContain("/auth/sign-in?");
+    expect(response.headers.get("location")).toContain("notice=");
+    expect(response.headers.get("location")).toContain("reset+it");
+    expect(response.headers.get("location")).not.toContain("/auth/check-email");
+  });
+
   it("resends confirmation through the canonical callback without exposing account existence", async () => {
     mocks.resend.mockResolvedValue({ data: {}, error: new Error("unknown account") });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     const response = await resendConfirmation(
       formRequest("/api/auth/resend-confirmation", {
@@ -144,6 +212,8 @@ describe("creator auth routes", () => {
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toContain("/auth/check-email?");
     expect(response.headers.get("location")).toContain("notice=");
+    expect(response.headers.get("location")).toContain("once+per+minute");
+    expect(response.headers.get("location")).toContain("Confirmed+accounts");
     expect(response.headers.get("location")).not.toContain("error=");
     expect(mocks.resend).toHaveBeenCalledWith({
       type: "signup",
@@ -153,6 +223,84 @@ describe("creator auth routes", () => {
           "https://creators.gotall.com/auth/confirm?next=%2Fapply",
       },
     });
+    expect(warning).toHaveBeenCalledWith(
+      "[creator-auth] confirmation resend was not accepted",
+      { code: "unknown", status: null },
+    );
+    expect(JSON.stringify(warning.mock.calls)).not.toContain("creator@example.com");
+    warning.mockRestore();
+  });
+
+  it("treats a tokenless legacy confirmation redirect as already confirmed instead of expired", async () => {
+    const response = await confirmAuth(
+      new NextRequest(
+        "https://creators.gotall.com/auth/confirm?next=%2Faccount",
+      ),
+    );
+
+    expect(response.headers.get("location")).toContain("/auth/sign-in?");
+    expect(response.headers.get("location")).toContain("notice=");
+    expect(response.headers.get("location")).not.toContain("error=");
+    expect(mocks.exchangeCodeForSession).not.toHaveBeenCalled();
+    expect(mocks.verifyOtp).not.toHaveBeenCalled();
+  });
+
+  it("keeps provider-declared confirmation failures generic", async () => {
+    const response = await confirmAuth(
+      new NextRequest(
+        "https://creators.gotall.com/auth/confirm?error=access_denied&error_code=otp_expired&next=%2Faccount",
+      ),
+    );
+
+    expect(response.headers.get("location")).toContain("/auth/sign-in?");
+    expect(response.headers.get("location")).toContain("error=");
+    expect(response.headers.get("location")).not.toContain("otp_expired");
+  });
+
+  it("exchanges the server-readable signup token and preserves session cookies", async () => {
+    mocks.verifyOtp.mockImplementation(async () => {
+      mocks.authResponse?.cookies.set("sb-test-auth-token", "session", {
+        httpOnly: true,
+        path: "/",
+      });
+      return { data: {}, error: null };
+    });
+
+    const response = await confirmAuth(
+      new NextRequest(
+        "https://creators.gotall.com/auth/confirm?token_hash=signup-token&type=email&next=%2Faccount",
+      ),
+    );
+
+    expect(response.headers.get("location")).toBe(
+      "https://creators.gotall.com/account",
+    );
+    expect(mocks.verifyOtp).toHaveBeenCalledWith({
+      token_hash: "signup-token",
+      type: "email",
+    });
+    expect(response.cookies.get("sb-test-auth-token")?.value).toBe("session");
+  });
+
+  it("preserves the Supabase flow identifier while exchanging an OAuth code", async () => {
+    mocks.exchangeCodeForSession.mockResolvedValue({
+      data: { session: { access_token: "token" } },
+      error: null,
+    });
+
+    const response = await confirmAuth(
+      new NextRequest(
+        "https://creators.gotall.com/auth/confirm?code=oauth-code&sb_flow_id=flow-id-123&next=%2Faccount",
+      ),
+    );
+
+    expect(response.headers.get("location")).toBe(
+      "https://creators.gotall.com/account",
+    );
+    expect(mocks.exchangeCodeForSession).toHaveBeenCalledWith(
+      "oauth-code",
+      { flowId: "flow-id-123" },
+    );
   });
 
   it("uses APP_ORIGIN for password-recovery callbacks instead of the request host", async () => {

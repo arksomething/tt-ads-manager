@@ -10,7 +10,7 @@
   "discordCallbackDomain": "gethyperspeed.com",
   "currentPreviewDomain": "gotall-creator-platform.vercel.app",
   "currentProductionAlias": "gotall-creator-platform.vercel.app",
-  "latestProductionDeploymentId": "dpl_GGJzmEb6PbcgkM83cSLEtrtQAZSb",
+  "latestProductionDeploymentId": "dpl_CT6MNLWkgAbFFRQKy9dwMcbVsnwn",
   "discordCallbackWorkerVersionId": "84979fb5-bcd8-4fb8-99d7-58975f6e5a17",
-  "deploymentState": "creator-discord-web-live-e2e-gated"
+  "deploymentState": "creator-operations-web-live-provider-actions-gated"
 }

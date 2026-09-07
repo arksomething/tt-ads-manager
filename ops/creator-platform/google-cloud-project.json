@@ -1,0 +1,15 @@
+{
+  "projectId": "gotall-creator-platform",
+  "projectNumber": "1034735060944",
+  "projectName": "GoTall Creator Platform",
+  "firebaseProjectId": "gotall-creator-platform",
+  "firebaseWebAppName": "GoTall Creator Platform Web",
+  "firebaseAuthDomain": "gotall-creator-platform.firebaseapp.com",
+  "supabaseOAuthCallback": "https://qubkgekdpyntuanzqqeu.supabase.co/auth/v1/callback",
+  "billingEnabled": true,
+  "identityPlatformInitialized": true,
+  "googleOAuthClientId": "1034735060944-fes7f16l9luup7qj5fsre9hkcbr1hm62.apps.googleusercontent.com",
+  "googleOAuthState": "production-start-and-client-credentials-verified",
+  "googleOAuthVerifiedAt": "2026-09-02",
+  "legacyGotallProjectModified": false
+}

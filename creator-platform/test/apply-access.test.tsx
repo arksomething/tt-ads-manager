@@ -5,6 +5,7 @@ import ApplyPage from "@/app/apply/page";
 const mocks = vi.hoisted(() => ({
   account: vi.fn(),
   accountState: vi.fn(),
+  application: vi.fn(),
   redirect: vi.fn((path: string) => {
     throw new Error(`redirect:${path}`);
   }),
@@ -26,10 +27,15 @@ vi.mock("@/server/accounts/state", () => ({
   getCreatorAccountState: mocks.accountState,
 }));
 
+vi.mock("@/server/accounts/application", () => ({
+  getOwnCreatorApplication: mocks.application,
+}));
+
 describe("creator application access", () => {
   beforeEach(() => {
     mocks.account.mockReset();
     mocks.accountState.mockReset();
+    mocks.application.mockReset();
     mocks.redirect.mockClear();
   });
 
@@ -63,5 +69,33 @@ describe("creator application access", () => {
 
     expect(page.type).toBe("main");
     expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it("prefills the application when staff explicitly requested a revision", async () => {
+    mocks.account.mockResolvedValue({ id: "creator-1", email: "creator@example.com" });
+    mocks.accountState.mockResolvedValue({
+      nextPath: "/application/status",
+      profileState: "application_pending",
+      applicationState: "changes_requested",
+      agreementState: null,
+    });
+    mocks.application.mockResolvedValue({
+      id: "application-1",
+      name: "Dylan Smith",
+      phoneNumber: "+15555550123",
+      discordUsername: "dylan",
+      status: "changes_requested",
+      submittedAt: "2026-08-31T12:00:00.000Z",
+      reviewedAt: "2026-08-31T13:00:00.000Z",
+      decisionMessage: "Update the Instagram handle.",
+      reviewRevision: 0,
+      accounts: [{ platform: "INSTAGRAM_REELS", handle: "@dylan" }],
+    });
+
+    const page = await ApplyPage();
+
+    expect(page.type).toBe("main");
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(mocks.application).toHaveBeenCalledOnce();
   });
 });

@@ -931,6 +931,22 @@ export async function trackCreatorAccountForOrganization(
     throw new Error("Choose a campaign you can access.");
   }
 
+  const selectedCreator = values.creatorId
+    ? await prisma.creator.findFirst({
+        where: {
+          id: values.creatorId,
+          organizationId: membership.organizationId,
+        },
+        select: {
+          id: true,
+        },
+      })
+    : null;
+
+  if (values.creatorId && !selectedCreator) {
+    throw new Error("Choose a creator from this organization.");
+  }
+
   const parsedAccount = parseTrackedAccountUrl(values.profileUrl);
   const trackedAccount = await addTrackedAccountInViralApp({
     parsedAccount,
@@ -1055,6 +1071,7 @@ export async function trackCreatorAccountForOrganization(
           id: existingAccount.id,
         },
         data: {
+          creatorId: selectedCreator?.id ?? existingAccount.creatorId,
           handle: accountUsername,
           sourceAccountId: nextSourceAccountId,
           profileUrl: nextProfileUrl,
@@ -1087,17 +1104,18 @@ export async function trackCreatorAccountForOrganization(
       return updatedAccount;
     }
 
-    const creatorInput = createCreatorSchema.parse({
-      organizationId: membership.organizationId,
-      displayName: getCreatorDisplayName(accountDisplayName, accountUsername),
-      internalStatus: CreatorStatus.NEW,
-    });
-    const createdCreator = await tx.creator.create({
-      data: creatorInput,
-      select: {
-        id: true,
-      },
-    });
+    const createdCreator =
+      selectedCreator ??
+      (await tx.creator.create({
+        data: createCreatorSchema.parse({
+          organizationId: membership.organizationId,
+          displayName: getCreatorDisplayName(accountDisplayName, accountUsername),
+          internalStatus: CreatorStatus.NEW,
+        }),
+        select: {
+          id: true,
+        },
+      }));
     const accountInput = createPlatformAccountSchema.parse({
       creatorId: createdCreator.id,
       platform: localPlatform,

@@ -49,22 +49,55 @@ credentials they need.
   `gotall.app` is already a verified sending domain.
 
 Creator authentication is intentionally isolated from both the legacy CRM and
-the consumer GoTall Supabase user pool. The creator project requires email
+the consumer GoTall Supabase user pool. Email/password auth is live with email
 confirmation, a 10-character minimum password, leaked-password protection, and
-uses Resend custom SMTP from `accounts@gotall.app`. Password changes require
-recent authentication and generate a change notification. The account,
+Resend custom SMTP from `accounts@gotall.app`. The Google OAuth UI, PKCE route,
+and Supabase provider use a dedicated client in the isolated Google Cloud
+project. Production verification reached Google's normal sign-in route with
+the expected client and exact Supabase callback, and Google's token endpoint
+accepted the client credentials; a real user callback remains to be observed.
+Password changes require recent authentication and generate a change
+notification. The account,
 application, enrollment, immutable deal-version, verified platform-account,
 and provider-neutral agreement tables all have row-level security enabled;
 anonymous users have no table grants. Applicant-entered handles remain
 provisional until provider-native ownership evidence is recorded.
 
+The production confirmation and password-recovery templates use the SSR-safe
+Supabase token-hash contract recorded under
+`ops/creator-platform/auth-email-templates/`. They link back to the controlled
+`.RedirectTo` callback with `.TokenHash`, then the application verifies the OTP
+and writes the session cookies. Do not restore the default `.ConfirmationURL`:
+that verifies the address before returning a browser-fragment/PKCE result that
+the server callback cannot reliably consume across browsers. Resend requests
+remain non-enumerating and the UI states the one-minute provider throttle
+instead of promising that every request produced another message.
+
 The production signup, confirmation, resend-confirmation, sign-in, sign-out,
 application, and password-recovery paths have passed an end-to-end disposable
 account test. Authenticated account and status pages show only the creator's
 persisted application snapshot and never send a real creator into a public
-sample dashboard. Production intentionally has no owner, creator, or staff
-identity yet; the first durable account must use an explicitly chosen real
-email rather than an inferred legacy handle.
+sample dashboard. The application asks for name, phone number, Discord name,
+and one or more TikTok or Instagram handles; email belongs to the authenticated
+account. As of 2026-09-03, the explicitly selected, confirmed real account is
+also the first active administrator; no legacy handle was used to infer access.
+
+The additive creator-operations schema and web interfaces are live. They cover
+staff application review, atomic enrollment preparation, manual platform-account
+verification, scripts and private assets, creator content submission and post
+attribution, immutable post observations, estimated earnings, settlement-state
+ledgers, the admin daily view, creator directory and profiles, finance review,
+and an admin-only deal-draft workspace with structured economics, snapshot hashes,
+optimistic revisions, readiness evidence, and immutable sealing. Approval now
+requires explicit confirmation of the exact active-default UUID/hash and rejects
+an unready, stale, or changed deal under a database lock. Unknown metrics remain
+unknown; the UI does not convert missing evidence
+to zero. Production contains one real account with one active administrator,
+but no seeded or active default deal, agreement, payout, or verification job.
+The tracker ingestion stores do
+contain the committed 45-page frozen provider capture; those staged evidence
+rows do not create creator accounts, approve deals, or establish payout
+finality.
 
 `GoTall - Management` is the live, reboot-persistent Hermes Discord application
 and is present in both `GoTall Creators` and `GoTall Community`. The legacy
@@ -98,20 +131,20 @@ smallest runtime that needs it.
 
 | Area | Existing credential candidate | Remaining input |
 | --- | --- | --- |
-| Database, Supabase, and web auth | Dedicated creator Supabase project, RLS schema, confirmed email/password auth, resend confirmation, recovery, protected persisted account pages, and Vercel runtime values are live | Create the first explicitly identified account; add CAPTCHA before a broad public launch; create an integration-encryption key only when an integration needs stored tokens |
+| Database, Supabase, and web auth | Dedicated creator Supabase project plus an isolated, billed `gotall-creator-platform` Google Cloud/Firebase project with Identity Platform initialized, confirmed email/password auth, deployed Google OAuth UI/PKCE route, dedicated Google web client, registered callback, application/admin/content/earnings/settlement/deal-control schemas, 24 new RLS-protected tables, protected account pages, one explicitly selected active administrator, participant-only creator counts/profiles, and Vercel runtime values are live | Complete one real-account Google callback test, add CAPTCHA before broad public launch, and create an integration-encryption key only when an integration needs stored tokens |
 | Domain and hosting | Cloudflare DNS, Vercel, and VPS access validated | None for the additive domain preparation |
 | Source control | Local repositories and commits are intact | Reauthenticate GitHub CLI/HTTPS for `arksomething` before pushing or connecting the new Vercel project |
 | Viral migration safety net | Current web credential exists | Revalidate before any migration-critical run |
 | TikTok | Business app and Ads credentials exist; public collector is separate | Official creator OAuth credentials only if that future path is chosen |
-| Instagram collection | Credential, bounded identity proof, 29 direct observations, and a protected 100-credit floor validated | Raise the provider balance to at least 1,250 before enabling timers; last observed balance is 95 and the guard is blocked |
+| Instagram collection | Credential, bounded identity proof, 29 direct observations, and a protected 100-credit floor validated | The durable guard is blocked because current provider credit telemetry is missing; keep both timers disabled until the sealed one-request rearm proves at least 1,250 credits of launch capacity |
 | Discord | GoTall - Management bot/client, creator and staff interfaces, OAuth routes and callback proxy, durable reminder/role schema, signed worker API, validated hierarchy, healthy reboot-persistent worker, and Manage Roles permission are live | Rotate the chat-exposed client secret, then complete an explicitly consenting OAuth, requested test-DM, role, opt-out, and disconnect E2E proof |
 | Transactional email | Resend custom SMTP is live for creator auth from `accounts@gotall.app` | Monitor delivery and abuse before increasing the 30-email/hour project limit |
 | Analytics | PostHog, Singular, Superwall, and Adapty candidates exist | PostHog personal key only for server-side management queries |
-| Object storage | Supabase server access can support Storage | Choose Supabase Storage or deliberately adopt R2 |
-| Payments | Subscription/revenue integrations exist, but no creator payout rail | Choose a payout provider, then add its scoped server and webhook credentials |
-| Agreements | Provider-neutral agreement/event ledger exists; SignWell is selected and its provisional API key is stored as a sensitive Vercel production variable | Rotate the chat-exposed key before live signing, approve the legal template and guardian rules, then add the adapter, template ID, and verified webhook secret |
-| Default creator deal | Prospective `$0.50/$100` baseline and `$1/$300` talking tiers are documented, but production remains fail-closed | Approve the full term sheet, structured economic rules, contracting entity, and counsel-reviewed agreement |
-| Collector delivery | No cloud-ingestion key exists | Generate an ingestion-only key when the endpoint and outbox are implemented |
+| Object storage | Two private Supabase Storage buckets are live for program assets and completed agreements; referenced assets cannot be directly deleted | Add retention/backup monitoring before large-volume use |
+| Payments | Estimated/pending/approved/paid/reconciled earning and settlement ledgers are live; no creator payout rail is connected | Choose a payout provider, then add its scoped server and webhook credentials |
+| Agreements | The SignWell draft-before-send adapter, verified webhook path, private completed-PDF archive, evidence hash, and provider-neutral event ledger are live but sending is disabled. Its exactly-one verified per-deal database binding is authoritative, including for retained retired assignments; process-wide template ID/hash variables are obsolete and ignored | Rotate the chat-exposed key, approve the legal template and guardian rules, record and verify the production template binding against the exact combined snapshot, add the verified webhook secret, and explicitly approve live mode |
+| Default creator deal | Prospective `$0.50/$100` baseline and `$1/$300` talking tiers are documented; the admin blank-draft, structured-economics, exact-preview, immutable-seal, approval-snapshot, and fail-closed assignment controls are live. The first admin is active; production still has no seeded or active default | Approve the full term sheet and counsel-reviewed agreement; then record exact business/legal approvals, bind a matching verified production template, and separately approve activation |
+| Collector delivery | The production signed dual-store endpoint, current HMAC key, exact idempotency contract, signed post-commit receipt, pre-account staging, completed 45-page cutover, and reboot-persistent canonical delivery timer are live | Monitor delivery, raw-attestation, and normalized-store health; this is tracking evidence, not payment finality or complete direct-source coverage |
 
 Existing TikTok Business credentials are not proof of TikTok Login Kit or
 Display API approval. Existing Stripe-style subscription credentials in other
@@ -127,16 +160,23 @@ creator volume. SignWell is now the selected provider: it supports templates,
 ordered creator/guardian/company recipients, embedded signing, webhooks, and an
 audit page without a monthly API minimum. Its API key is stored as a sensitive
 production variable in the isolated creator-platform Vercel project and has
-passed a read-only account request. No application route uses the key yet.
-Because the supplied credential was pasted into chat, rotate it before enabling
-live signing and replace the Vercel variable in place.
+passed a read-only account request. The application adapter and webhook route
+are deployed, but every live-send/archive flag remains disabled. Because the
+supplied credential was pasted into chat, rotate it before enabling live signing
+and replace the Vercel variable in place.
 Published overage pricing starts at roughly $0.85 per document after the current
 included allowance. PandaDoc Free can cover up to 60 sends per year but
 its two-recipient ceiling makes it unsuitable when a guardian is required.
 
-The database deliberately does not name either provider. A later adapter must
-write verified, idempotent provider events and archive the completed artifact
-and its hash. A browser return URL can never mark an agreement complete.
+The database deliberately remains provider-neutral. The deployed adapter writes
+verified, idempotent provider events and will archive the completed artifact and
+its hash before activating an enrollment. A browser return URL can never mark an
+agreement complete. Production has `AGREEMENT_SEND_ENABLED=false`,
+`AGREEMENT_ARCHIVE_ENABLED=false`, and `AGREEMENT_LIVE_MODE_APPROVED=false`, so
+the provisional key cannot send a live agreement. SignWell's
+`document_in_progress` event remains a resumable `viewed` state;
+`creator_accepted` is reserved for `document_signed`, and only a completed event
+with an archived artifact can activate the creator.
 First-party clickwrap remains appropriate for policies and acknowledgements,
 but it must not replace the bilateral creator agreement without legal approval.
 The researched comparison, thresholds, and adapter requirements are recorded in
@@ -163,17 +203,23 @@ The intended stable map is:
 Both were verified over HTTPS without removing their original addresses. The
 separate Vercel project `gotall-creator-platform` serves the creator app at
 `gotall-creator-platform.vercel.app`, with `creator-platform` as its Next.js
-root and Node.js 24. Deployment `dpl_GGJzmEb6PbcgkM83cSLEtrtQAZSb` is live on
-that stable alias. Its production environment contains the isolated Supabase
-account configuration plus the scoped Discord OAuth variables. Public sample
-dashboard routes remain explicitly labeled. Discord infrastructure is deployed
-and monitored, but creator-flow launch proof remains gated on secret rotation
-and an explicitly consenting E2E run; canonical tracking, agreements, and
-payouts are not connected yet. The apex remains on the current studio until the
-creator platform has working authentication, callbacks, monitoring, and
-rollback. The laptop collector gets no public dashboard subdomain. It will
-eventually deliver signed, idempotent batches to a narrow HTTPS ingestion route
-on the new platform.
+root and Node.js 24. Deployment `dpl_CT6MNLWkgAbFFRQKy9dwMcbVsnwn` is live on
+that stable alias. It includes the four-step creator onboarding flow, exact
+assigned-term agreement review, and the nonbinding standard-agreement sample.
+Its production environment contains the isolated Supabase
+account configuration, scoped Discord OAuth variables, the current collector
+ingestion key, normalized-store URL and pinned CA, and fail-closed agreement
+flags. Public sample dashboard routes remain explicitly labeled. Discord
+infrastructure and the creator-operations web/schema surfaces are deployed. The
+signed tracker ingestion route and reboot-persistent canonical delivery timer
+are live after the sealed 45-page cutover. A receipt is signed only after both
+the Supabase projection and normalized `creator_tracker_v2` PostgreSQL store
+commit; a partial prior commit is retried idempotently. Automated TikTok and
+Instagram account verification, complete direct-source coverage, live agreement
+sending, and payout execution remain gated. The apex remains on the current
+studio until the creator platform has real-account launch proof, monitoring,
+and rollback. The laptop collector gets no public dashboard subdomain and
+delivers only to the narrow signed HTTPS ingestion route.
 
 ### Deployment isolation
 
@@ -190,10 +236,16 @@ uploaded.
 ## Persistent collection and delivery
 
 Existing systemd timers and SQLite due-state preserve local collection work
-across reboot only when the corresponding timer is enabled. The future bridge
-to the web app also needs a durable SQLite delivery outbox. A collected batch
-must be recorded locally before network delivery, retried from database state,
-and acknowledged by an idempotent central ingestion API before deletion.
+across reboot only when the corresponding timer is enabled. The approved worker,
+TikTok roster/scheduler, provider reconciliation, canonical delivery, raw
+verification, and dashboard-health units are enabled and reboot-persistent. The
+laptop delivery path and central idempotent ingestion API share the signed
+batch/receipt contract, and the endpoint can durably stage evidence before a
+creator account exists. A collected batch is recorded locally before network
+delivery, retried from database state, and acknowledged only after both central
+stores commit. The sealed capture/delivery/raw-archive/attestation gate passed
+for the frozen 45-page capture. Instagram's two direct timers remain disabled
+behind their independent credit-telemetry rearm gate.
 
 Collection failures, provider retries, and cloud delivery retries are different
 ledgers. A provider failure must not be mistaken for a delivered zero, and a
@@ -205,7 +257,8 @@ recorded.
 1. Create a separate Vercel project for the new platform; keep legacy isolated.
 2. Add and verify all Supabase, Google, TikTok, Meta, Discord, email, and payment
    callback URLs on the new origin.
-3. Implement the signed ingestion endpoint and durable laptop outbox.
+3. Keep the release-bound sealed collector cutover marker valid and the signed
+   ingestion/outbox delivery path monitored.
 4. Verify password reset, creator login, admin login, uploads, webhooks, and
    background workers on the production domain.
 5. Preserve the old Vercel aliases and confirm `studio` and `legacy` rollback.

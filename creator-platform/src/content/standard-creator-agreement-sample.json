@@ -1,0 +1,376 @@
+{
+  "documentTitle": "GoTall Standard Creator Agreement",
+  "version": "Sample draft v0.1",
+  "documentDate": "September 1, 2026",
+  "status": "DRAFT — NON-BINDING — NOT FOR SIGNATURE",
+  "summary": "A counsel-review sample showing the proposed standard creator economics, content ownership, advertising rights, and operating terms. It is not an assigned deal version.",
+  "notices": [
+    "GoTall has not activated a default deal version. An accepted creator is bound only by the exact agreement assigned to that creator and completed through the approved signing flow.",
+    "Bracketed TO APPROVE items are unresolved business or legal decisions. They must be completed and reviewed by qualified counsel before this document is used for signature."
+  ],
+  "parties": {
+    "company": "[TO APPROVE: GOTALL LEGAL ENTITY AND ADDRESS] (“GoTall”)",
+    "creator": "[SAMPLE CREATOR NAME AND ADDRESS] (“Creator”)",
+    "effectiveDate": "[DATE OF LAST SIGNATURE]"
+  },
+  "keyTerms": [
+    {
+      "label": "Baseline content",
+      "value": "$0.50 USD per 1,000 Qualified Views, capped at $100 per accepted video",
+      "status": "Supported proposed default"
+    },
+    {
+      "label": "Qualifying talking content",
+      "value": "$1.00 USD per 1,000 Qualified Views, capped at $300 per accepted video",
+      "status": "Supported proposed default; qualification process to approve"
+    },
+    {
+      "label": "Measurement window",
+      "value": "First seven days after publication",
+      "status": "Supported proposed default; exact calendar-day or 168-hour cutoff to approve"
+    },
+    {
+      "label": "Paid traffic",
+      "value": "Verified paid impressions and invalid traffic are excluded from Qualified Views",
+      "status": "Supported proposed default; evidence rules to approve"
+    },
+    {
+      "label": "Fixed fee / aggregate cap",
+      "value": "No fixed fee and no overall creator cap by default",
+      "status": "Supported proposed default"
+    },
+    {
+      "label": "Platforms and cadence",
+      "value": "TikTok and/or Instagram as stated in each Campaign Brief; no default posting quota in this sample",
+      "status": "Campaign-specific"
+    },
+    {
+      "label": "Content ownership",
+      "value": "GoTall owns accepted Deliverables; work-made-for-hire where valid, with a present assignment as the fallback",
+      "status": "Owner-directed proposed term"
+    },
+    {
+      "label": "Advertising rights",
+      "value": "Worldwide organic and paid-media use, editing, derivatives, sublicensing, Spark Ads, and Partnership Ads",
+      "status": "Owner-directed proposed term; account-authorization duration to approve"
+    },
+    {
+      "label": "Payment timing",
+      "value": "[TO APPROVE: statement period, due date, payment rail, minimum payout, tax and invoice requirements]",
+      "status": "Approval required"
+    }
+  ],
+  "recitals": [
+    "GoTall operates a creator program for short-form content distributed on social platforms and other advertising channels.",
+    "Creator wishes to produce campaign content under individual Campaign Briefs, and the parties want one written agreement to govern those services and the resulting rights.",
+    "The parties therefore agree as follows."
+  ],
+  "sections": [
+    {
+      "number": "1",
+      "title": "Agreement status, parties, and definitions",
+      "paragraphs": [
+        "This sample is not an offer, assigned deal version, or signature-ready contract. A final agreement must identify the legal parties, effective date, governing deal-version ID, and all approved bracketed terms.",
+        "“Campaign Brief” means a written assignment in the GoTall platform or another written channel authorized by GoTall. “Deliverables” means all content created for a Campaign Brief, including accepted videos, audio, voiceovers, captions, copy, thumbnails, stills, edits, and any raw footage or project files the Campaign Brief requires. “Creator Materials” means Creator-owned material created independently of the program and specifically identified to GoTall in writing before incorporation into a Deliverable.",
+        "“Qualified Views” means eligible organic views measured under Section 5 and the final Schedule A. “Platforms” includes TikTok, Instagram, and any other distribution channel stated in a Campaign Brief."
+      ],
+      "bullets": [],
+      "subsections": []
+    },
+    {
+      "number": "2",
+      "title": "Services and campaign accounts",
+      "paragraphs": [
+        "Creator will create, submit, revise, publish, and maintain Deliverables in accordance with this Agreement, each Campaign Brief, approved scripts, brand guidance, disclosure instructions, and reasonable written feedback.",
+        "Creator will use only the TikTok and Instagram profiles approved for the program, keep required profiles public while verification or measurement is pending, and complete the platform bio-code ownership checks shown in the creator dashboard. GoTall does not require Creator to share a social-media password.",
+        "A Campaign Brief controls the requested concept, platform, format, due date, posting requirement, required source files, and any campaign-specific payment. No posting quota, exclusivity obligation, minimum-view threshold, or mandatory cross-posting requirement applies unless it appears in the assigned deal version or Campaign Brief."
+      ],
+      "bullets": [
+        "Creator must provide accurate profile handles and promptly report handle changes, account restrictions, deleted posts, or lost access.",
+        "Creator may not buy views, engagement, followers, or traffic, or use deceptive, automated, or incentivized activity.",
+        "Creator will keep each accepted post live for [TO APPROVE: RETENTION PERIOD], unless GoTall approves removal or law or platform policy requires it."
+      ],
+      "subsections": []
+    },
+    {
+      "number": "3",
+      "title": "Submission, review, revisions, and acceptance",
+      "paragraphs": [
+        "Creator will submit Deliverables through the GoTall platform or the channel specified in the Campaign Brief before publication when pre-approval is required. GoTall may accept, reject, or request reasonable revisions for brand fit, factual accuracy, legal compliance, technical quality, or conformity with the Campaign Brief.",
+        "A Deliverable becomes “Accepted Content” only when GoTall records acceptance or when another written acceptance method stated in the Campaign Brief is satisfied. Publication, tracking, or receipt of a file alone does not establish acceptance or payment eligibility.",
+        "[TO APPROVE: number of included revision rounds, reshoot rules, response deadlines, and consequences of missed deadlines.]"
+      ],
+      "bullets": [],
+      "subsections": []
+    },
+    {
+      "number": "4",
+      "title": "Proposed standard compensation",
+      "paragraphs": [
+        "Subject to acceptance and the final measurement rules, GoTall will calculate performance compensation for each eligible video as: Qualified Views divided by 1,000, multiplied by the applicable CPM rate, limited to the applicable per-video cap.",
+        "The proposed baseline rate is $0.50 USD per 1,000 Qualified Views with a $100 cap per accepted video. The proposed qualifying talking-content rate is $1.00 USD per 1,000 Qualified Views with a $300 cap per accepted video. There is no fixed fee and no aggregate creator cap by default.",
+        "“Qualifying talking content” is intended to mean content in which Creator’s own on-camera speech or natural voiceover materially drives the video. Music, lip-sync, text-only presentation, and automated text-to-speech do not qualify by themselves. [TO APPROVE: final definition, evidence, decision maker, review process, and appeal deadline.]",
+        "A Campaign Brief or creator-specific deal version may replace these economics only if the different term is recorded in writing before the affected work. Cross-posted versions earn separately only if the final Schedule A or Campaign Brief says so."
+      ],
+      "bullets": [],
+      "subsections": []
+    },
+    {
+      "number": "5",
+      "title": "Views, tracking, and statements",
+      "paragraphs": [
+        "The proposed measurement window is the first seven days after publication. [TO APPROVE: whether this means seven calendar dates in a stated time zone or exactly 168 hours from the recorded publication timestamp.]",
+        "Qualified Views exclude verified paid impressions, invalid or fraudulent traffic, purchased or incentivized activity, bot activity, and views recorded outside the applicable window. GoTall may use platform-native counters, its in-house tracking observations, authorized provider data, and preserved audit evidence under the hierarchy stated in the final Schedule A.",
+        "Unknown, stale, delayed, or missing tracking does not automatically become zero. [TO APPROVE: fallback evidence, estimate policy, recheck period, statement date, creator dispute period, and finality rule.]",
+        "GoTall will show earnings as separate states, including estimated, under review, approved, and paid. An estimate is not a promise of payment until eligibility, classification, tracking, and acceptance checks are complete."
+      ],
+      "bullets": [],
+      "subsections": []
+    },
+    {
+      "number": "6",
+      "title": "Payment administration and taxes",
+      "paragraphs": [
+        "GoTall will pay approved amounts according to [TO APPROVE: PAYMENT CYCLE AND DUE DATE] using [TO APPROVE: PAYMENT RAIL]. Payments may be conditioned on receipt of accurate payment details, required tax forms, and any valid invoice required by law or the final deal version.",
+        "[TO APPROVE: minimum payout, carry-forward rule, currency conversion, fees, chargebacks, overpayment recovery, and the period for disputing a statement.]",
+        "Creator is responsible for Creator’s taxes, filings, insurance, equipment, ordinary production expenses, and other costs unless a Campaign Brief expressly states otherwise. GoTall may withhold amounts when required by law."
+      ],
+      "bullets": [],
+      "subsections": []
+    },
+    {
+      "number": "7",
+      "title": "Ownership of Deliverables",
+      "paragraphs": [
+        "The parties intend each Deliverable to be specially commissioned as a “work made for hire” for GoTall to the fullest extent permitted by applicable copyright law. GoTall will be considered the author and exclusive owner of each such Deliverable from creation.",
+        "To the extent any Deliverable, element, or right does not qualify as a work made for hire, Creator hereby irrevocably assigns, transfers, and conveys to GoTall, upon creation and without further action, all worldwide right, title, and interest in and to that Deliverable, including all copyrights and neighboring rights, all rights to reproduce, perform, display, publish, distribute, transmit, adapt, translate, synchronize, create derivative works, register, enforce, license, sell, and otherwise exploit it, and all renewals and extensions of those rights.",
+        "The compensation described in this Agreement is full consideration for the services, Deliverables, assignment, releases, and permissions granted here. Creator will sign reasonable confirmatory documents and provide reasonable assistance to evidence or enforce GoTall’s ownership. If Creator does not do so after reasonable notice, Creator appoints GoTall as Creator’s attorney-in-fact solely for that confirmatory purpose, coupled with an interest.",
+        "To the fullest extent permitted by law, Creator waives and agrees not to assert moral rights, droit moral, attribution, integrity, withdrawal, or similar rights in the Deliverables. If a waiver is not permitted, Creator irrevocably consents to the uses, edits, and omissions allowed by this Agreement."
+      ],
+      "bullets": [
+        "GoTall may keep, archive, reproduce, edit, crop, resize, excerpt, caption, translate, dub, combine, add graphics or calls to action, and create versions or derivative works from the Deliverables.",
+        "GoTall may remove Creator’s handle or attribution and is not required to use any Deliverable.",
+        "Creator keeps ownership of Creator’s social-media account and properly disclosed Creator Materials; GoTall does not acquire Creator’s password or unrelated content."
+      ],
+      "subsections": []
+    },
+    {
+      "number": "8",
+      "title": "Advertising, platform, and publicity rights",
+      "paragraphs": [
+        "GoTall may use, publish, distribute, display, perform, transmit, promote, monetize, advertise, and otherwise exploit the Deliverables and derivatives worldwide, in any media now known or later developed, for commercial, advertising, promotional, social, website, app, email, affiliate, marketplace, retail, public-relations, internal, archival, and portfolio purposes. These rights are perpetual, irrevocable, transferable, and sublicensable, subject to non-waivable law.",
+        "GoTall may run the Deliverables as paid media from accounts or identities owned or controlled by GoTall, the featured brand, its affiliates, agencies, licensees, customers, media buyers, and other authorized partners. GoTall may also use platform-native creator-ad formats, including TikTok Spark Ads and Meta Partnership Ads or successor tools.",
+        "Creator grants GoTall and its authorized partners a worldwide, royalty-free right to use Creator’s approved name, professional name, image, likeness, appearance, voice, biographical information, handle, profile image, statements, and performance embodied in or reasonably used to identify, advertise, or distribute the Deliverables. That release lasts as long as GoTall may use the applicable Deliverable.",
+        "For advertising delivered through Creator’s verified campaign profile, Creator will provide platform authorization codes or approve platform requests, but will not be required to provide a password. [TO APPROVE: authorization period, renewal process, post-termination wind-down, geographic limits if any, and whether active campaigns may finish after authorization expires.]"
+      ],
+      "bullets": [
+        "GoTall may choose placements, budgets, audiences, calls to action, landing pages, and campaign duration.",
+        "No additional usage fee, residual, royalty, or approval is owed for an authorized use unless the assigned deal version expressly states otherwise.",
+        "GoTall will not state that Creator personally endorses a materially altered claim Creator did not make, and will remain responsible for advertiser obligations that law places on GoTall."
+      ],
+      "subsections": []
+    },
+    {
+      "number": "9",
+      "title": "Creator Materials and third-party rights",
+      "paragraphs": [
+        "Creator must identify Creator Materials in writing before submission. Creator grants GoTall a perpetual, worldwide, transferable, sublicensable, royalty-free license to use, edit, reproduce, distribute, display, perform, and create derivatives of those Creator Materials only as incorporated into or reasonably necessary to exploit the Deliverables.",
+        "Creator will not include music, footage, artwork, trademarks, locations, private information, or another person’s name, image, voice, or performance unless the material is supplied or approved by GoTall or Creator has written permission broad enough for the ownership and paid-media uses in this Agreement.",
+        "Upon request, Creator will provide licenses, releases, consent records, and source files. Platform music availability for an organic post does not by itself establish a license for paid advertising."
+      ],
+      "bullets": [],
+      "subsections": []
+    },
+    {
+      "number": "10",
+      "title": "Disclosures, claims, and platform compliance",
+      "paragraphs": [
+        "Creator will clearly and conspicuously disclose Creator’s material connection to GoTall or the featured brand in each endorsement, using plain language such as “ad” or “sponsored” and any additional instruction in the Campaign Brief. A disclosure must appear where viewers are likely to notice it; a profile bio or buried hashtag alone is not sufficient.",
+        "Creator’s statements must reflect Creator’s honest experience. Creator will use the product as instructed and will not make deceptive, unapproved, or unsupported claims. Creator will not make medical, disease, treatment, growth, height, performance, or guaranteed-result claims unless the exact claim appears in a current GoTall-approved script or written substantiation.",
+        "Creator will comply with applicable advertising, consumer-protection, privacy, publicity, and intellectual-property laws and the current policies of each Platform. Creator will promptly correct or remove content when GoTall reasonably determines correction is required for law, safety, platform policy, or factual accuracy."
+      ],
+      "bullets": [],
+      "subsections": []
+    },
+    {
+      "number": "11",
+      "title": "Confidentiality and data",
+      "paragraphs": [
+        "Creator will protect nonpublic Campaign Briefs, scripts, launch plans, pricing, performance data, access instructions, product information, and other information that a reasonable person would understand to be confidential. Creator may use confidential information only to perform the program and may disclose it only to an approved helper who is bound by equivalent obligations.",
+        "These duties do not cover information Creator can document was lawfully known without restriction, becomes public without breach, is received lawfully from another source, or is independently developed without use of confidential information. Legally compelled disclosure is permitted after prompt notice when lawful.",
+        "GoTall may retain application, verification, content, tracking, agreement, payment, fraud-prevention, and audit records as described in its privacy notice and as reasonably necessary to administer and defend the program. [TO APPROVE: final privacy-notice reference, retention periods, and cross-border terms.]"
+      ],
+      "bullets": [],
+      "subsections": []
+    },
+    {
+      "number": "12",
+      "title": "Creator promises",
+      "paragraphs": [
+        "Creator represents and warrants that Creator is at least [TO APPROVE: MINIMUM AGE], has legal capacity to enter this Agreement, and will obtain a parent or legal guardian’s signature if required. Creator also represents and warrants that Creator has authority over the submitted profiles and can grant all rights stated here.",
+        "Creator represents and warrants that the Deliverables are original except for authorized materials; do not infringe, misappropriate, defame, or violate another person’s rights; contain all required releases and permissions; and comply with this Agreement and each Campaign Brief.",
+        "Creator will not impersonate another person, misstate audience or performance information, conceal paid traffic, or submit the same work in a way that creates duplicate payment unless GoTall approved that treatment in writing."
+      ],
+      "bullets": [],
+      "subsections": []
+    },
+    {
+      "number": "13",
+      "title": "Independent contractor; no exclusivity unless stated",
+      "paragraphs": [
+        "Creator is an independent contractor and not an employee, agent, partner, franchisee, or joint venturer of GoTall. Creator controls the manner and means of production subject to the required result, deadlines, law, safety rules, approved claims, and Campaign Brief.",
+        "Creator has no authority to bind GoTall. Creator is not eligible for employee benefits. No category, competitor, or platform exclusivity applies unless a Campaign Brief or assigned deal version states the restricted brands, scope, territory, and duration."
+      ],
+      "bullets": [],
+      "subsections": []
+    },
+    {
+      "number": "14",
+      "title": "Term, termination, and takedowns",
+      "paragraphs": [
+        "The Agreement begins on the Effective Date and continues until terminated. [TO APPROVE: at-will notice period, for-cause termination, cure period, suspension rights, and effect of account inactivity.]",
+        "Termination does not erase accepted work or payment already earned under the final rules. GoTall’s ownership of Deliverables and the advertising, publicity, confidentiality, records, enforcement, dispute, and other provisions intended by their nature to survive will survive termination.",
+        "[TO APPROVE: whether Creator must keep previously accepted organic posts live after termination, when GoTall must stop handle-based paid ads, and whether already-launched ads may complete a wind-down period.]"
+      ],
+      "bullets": [],
+      "subsections": []
+    },
+    {
+      "number": "15",
+      "title": "Indemnity, liability, and disputes",
+      "paragraphs": [
+        "[TO APPROVE WITH COUNSEL: creator indemnity for breach, infringement, missing releases, misconduct, taxes, and unauthorized claims; GoTall indemnity if any; defense control and settlement consent.]",
+        "[TO APPROVE WITH COUNSEL: exclusions of indirect or consequential damages, liability cap, carve-outs, applicable consumer-law savings, and treatment of unpaid approved compensation.]",
+        "[TO APPROVE WITH COUNSEL: governing law, venue or arbitration forum, class-action waiver if appropriate, informal resolution period, and small-claims carve-out.]"
+      ],
+      "bullets": [],
+      "subsections": []
+    },
+    {
+      "number": "16",
+      "title": "General terms and electronic signatures",
+      "paragraphs": [
+        "The final Agreement, its assigned Schedule A, and incorporated Campaign Briefs will be the entire agreement about the program and will replace prior discussions on the same subject. A conflict will be resolved in this order: signed creator-specific amendment, assigned deal version and Schedule A, this Agreement, then Campaign Brief—except that a Campaign Brief may set deliverable-specific requirements and approved additional compensation.",
+        "Any amendment must be in a written record accepted by both parties, except GoTall may update operational instructions that do not reduce already-assigned compensation or expand rights already granted. Failure to enforce a term is not a waiver. If a term is unenforceable, it will be narrowed to the minimum extent necessary and the rest remains effective.",
+        "Creator may not assign the Agreement without GoTall’s written consent. GoTall may assign it together with the program, brand, business, or substantially all relevant assets. Notices will be sent to the account email and [TO APPROVE: LEGAL NOTICE ADDRESSES AND METHOD].",
+        "The final Agreement may be signed electronically and in counterparts. The signing record must identify the exact immutable deal version presented to Creator. A return from the signing provider does not activate the account until GoTall verifies completion evidence."
+      ],
+      "bullets": [],
+      "subsections": []
+    }
+  ],
+  "scheduleA": {
+    "title": "Schedule A — Proposed standard economics and approval checklist",
+    "rows": [
+      {
+        "term": "Currency",
+        "proposedValue": "USD",
+        "approvalState": "Supported"
+      },
+      {
+        "term": "Baseline / non-talking CPM",
+        "proposedValue": "$0.50 per 1,000 Qualified Views; $100 per-video cap",
+        "approvalState": "Supported candidate"
+      },
+      {
+        "term": "Qualifying talking CPM",
+        "proposedValue": "$1.00 per 1,000 Qualified Views; $300 per-video cap",
+        "approvalState": "Economics supported; legal qualification and appeal process open"
+      },
+      {
+        "term": "Measurement window",
+        "proposedValue": "First seven days after publication",
+        "approvalState": "Exact cutoff and time zone open"
+      },
+      {
+        "term": "Paid traffic",
+        "proposedValue": "Deduct verified paid impressions; exclude invalid traffic",
+        "approvalState": "Principle supported; source hierarchy open"
+      },
+      {
+        "term": "Fixed fee / total cap",
+        "proposedValue": "None by default",
+        "approvalState": "Supported candidate"
+      },
+      {
+        "term": "Cross-post treatment",
+        "proposedValue": "[TO APPROVE]",
+        "approvalState": "Open"
+      },
+      {
+        "term": "Posting cadence / minimum views",
+        "proposedValue": "None in sample unless a Campaign Brief states otherwise",
+        "approvalState": "Open if a program-wide rule is desired"
+      },
+      {
+        "term": "Payment timing / method / minimum",
+        "proposedValue": "[TO APPROVE]",
+        "approvalState": "Open"
+      },
+      {
+        "term": "Creator-profile ad authorization",
+        "proposedValue": "[TO APPROVE: duration and wind-down]",
+        "approvalState": "Open"
+      },
+      {
+        "term": "Contracting entity / minors / governing law",
+        "proposedValue": "[TO APPROVE WITH COUNSEL]",
+        "approvalState": "Open"
+      }
+    ]
+  },
+  "campaignBriefFields": [
+    "Campaign / product",
+    "Required Platform(s) and approved profile(s)",
+    "Deliverable format and quantity",
+    "Approved script, claims, disclosure, and call to action",
+    "Due date, pre-approval, revision, publication, and retention requirements",
+    "Whether raw footage or project files are required",
+    "Any creator-specific fixed fee, bonus, CPM, cap, or cross-post treatment",
+    "Paid-ad account authorization duration, if applicable",
+    "Any exclusivity or competitor restriction",
+    "GoTall campaign owner and contact channel"
+  ],
+  "references": [
+    {
+      "title": "17 U.S.C. § 101 — work made for hire definition",
+      "url": "https://uscode.house.gov/view.xhtml?req=(title:17%20section:101%20edition:prelim)"
+    },
+    {
+      "title": "17 U.S.C. § 204 — signed writing for copyright transfers",
+      "url": "https://uscode.house.gov/view.xhtml?req=(title:17%20section:204%20edition:prelim)"
+    },
+    {
+      "title": "FTC — Disclosures 101 for Social Media Influencers",
+      "url": "https://www.ftc.gov/business-guidance/resources/disclosures-101-social-media-influencers"
+    },
+    {
+      "title": "TikTok Ads Manager — Spark Ads creation guide",
+      "url": "https://ads.tiktok.com/help/article/spark-ads-creation-guide?lang=en"
+    },
+    {
+      "title": "Meta for Business — Reels and Partnership Ads",
+      "url": "https://www.facebook.com/business/ads/facebook-instagram-reels-ads"
+    }
+  ],
+  "signatureBlocks": [
+    {
+      "label": "GoTall",
+      "name": "[AUTHORIZED SIGNER]",
+      "title": "[TITLE]",
+      "date": "[DATE]"
+    },
+    {
+      "label": "Creator",
+      "name": "[CREATOR NAME]",
+      "title": "Creator",
+      "date": "[DATE]"
+    },
+    {
+      "label": "Parent or legal guardian, if required",
+      "name": "[GUARDIAN NAME]",
+      "title": "[RELATIONSHIP]",
+      "date": "[DATE]"
+    }
+  ]
+}

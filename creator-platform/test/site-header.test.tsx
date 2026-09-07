@@ -33,6 +33,7 @@ describe("site header", () => {
     for (const link of screen.getAllByRole("link", { name: "Sign in" })) {
       expect(link).toHaveAttribute("href", "/auth/sign-in");
     }
+    expect(screen.queryByRole("link", { name: "Get GoTall" })).not.toBeInTheDocument();
   });
 
   it("routes a signed-in creator to their real account", () => {

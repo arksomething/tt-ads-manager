@@ -71,6 +71,26 @@ export async function POST(request: NextRequest) {
     return successResponse;
   }
 
+  // With email confirmation enabled, Supabase deliberately returns an
+  // obfuscated user with no identities for an already-registered address.
+  // Sending that response to "check your email" is misleading because no new
+  // confirmation message is generated for an account that is already
+  // confirmed. Keep the copy non-enumerating while guiding the creator to the
+  // path that can actually work.
+  if (data.user && data.user.identities?.length === 0) {
+    return copySupabaseResponseState(
+      successResponse,
+      NextResponse.redirect(
+        authRedirectUrl(request, "/auth/sign-in", {
+          notice:
+            "This email may already have an account. Sign in with the password you created, or reset it if needed.",
+          next: nextPath,
+        }),
+        303,
+      ),
+    );
+  }
+
   return copySupabaseResponseState(
     successResponse,
     NextResponse.redirect(

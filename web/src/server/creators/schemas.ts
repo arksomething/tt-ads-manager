@@ -52,6 +52,7 @@ export const addCreatorToCampaignSchema = z.object({
 export const trackCreatorAccountFormSchema = z.object({
   profileUrl: z.string().trim().max(4096).url(),
   campaignId: z.string().min(1).max(191),
+  creatorId: z.string().trim().min(1).max(191).optional(),
   maxVideos: z.coerce
     .number()
     .int()

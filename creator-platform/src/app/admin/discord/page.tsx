@@ -260,10 +260,11 @@ export default async function DiscordAdminPage() {
   return (
     <main className="discord-admin-page">
       <header className="discord-admin-header">
-        <Link href="/" className="wordmark"><BrandMark /><span>Creator operations</span></Link>
+        <Link href="/admin" className="wordmark"><BrandMark /><span>Creator operations</span></Link>
         <div>
           <span className="discord-admin-readonly"><LockKeyhole aria-hidden="true" size={12} />Read only</span>
-          <Link className="discord-admin-back" href="/account"><ArrowLeft aria-hidden="true" size={14} />Account</Link>
+          <Link className="discord-admin-back" href="/admin/applications"><Users aria-hidden="true" size={14} />Applications</Link>
+          <Link className="discord-admin-back" href="/admin"><ArrowLeft aria-hidden="true" size={14} />Operations home</Link>
         </div>
       </header>
 

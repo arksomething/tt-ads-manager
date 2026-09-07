@@ -6,6 +6,7 @@ import {
 } from "@/lib/prisma-shim";
 import { unstable_cache } from "next/cache";
 
+import { resolveLinkedProviderAccountIds } from "@/lib/creator-account-associations";
 import { prisma } from "@/lib/db";
 import { logServerTiming, timeAsync, timeSync } from "@/lib/server-timing";
 import {
@@ -200,11 +201,13 @@ export type OrganizationViewTallyData = {
     id: string;
     label: string;
     meta?: string;
+    platformAccountId?: string | null;
   }>;
   selectedCreator: {
     id: string;
     label: string;
     meta?: string;
+    platformAccountId?: string | null;
   } | null;
   startDate: string;
   endDate: string;
@@ -1061,6 +1064,7 @@ async function getTrackedInstagramAccountsUncached() {
     .map((record) => ({
       id: normalizeProviderText(record.id) ?? "",
       platform: normalizeProviderText(record.platform) ?? "instagram",
+      platformAccountId: normalizeProviderText(record.platformAccountId),
       username:
         normalizeProviderText(record.username) ??
         normalizeProviderText(record.initialUsername),
@@ -1080,6 +1084,83 @@ const getTrackedInstagramAccounts = unstable_cache(
 function normalizeViewTallyHandle(value: string | null | undefined) {
   const normalized = value?.trim().replace(/^@/, "").toLowerCase();
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+async function getLinkedInstagramProviderAccountIds(args: {
+  organizationId: string;
+  providerAccounts: Awaited<ReturnType<typeof getTrackedInstagramAccounts>>;
+  selectedTrackedAccount?: TrackedTikTokAccountRecord | null;
+}) {
+  let creatorIds: string[] | undefined;
+
+  if (args.selectedTrackedAccount) {
+    const accountIdentityFilters: Prisma.CreatorPlatformAccountWhereInput[] = [];
+
+    if (args.selectedTrackedAccount.platformAccountId) {
+      accountIdentityFilters.push({
+        sourceAccountId: args.selectedTrackedAccount.platformAccountId,
+      });
+    }
+
+    if (args.selectedTrackedAccount.username) {
+      accountIdentityFilters.push({
+        handle: {
+          equals: args.selectedTrackedAccount.username,
+          mode: "insensitive",
+        },
+      });
+    }
+
+    if (accountIdentityFilters.length === 0) {
+      return [];
+    }
+
+    const localTikTokAccount = await prisma.creatorPlatformAccount.findFirst({
+      where: {
+        platform: Platform.TIKTOK,
+        creator: {
+          organizationId: args.organizationId,
+        },
+        OR: accountIdentityFilters,
+      },
+      select: {
+        creatorId: true,
+      },
+    });
+
+    if (!localTikTokAccount) {
+      return [];
+    }
+
+    creatorIds = [localTikTokAccount.creatorId];
+  }
+
+  const localInstagramAccounts = await prisma.creatorPlatformAccount.findMany({
+    where: {
+      platform: Platform.INSTAGRAM_REELS,
+      creator: {
+        organizationId: args.organizationId,
+      },
+      ...(creatorIds
+        ? {
+            creatorId: {
+              in: creatorIds,
+            },
+          }
+        : {}),
+    },
+    select: {
+      creatorId: true,
+      handle: true,
+      sourceAccountId: true,
+    },
+  });
+
+  return resolveLinkedProviderAccountIds({
+    creatorIds,
+    localAccounts: localInstagramAccounts,
+    providerAccounts: args.providerAccounts,
+  });
 }
 
 function normalizeViewTallyName(value: string | null | undefined) {
@@ -2002,6 +2083,7 @@ export async function getOrganizationViewTallyData(args: {
   const creatorOptions = trackedAccounts
     .map((account) => ({
       id: account.id,
+      platformAccountId: account.platformAccountId,
       label: account.displayName ?? (account.username ? `@${account.username}` : "Tracked TikTok creator"),
       meta: account.username ? `@${account.username}` : undefined,
       totalVideosTracked: account.totalVideosTracked ?? 0,
@@ -2014,8 +2096,9 @@ export async function getOrganizationViewTallyData(args: {
 
       return left.label.localeCompare(right.label);
     })
-    .map(({ id, label, meta, username }) => ({
+    .map(({ id, platformAccountId, label, meta, username }) => ({
       id,
+      platformAccountId,
       label,
       meta: meta ?? (username ? `@${username}` : undefined),
     }));
@@ -2054,6 +2137,7 @@ export async function getOrganizationViewTallyData(args: {
 
         fallbackCreatorMap.set(id, {
           id,
+          platformAccountId: null,
           label:
             video.accountDisplayName ??
             (username ? `@${username}` : "Tracked TikTok creator"),
@@ -2169,28 +2253,28 @@ export async function getOrganizationViewTallyData(args: {
     : selectedCreator?.id ?? null;
   const analyticsPlatforms = args.includeInstagram ? "tiktok,instagram" : undefined;
 
-  // Instagram opt-in: widen the single-account analytics query to the
-  // creator's IG account(s), matched by username against the tracked IG list.
-  if (args.includeInstagram && selectedAnalyticsOrgAccountId) {
+  // Instagram is opt-in and uses explicit local creator-account associations.
+  // Native account IDs remain stable even when TikTok and Instagram handles do
+  // not match or either account is renamed.
+  if (args.includeInstagram) {
     try {
       const instagramAccounts = await getTrackedInstagramAccounts();
-      const creatorHandles = new Set(
-        [
-          selectedTrackedAccount?.username,
-          selectedCreator?.meta?.replace(/^@/, ""),
-          selectedCreator?.label,
-        ]
-          .map((value) => normalizeViewTallyHandle(value))
-          .filter((value): value is string => Boolean(value)),
-      );
-      const companionIds = instagramAccounts
-        .filter((account) => {
-          const username = normalizeViewTallyHandle(account.username);
-          return Boolean(username && creatorHandles.has(username));
-        })
-        .map((account) => account.id);
+      const companionIds = await getLinkedInstagramProviderAccountIds({
+        organizationId,
+        providerAccounts: instagramAccounts,
+        selectedTrackedAccount,
+      });
 
-      if (companionIds.length > 0) {
+      if (isAllCreatorsSelected) {
+        const accountIds = [
+          ...trackedAccounts.map((account) => account.id),
+          ...companionIds,
+        ];
+
+        if (accountIds.length > 0) {
+          selectedAnalyticsOrgAccountId = [...new Set(accountIds)].join(",");
+        }
+      } else if (selectedAnalyticsOrgAccountId && companionIds.length > 0) {
         selectedAnalyticsOrgAccountId = [
           selectedAnalyticsOrgAccountId,
           ...companionIds,
@@ -2448,7 +2532,12 @@ export async function getOrganizationViewTallyData(args: {
         continue;
       }
 
-      const existingGroup =
+      const existingGroup: {
+        selectedCreator: ViewTallyCreatorOption;
+        selectedTrackedAccount: TrackedTikTokAccountRecord | null;
+        selectedCreatorUsername: string | null;
+        sourceVideoIds: string[];
+      } =
         paidLookupGroups.get(video.selectedCreator.id) ??
         {
           selectedCreator: video.selectedCreator,

@@ -3,6 +3,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { AuthFormShell } from "@/components/auth-form-shell";
+import { GoogleAuthButton } from "@/components/google-auth-button";
+import { PasswordField } from "@/components/password-field";
 import { getSearchParamValue, sanitizeNextPath } from "@/lib/auth-navigation";
 import { hasSupabaseAuthEnv } from "@/lib/server-env";
 import { getCurrentAccount } from "@/server/auth/session";
@@ -48,6 +50,7 @@ export default async function SignUpPage({ searchParams }: SignUpPageProps) {
         </p>
       }
     >
+      <GoogleAuthButton configured={configured} nextPath={nextPath} />
       <form className="auth-form" action="/api/auth/sign-up" method="post">
         <input type="hidden" name="next" value={nextPath} />
         <label>
@@ -61,28 +64,22 @@ export default async function SignUpPage({ searchParams }: SignUpPageProps) {
             type="email"
           />
         </label>
-        <label>
-          <span>Password</span>
-          <input
-            autoComplete="new-password"
-            minLength={10}
-            name="password"
-            placeholder="At least 10 characters"
-            required
-            type="password"
-          />
-        </label>
-        <label>
-          <span>Confirm password</span>
-          <input
-            autoComplete="new-password"
-            minLength={10}
-            name="passwordConfirm"
-            placeholder="Enter it again"
-            required
-            type="password"
-          />
-        </label>
+        <PasswordField
+          autoComplete="new-password"
+          label="Password"
+          minLength={10}
+          name="password"
+          placeholder="At least 10 characters"
+          required
+        />
+        <PasswordField
+          autoComplete="new-password"
+          label="Confirm password"
+          minLength={10}
+          name="passwordConfirm"
+          placeholder="Enter it again"
+          required
+        />
         <button className="button button--ink button--large" disabled={!configured} type="submit">
           Create account
         </button>

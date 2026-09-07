@@ -270,7 +270,7 @@ describe("creator Discord settings page", () => {
 
     expect(screen.getByRole("link", { name: "Open operations" })).toHaveAttribute(
       "href",
-      "/admin/discord",
+      "/admin",
     );
   });
 });

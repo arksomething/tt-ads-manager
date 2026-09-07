@@ -14,6 +14,8 @@ export type CreatorApplicationSnapshot = {
   status: string;
   submittedAt: string;
   reviewedAt: string | null;
+  decisionMessage: string | null;
+  reviewRevision: number;
   accounts: SubmittedCreatorAccount[];
 };
 
@@ -25,6 +27,11 @@ function recordValue(value: unknown) {
 
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function nonnegativeInteger(value: unknown) {
+  const candidate = typeof value === "number" ? value : Number(value);
+  return Number.isSafeInteger(candidate) && candidate >= 0 ? candidate : 0;
 }
 
 function creatorAccountsValue(value: unknown): SubmittedCreatorAccount[] {
@@ -78,6 +85,12 @@ export function normalizeCreatorApplicationSnapshot(
     status,
     submittedAt,
     reviewedAt: stringValue(record.reviewed_at ?? record.reviewedAt),
+    decisionMessage: stringValue(
+      record.decision_message ?? record.decisionMessage,
+    ),
+    reviewRevision: nonnegativeInteger(
+      record.review_revision ?? record.reviewRevision,
+    ),
     accounts: creatorAccountsValue(
       record.creator_accounts ?? record.creatorAccounts ?? record.accounts,
     ),

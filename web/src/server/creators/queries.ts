@@ -1,5 +1,6 @@
 import {
   CampaignRole,
+  CreatorStatus,
   ExternalSource,
   SourceEntityType,
   type Prisma,
@@ -429,6 +430,26 @@ export async function getCreatorsWorkspace(args: {
         take: CREATORS_PAGE_SIZE,
       })
     : [];
+  const accountAssociationCreatorOptions = await prisma.creator.findMany({
+    where: {
+      organizationId: membership.organizationId,
+      internalStatus: {
+        not: CreatorStatus.ARCHIVED,
+      },
+    },
+    select: {
+      id: true,
+      displayName: true,
+      platformAccounts: {
+        select: {
+          handle: true,
+          platform: true,
+        },
+        orderBy: [{ createdAt: "asc" }],
+      },
+    },
+    orderBy: [{ displayName: "asc" }, { createdAt: "asc" }],
+  });
   const creatorIds = creators.map((creator) => creator.id);
   const providerMappings = creatorIds.length
     ? await prisma.sourceMapping.findMany({
@@ -456,6 +477,7 @@ export async function getCreatorsWorkspace(args: {
   return {
     canTrackCreators: campaignOptions.length > 0,
     campaignOptions,
+    accountAssociationCreatorOptions,
     canManageOrganizationData,
     currentPage,
     membership,

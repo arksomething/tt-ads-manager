@@ -4,6 +4,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { AuthFormShell } from "@/components/auth-form-shell";
+import { PasswordField } from "@/components/password-field";
 import { getSearchParamValue } from "@/lib/auth-navigation";
 import { hasSupabaseAuthEnv } from "@/lib/server-env";
 import {
@@ -47,28 +48,22 @@ export default async function ResetPasswordPage({
       footer={<Link href="/auth/sign-in">Cancel reset and return to sign in</Link>}
     >
       <form className="auth-form" action="/api/auth/reset-password" method="post">
-        <label>
-          <span>New password</span>
-          <input
-            autoComplete="new-password"
-            minLength={10}
-            name="password"
-            placeholder="At least 10 characters"
-            required
-            type="password"
-          />
-        </label>
-        <label>
-          <span>Confirm new password</span>
-          <input
-            autoComplete="new-password"
-            minLength={10}
-            name="passwordConfirm"
-            placeholder="Enter it again"
-            required
-            type="password"
-          />
-        </label>
+        <PasswordField
+          autoComplete="new-password"
+          label="New password"
+          minLength={10}
+          name="password"
+          placeholder="At least 10 characters"
+          required
+        />
+        <PasswordField
+          autoComplete="new-password"
+          label="Confirm new password"
+          minLength={10}
+          name="passwordConfirm"
+          placeholder="Enter it again"
+          required
+        />
         <button className="button button--ink button--large" type="submit">
           Save new password
         </button>

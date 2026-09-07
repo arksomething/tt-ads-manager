@@ -36,17 +36,26 @@ const { Client } = require("pg");
 const ROOT = "/home/ark296/projects/tt-ads-manager";
 const WEB = path.join(ROOT, "web");
 const ARGS = process.argv.slice(2);
-const OUT = ARGS.includes("--out") ? ARGS[ARGS.indexOf("--out") + 1] : path.join(ROOT, "payouts/2026-07/audit-reports");
+const AUDIT_START_DATE = process.env.AUDIT_START_DATE ?? "2026-07-01";
+const AUDIT_END_DATE = process.env.AUDIT_END_DATE ?? "2026-07-31";
+const AUDIT_VIDEO_WINDOW_START_DATE =
+  process.env.AUDIT_VIDEO_WINDOW_START_DATE ?? "2026-06-24";
+const AUDIT_MIN_VIDEOS = Math.max(1, Number(process.env.AUDIT_MIN_VIDEOS ?? 220));
+const RECEIPT_ONLY = ARGS.includes("--receipt-only");
+const OUT = ARGS.includes("--out")
+  ? ARGS[ARGS.indexOf("--out") + 1]
+  : path.join(ROOT, `payouts/${AUDIT_START_DATE.slice(0, 7)}/audit-reports`);
 const SKIP_TIKTOK = ARGS.includes("--skip-tiktok");
 const PARAMS = {
-  startDate: "2026-07-01",
-  endDate: "2026-07-31",
+  startDate: AUDIT_START_DATE,
+  endDate: AUDIT_END_DATE,
   payMode: "gained",
-  videoWindowStartDate: "2026-06-24",
+  videoWindowStartDate: AUDIT_VIDEO_WINDOW_START_DATE,
   viewWindowMode: "first-days",
   globalViewWindowDays: "7",
   videoFetchMode: "per-creator",
   campaign: "8a7bd7e4-94c8-4dfe-a7c4-7a7b59024292",
+  includeInstagram: process.env.AUDIT_INCLUDE_INSTAGRAM ?? "1",
 };
 const QUERY = new URLSearchParams(PARAMS).toString();
 const BASE = process.env.AUDIT_BASE ?? "https://tt-ads-manager.vercel.app";
@@ -88,10 +97,13 @@ function parseCsv(text) {
 function receiptComplete(csv) {
   if (/rate limit/i.test(csv)) return { ok: false, why: "rate-limited" };
   const declared = Number((csv.match(/^Videos,(\d+)/m) ?? [])[1] ?? 0);
-  if (declared < 220) return { ok: false, why: "thin (" + declared + " videos)" };
+  if (declared < AUDIT_MIN_VIDEOS) return { ok: false, why: "thin (" + declared + " videos)" };
   const vi = csv.indexOf("\nVIDEOS");
   if (vi < 0) return { ok: false, why: "no VIDEOS section" };
-  const rowCount = csv.slice(vi).split("\n").filter((l) => l.includes("tiktok.com/")).length;
+  const rowCount = csv
+    .slice(vi)
+    .split("\n")
+    .filter((line) => /(?:tiktok|instagram)\.com\//i.test(line)).length;
   if (rowCount < declared) return { ok: false, why: `truncated (${rowCount}/${declared} video rows)` };
   if (!csv.endsWith("\n")) return { ok: false, why: "no trailing newline" };
   return { ok: true, why: "complete " + rowCount + "/" + declared };
@@ -358,6 +370,11 @@ ${notes.map((n) => `<div class="note">⚠ ${esc(n)}</div>`).join("")}
   writeFileSync(path.join(OUT, "receipt.csv"), csv);
   const { meta, warnings, creators, videos } = parseReceipt(csv);
   log(`receipt: ${creators.length} creators, ${videos.length} videos, total ${meta["Total pay"]}`);
+
+  if (RECEIPT_ONLY) {
+    log("receipt-only run complete");
+    return;
+  }
 
   const deals = await loadDeals();
   log(`deals loaded for ${deals.size} handles`);

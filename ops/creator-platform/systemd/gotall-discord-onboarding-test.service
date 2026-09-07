@@ -1,0 +1,32 @@
+[Unit]
+Description=GoTall Discord onboarding bot for Retconned test server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=gotall-discord
+Group=gotall-discord
+WorkingDirectory=/var/lib/gotall-discord-onboarding-test
+ExecStart=/usr/local/lib/gotall-discord-onboarding-test/node /usr/local/lib/gotall-discord-onboarding-test/bot.mjs
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+Environment=DISCORD_TEST_GUILD_ID=1245112089647775877
+Environment=DISCORD_TEST_MODE=true
+Environment=DISCORD_ONBOARDING_DATABASE_PATH=/var/lib/gotall-discord-onboarding-test/onboarding.sqlite3
+LoadCredentialEncrypted=discord-bot-token:/etc/credstore.encrypted/gotall-creator-discord-bot-token.cred
+StateDirectory=gotall-discord-onboarding-test
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

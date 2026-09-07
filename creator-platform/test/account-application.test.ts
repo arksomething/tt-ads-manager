@@ -21,6 +21,8 @@ const applicationRow = {
   application_status: "submitted",
   submitted_at: "2026-08-30T16:30:00.000Z",
   reviewed_at: null,
+  decision_message: null,
+  review_revision: 0,
   creator_accounts: [
     { platform: "TIKTOK", handle: "@dylan.grows" },
     { platform: "INSTAGRAM_REELS", handle: "dylan.builds" },
@@ -41,6 +43,8 @@ describe("own creator application", () => {
       status: "submitted",
       submittedAt: "2026-08-30T16:30:00.000Z",
       reviewedAt: null,
+      decisionMessage: null,
+      reviewRevision: 0,
       accounts: [
         { platform: "TIKTOK", handle: "@dylan.grows" },
         { platform: "INSTAGRAM_REELS", handle: "dylan.builds" },

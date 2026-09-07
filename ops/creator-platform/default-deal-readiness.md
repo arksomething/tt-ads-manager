@@ -1,10 +1,15 @@
 # Default creator deal readiness
 
-Status: prospective economics identified; no binding default activated.
+Status: drafting and sealing control plane live; no binding default activated.
 
 The production creator database intentionally contains no active default deal.
-Application approval fails closed until an owner-approved term sheet and a
-counsel-approved agreement are inserted as one immutable version.
+Administrators can now create a blank internal draft, record structured economic
+rules, review the exact legal and economic hashes, and seal an immutable version.
+Application approval is locked to an explicitly confirmed active-default UUID
+and snapshot hash and fails closed unless that exact version has business and
+legal approvals plus one matching verified production signing-template binding.
+No activation, provider binding, approval recording, or signing-send mutation is
+exposed in the browser yet.
 
 ## Strongest observed business candidate
 
@@ -63,6 +68,20 @@ seed for account/campaign configuration, not a creator agreement.
 - content license, Spark/whitelisting rights, compliance, takedown, termination,
   confidentiality, liability, and governing law.
 
-Before payout logic consumes a deal version, the schema also needs immutable,
-validated economic rules in addition to the current legal Markdown and hash.
-Do not parse rates or caps back out of prose.
+The schema now stores immutable, validated economic rules beside legal Markdown,
+separate terms/economics hashes, and a combined snapshot hash. Drafts may retain
+unknown values, but sealing rejects unresolved values, sample/non-binding text,
+and drafting placeholders. Payout logic must consume these structured rules; it
+must never parse rates or caps back out of prose.
+
+## Live release gates
+
+1. An administrator creates and revises internal terms from a blank draft.
+2. Sealing requires complete legal text and structured economics and makes the
+   snapshot immutable; sealing does not activate, assign, or send it.
+3. Business and legal approvals must reference the exact snapshot hash.
+4. Exactly one verified `production` SignWell template binding must reference
+   that same snapshot; test or stale bindings never satisfy readiness.
+5. A separately reviewed activation workflow must make the sealed version the
+   effective default. Application approval then requires a reviewer checkbox and
+   revalidates the exact UUID/hash under a database lock before assignment.

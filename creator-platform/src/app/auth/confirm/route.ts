@@ -35,6 +35,31 @@ export async function GET(request: NextRequest) {
   const rawType = request.nextUrl.searchParams.get("type") as EmailOtpType | null;
   const code = request.nextUrl.searchParams.get("code");
   const flowId = request.nextUrl.searchParams.get("sb_flow_id");
+  const providerError =
+    request.nextUrl.searchParams.get("error") ??
+    request.nextUrl.searchParams.get("error_code");
+
+  if (!tokenHash && !code) {
+    if (nextPath === "/auth/reset-password") {
+      return NextResponse.redirect(
+        authRedirectUrl(request, "/auth/forgot-password", {
+          error: "That password reset link cannot be completed. Request a new one.",
+        }),
+      );
+    }
+
+    return NextResponse.redirect(
+      authRedirectUrl(request, "/auth/sign-in", {
+        error: providerError
+          ? "That email link could not be verified. Request a new one or sign in if you already confirmed."
+          : null,
+        notice: providerError
+          ? null
+          : "Your email may already be confirmed. Sign in with the password you created.",
+        next: nextPath,
+      }),
+    );
+  }
 
   if (tokenHash && rawType === "recovery") {
     const response = NextResponse.redirect(
@@ -69,9 +94,10 @@ export async function GET(request: NextRequest) {
       type: rawType,
     }));
   } else if (code) {
-    ({ error } = await supabase.auth.exchangeCodeForSession(code));
-  } else {
-    error = new Error("Missing confirmation token");
+    ({ error } = await supabase.auth.exchangeCodeForSession(
+      code,
+      flowId ? { flowId } : undefined,
+    ));
   }
 
   if (!error) {

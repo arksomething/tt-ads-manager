@@ -18,3 +18,17 @@ web/.env.local
 web/.env.*.local
 web/.vercel
 .vercel
+
+# Local worktrees, provider state, and private audit artifacts are not source.
+/.claude/worktrees/
+/.wrangler/
+/supabase/.temp/
+/tmp/
+/output/
+/payouts/
+__pycache__/
+*.pyc
+*.cookies
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal

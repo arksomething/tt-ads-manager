@@ -1,0 +1,45 @@
+.terms {
+  color: #3f4650;
+}
+
+.terms h2,
+.terms h3 {
+  color: #1f2328;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.terms h2 {
+  margin: 30px 0 12px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid #d8dee4;
+  font-size: 18px;
+}
+
+.terms h3 {
+  margin: 22px 0 9px;
+  font-size: 15px;
+}
+
+.terms p,
+.terms li {
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.terms p {
+  margin: 0;
+}
+
+.terms p + p {
+  margin-top: 11px;
+}
+
+.terms ul {
+  margin: 12px 0 0;
+  padding-left: 22px;
+}
+
+.terms li + li {
+  margin-top: 7px;
+}
