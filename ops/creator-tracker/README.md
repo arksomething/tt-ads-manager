@@ -729,3 +729,61 @@ zero consecutive failures. The other two affected accounts remain requeued
 for normal collection; their recovery was not yet verified at this check.
 The temporary manual recovery unit was removed. HTTP health passed and the
 worker plus all eight collection timers were enabled.
+
+
+### September 9 stale-account catch-up
+
+Release `eb454f8cdaade820623e305e1ba4ba7d851cd25d5caa47a7db980455695ae2a1`
+(app commit `e4eddcba3d5eeb04ba3dfda984fd76b8a4043eff`) addresses starvation
+of ordinary TikTok scans. The previous planner reset expired ordinary windows
+to three/six hours after every wake, allowing newly due scans to repeatedly
+precede accounts overdue by days. Expired ordinary work now has a two-slot
+catch-up opportunity plus host-wake margin. It remains soft demand: the
+existing target-first feasibility proof can defer it for actual first-week
+deadlines, and all public request ceilings remain unchanged. The regression
+reproduces successive wakes choosing fresh work over a 60-hour overdue scan
+before the fix, then verifies catch-up precedence and protection of a closing
+real target afterward.
+
+Provider profile requests now use the stored native account `user_id` when
+available, matching the provider's documented v3 profile-video API. This
+avoids depending on an old username; returned video owners must still match
+the expected native account ID. Username lookup remains for callers without
+a stable ID. Tests cover the requested ID, omitted stale handle, pagination,
+and rejection of another owner's response.
+
+Bounded paid discovery refreshed six accounts before the release switch:
+`heightible` (54 direct observations), `mansuhn.gotall` (30), `will.gotall`
+(30), `matthew.gotall` (28), `thesompr` (27), and `intercepzion` (20).
+Username profile requests and three direct-video samples each for
+`dgetstaller` and `gotall.dan` returned HTTP 404; one missing `intercepzion`
+video also returned 404. These remained unresolved, not confirmed deleted or
+private, and no missing measurements were fabricated. The sealed release
+passed 827 tests, typechecking, production build, and a zero-vulnerability
+dependency audit.
+
+The stable-ID check reached an empty inventory for `gotall.dan`. A separate
+one-request guarded diagnostic for `dgetstaller` established HTTP 200,
+`has_more=false`, `max_cursor=-1`, and zero items. A follow-up parser fix skips
+cursor validation on terminal pages while continuing pages still require a
+valid cursor. Standalone direct-video retries also now reconstruct URLs from
+the current reconciled handle and unchanged native video ID, rather than
+reusing a stored pre-rename URL. `mansuhn.gotall` recovered its remaining two
+stale videos through direct requests, bringing it to 32/32 current samples.
+
+The final deployed release is
+`7f8d235c72500db955b2433593efcd6fcd5ccfd2100b420de15e7a0c06e62bec`
+(app commit `178dd6362b883b766cbb501091d4a3ab7bfe4b2f`), including both
+follow-up fixes. It passed 829 tests, typechecking, production build,
+zero-vulnerability dependency audit, and the 46-page completeness gate.
+At 07:16 EDT, current video coverage was: heightible 53/68 (one video aged
+out of the active horizon during recovery), mansuhn.gotall 32/32,
+will.gotall 30/30, matthew.gotall 28/28, thesompr 27/27, intercepzion 20/21,
+dgetstaller 0/28, and gotall.dan 0/30. Targeted recovery saved 191 direct
+observations. Both zero-coverage profiles now complete their stable-ID lookup
+with empty inventories; this is not metric recovery or proof of privacy.
+The final heightible standalone check was idle because its remaining videos
+were in transient retry backoff; the corrected URL path applies on subsequent
+admitted retries. All temporary maintenance units were removed, HTTP health
+passed, and the worker plus all eight collection timers were enabled. The
+overall collector is not claimed fully healthy from these account results.
