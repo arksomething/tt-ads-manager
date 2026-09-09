@@ -690,3 +690,42 @@ One target still needed realignment. Historical quality debt remains visible
 late observations into on-time evidence. The worker and all eight collection
 timers were enabled, HTTP health passed, and temporary recovery units were
 removed. Repository operations verification also passed.
+
+
+### September 9 mixed TikTok evidence repair
+
+Release `7aa7ee97d9fd16d6c2174bc5b2defd3e9c2be3629ea8209198627292d6d7131e`
+(app commit `78b8766ad3e5bced553d51aa104b99e672120686`, collector fix
+`afe8609a94cb0ee2c86e5676651dd62df792aebb`) separates profile-discovery
+response manifests from direct video recovery manifests. Previously a
+successful missing-item fallback appended `post_detail` responses to an
+`account_discovery` manifest. The truthful-purpose constraint then rejected
+its catalog insertion and rolled back the batch, including valid profile
+observations. Each recovered video now references its own `video_observation`
+manifest, while profile observations and discovery results reference only the
+profile manifest. All manifests are cataloged in the existing atomic batch.
+Database evidence constraints remain unchanged.
+
+The regression test uses the actual migrated SQLite schema and raw evidence
+store: valid separate manifests seal successfully with the correct response
+hash/timestamp, while the old mixed manifest still fails and leaves no partial
+catalog rows. The sealed release passed 825 tests, typechecking, production
+build, and the 46-page completeness gate. Repository operations verification
+also passed. The release audit required lockfile updates to Next.js 16.3.4 and
+sharp 0.35.4; the updated audit reported zero vulnerabilities.
+
+Only next-discovery and state-update timestamps were advanced for the three
+accounts whose latest error matched this exact manifest failure:
+`gotall.abdul`, `gotaller.notspar`, and `kai.black09`. Attempt timestamps,
+failure counts, and failure ledger history were retained.
+
+At 06:32 EDT the production recovery for `gotall.abdul` committed all 72 due
+observations with zero misses, including one successful missing-item detail
+fallback costing one credit. Database readback for run
+`61b71e15-429b-4d8a-a7a4-ff7a1faaf979` verified 71 public observations linked
+to sealed account-discovery evidence and one provider observation linked to
+its own sealed video-observation evidence. The account became capped with
+zero consecutive failures. The other two affected accounts remain requeued
+for normal collection; their recovery was not yet verified at this check.
+The temporary manual recovery unit was removed. HTTP health passed and the
+worker plus all eight collection timers were enabled.
