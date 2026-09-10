@@ -787,3 +787,48 @@ were in transient retry backoff; the corrected URL path applies on subsequent
 admitted retries. All temporary maintenance units were removed, HTTP health
 passed, and the worker plus all eight collection timers were enabled. The
 overall collector is not claimed fully healthy from these account results.
+
+### September 10: empty-inventory confirmation and availability reporting
+
+Deployed collector release
+`193ba0d4a9d3dacd940ce4a35cd36561a00f2a4f2c46bf24c11309d2eb8fa13f`
+from app commit `df71e8614f9f399b5212d4733e2713e370e9a317`.
+An empty successful profile response no longer has its `confirming_empty`
+scheduling state overwritten by `recovery_exhausted` just because known videos
+were absent. Empty profiles retain the independent confirmation retry; bounded
+item recovery probes at most one video rather than fanning out across ten.
+Missing observations remain explicit run-level coverage gaps, without inserting
+one `PROFILE_ITEM_MISSING` failure per known video for an empty inventory.
+
+Account health now exposes `availability_unconfirmed` for a current, matching
+successful empty inventory, including older persisted `complete` results.
+Neither privacy nor deletion is inferred. These accounts remain unresolved and
+their videos remain overdue/unmeasured; prior missing-item failures are not
+counted as current request failures while this account-level evidence applies.
+Actual fetch faults remain failures. Explicit `private` and `no_public_posts`
+outcomes keep their existing periodic rechecks and exclusion from active
+metric-failure totals. Measurement history and payout evidence were preserved.
+
+Verification: 832 tests, typecheck, production build, and zero-vulnerability
+dependency audit passed. The 47-page completeness gate passed with producer
+`eb257991-c39d-4d71-982b-7c17ee6c1eaa` and capture
+`daed28bc6153fae832cb9e901155b7bd119be465b84bdbb61e210fdccef26ceb`.
+The worker and all eight managed timers were enabled afterward.
+
+Maintenance run `49d027a5-a0db-4ab0-a103-975cc0de94cc` restored only matching
+zero-failure, overwritten scheduling states for dgetstaller and gotall.dan
+from their latest retained discovery evidence. It did not alter observations
+or failure history. At 10:25 EDT, production health reported two private,
+four no-public-posts, and two availability-unconfirmed TikTok accounts.
+The 58 missing observations for dgetstaller/gotall.dan were removed from the
+request-failure count (338 to 280), while TikTok overdue coverage remained 357.
+This classification change is not recovered metric coverage.
+
+Live follow-up run `32dd4350-dd0e-44ed-83ba-849325283670` completed gotall.dan's
+independent empty confirmation: zero returned videos, one bounded item probe,
+zero per-video typed misses, 30 missing observations, and zero consecutive
+account failures. Real primary-extractor and individual-probe faults remain
+in their respective audit stages. The next persisted account recheck is
+2026-09-11 02:25:47 UTC. dgetstaller remains availability-unconfirmed with its
+recheck at 2026-09-11 00:45:16 UTC. Both temporary maintenance units were removed.
+Overall coverage remains degraded; no payout readiness is inferred.
