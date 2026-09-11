@@ -872,3 +872,61 @@ daily starts and one clustered target-window miss, so these catch-up results do
 not establish sustained target feasibility or payout readiness. Both temporary
 recovery units were removed; HTTP health passed and the worker plus all eight
 managed timers were enabled and active.
+
+
+### September 11: remaining recovery and corroborated deactivation
+
+Deployed release
+`952f3207cef7edebf1bfdb041877a7ae24dc97f76bcef8c3832446d6395f9ad3`
+from collector commit `93fc5d14188499b50cdf9017074bc3a8e2bf0d98`.
+Missing-item recovery now rotates using durable actual per-video probe times,
+excluding bulk profile-omission records from that ordering. Fixed-window target
+videos retain priority. Production history showed the same ten gotallkae videos
+had each received nine profile-fallback probes while later videos had none.
+Live run `feda7a11-85ae-4395-b80d-f61ef0894b13` selected ten previously unprobed
+videos, refreshed 20 available profile observations, and retained ten actual
+not-found results without inventing measurements. An earlier bounded individual
+retry pass refreshed one heightpredictionguy observation; other attempts returned
+404. Raw spot checks returned only `error=not_found`, `errorStatus=404`, and
+`message=Video not found`, without explicit privacy or deletion evidence.
+
+Empty TikTok inventories now support a bounded stable-ID profile lookup.
+Private and zero-post outcomes require a matching native identity. Deactivation
+requires explicit agreement from both the documented native-ID lookup and a
+current-handle lookup, including matching echoed request identities. Unrecognized
+successful envelopes preserve availability-unconfirmed rather than discarding a
+valid empty inventory. A later roster rename invalidates old outcome evidence.
+The health model and scheduler recognize deactivated accounts as expected
+unavailability with periodic rechecks, preserving metric and failure history.
+Profile-only scheduling also no longer masks an explicit no-public-post outcome.
+
+Live dgetstaller run `8f317386-ceac-4fdf-99ee-ca616922b2a3` and gotall.dan run
+`749bf2ba-aab1-4358-97c6-60aef96a3bfe` each retained three sealed responses,
+persisted `deactivated`, recorded zero account failures, and scheduled the next
+check twelve hours later. Their respective evidence manifests are
+`ca5fea2b7cfb805a67bc16b296413944b6895dc9cbc4aee99674e61be9864c93`
+and `f962f46cb3cfc1f4b402d86689e2b6adaaa900dd70df0c93165867951b916560`.
+Their 58 missing observations are unavailable coverage, not recovered metrics
+or evidence of zero views or zero payment owed.
+
+Instagram discovery can now resolve a missing native ID from a matching profile
+and archive the identity before persistence. Unscoped empty post responses use
+an independent stable-ID lookup, including bounded current-handle recovery.
+Live checks still could not resolve aeronmoggz or height.master7: their identity
+endpoints returned not-found responses. No privacy, deletion, replacement
+identity, or new metric values were inferred for those accounts.
+
+At 08:24:49 EDT, production health reported 85 overdue TikTok videos (144 before
+this follow-up), 92 current failed videos, 146 unavailable active videos, four
+unresolved TikTok accounts, and two unresolved Instagram accounts. Instagram
+had zero overdue videos. Current target capacity was feasible at 142/160 modeled
+daily starts, 73/80 in the busiest half-day, with zero clustered window misses;
+26 ordinary scheduling deferrals remained. Historical quality debt remained
+visible: 62 enforced missed windows and 791 outside-window captures. Coverage
+remains degraded; the health probe's exit 1 is intentional.
+
+Verification: all 849 tests, typecheck, production build, zero-vulnerability
+audit, and the 47-page cutover gate passed. HTTP health passed. The worker and
+all eight managed timers were enabled and active, and temporary recovery and
+diagnostic units were removed. The provider reported 20,040 credits remaining
+against a reserve of 100; no server or provider plan upgrade was needed.
