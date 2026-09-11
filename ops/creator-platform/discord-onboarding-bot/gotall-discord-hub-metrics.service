@@ -1,0 +1,13 @@
+[Unit]
+Description=Project viral.app and new tracker observations into Discord creator views
+After=gotall-discord-onboarding-test.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/bin/python3 /usr/local/lib/gotall-discord-onboarding-test/hub-metrics-bridge.py run
+TimeoutStartSec=150
+PrivateTmp=true
+NoNewPrivileges=true
+

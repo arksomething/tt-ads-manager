@@ -26,6 +26,7 @@ const books = Array.from({ length: bookCount }, (_, index) => ({
 globalThis.__dbShimTestTables = {
   Author: authors,
   Book: books,
+  SingularReportCache: [{cacheKey:"overlay:date-range",family:"overlay",entry:{kind:"pending"}}],
 };
 globalThis.__dbShimTestRequests = [];
 
@@ -82,6 +83,7 @@ export const modelSchema = {
       },
     },
   },
+  SingularReportCache: {table:"SingularReportCache",fields:{cacheKey:scalar("String"),family:scalar("String"),entry:scalar("Json")},relations:{}},
   Ghost: {
     table: "Ghost",
     fields: {
@@ -112,6 +114,8 @@ class FakeQuery {
     return this;
   }
 
+  update(data) { this.patch=data; return this; }
+  eq(key,value) { this.filter=[key,value]; return this; }
   order() {
     return this;
   }
@@ -135,6 +139,13 @@ class FakeQuery {
         return;
       }
 
+      if(this.patch) {
+        if(!this.filter)throw new Error("Unscoped update");
+        const [key,value]=this.filter;
+        const matches=rows.filter(r=>r[key]===value);
+        matches.forEach(r=>Object.assign(r,this.patch));
+        resolve({data:matches,error:null});return;
+      }
       const slice =
         this.rangeTo == null
           ? rows
@@ -327,4 +338,12 @@ test("findMany on a missing table returns an empty list", async () => {
   const rows = await prisma.ghost.findMany({ where: { OR: [{ id: "x" }] } });
 
   assert.deepEqual(rows, []);
+});
+
+test("Singular cache upsert updates existing cacheKey-only records", async () => {
+  const key="overlay:date-range";
+  await prisma.singularReportCache.upsert({where:{cacheKey:key},data:{cacheKey:key,entry:{kind:"ready"}},update:{entry:{kind:"ready"}}});
+  const row=await prisma.singularReportCache.findFirst({where:{cacheKey:key}});
+  assert.equal(row.entry.kind,"ready");
+  assert.equal(globalThis.__dbShimTestTables.SingularReportCache.length,1);
 });

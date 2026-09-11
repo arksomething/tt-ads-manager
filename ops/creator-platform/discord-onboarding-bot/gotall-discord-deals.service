@@ -1,0 +1,11 @@
+[Unit]
+Description=Publish approved Discord deal drafts to the shared calculator database
+After=network-online.target gotall-discord-onboarding-test.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/gotall-discord-onboarding-test/shared-deal-worker.py run
+User=root
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+TimeoutStartSec=120

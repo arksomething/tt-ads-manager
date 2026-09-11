@@ -1,0 +1,10 @@
+[Unit]
+Description=Synchronize GoTall approved accounts and tracker health
+
+[Timer]
+OnBootSec=45
+OnUnitActiveSec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

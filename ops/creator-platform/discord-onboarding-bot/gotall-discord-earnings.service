@@ -1,0 +1,11 @@
+[Unit]
+Description=Calculate requested Discord earnings snapshots
+After=network-online.target gotall-discord-onboarding-test.service
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 /usr/local/lib/gotall-discord-onboarding-test/earnings-worker.py run
+UMask=0077
+PrivateTmp=true
+NoNewPrivileges=true
+TimeoutStartSec=210

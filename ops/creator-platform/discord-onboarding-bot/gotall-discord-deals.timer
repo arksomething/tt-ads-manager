@@ -1,0 +1,8 @@
+[Unit]
+Description=Deliver pending shared deal publications
+[Timer]
+OnBootSec=30
+OnUnitInactiveSec=10
+Unit=gotall-discord-deals.service
+[Install]
+WantedBy=timers.target

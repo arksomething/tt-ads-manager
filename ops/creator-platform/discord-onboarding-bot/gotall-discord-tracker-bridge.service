@@ -1,0 +1,12 @@
+[Unit]
+Description=Register approved GoTall creators and notify confirmed tracker issues
+After=gotall-discord-onboarding-test.service
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/bin/python3 /usr/local/lib/gotall-discord-onboarding-test/tracker-bridge.py run
+TimeoutStartSec=180
+PrivateTmp=true
+

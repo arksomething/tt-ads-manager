@@ -365,6 +365,10 @@ export type UgcPayCreatorAccessScope = {
   organizationId: string;
   creatorId: string;
   campaignCreatorId?: string | null;
+  /** Trusted server workers may apply each published deal's view window. */
+  applyDealViewWindows?: boolean;
+  /** Background workers wait for the paid lookup instead of a UI timeout. */
+  waitForPaidLookup?: boolean;
 };
 
 function getSearchParamValue(
@@ -1771,6 +1775,7 @@ async function getCreatorAccessLocalViewTallyData(args: {
   endDate: string;
   start: Date;
   endExclusive: Date;
+  waitForPaidLookup?: boolean;
 }) {
   type CreatorAccessLocalVideoRecord = Omit<
     CreatorAccessLocalVideoRow,
@@ -1895,7 +1900,7 @@ async function getCreatorAccessLocalViewTallyData(args: {
 
   if (sourceVideoIds.length > 0) {
     try {
-      const paidReport = await getCreatorAccessPaidLookupWithTimeout({
+      const paidReport = await (args.waitForPaidLookup ? getCreatorAccessPaidLookupPromise : getCreatorAccessPaidLookupWithTimeout)({
         organizationSlug: args.organizationSlug,
         organizationId: args.organizationId,
         creatorId: args.creatorId,
@@ -2327,7 +2332,9 @@ export async function getOrganizationUgcPayData(args: {
     startDate,
     endDate,
   );
-  const viewWindowMode = args.creatorAccess
+  const viewWindowMode = args.creatorAccess?.applyDealViewWindows
+    ? "first-days"
+    : args.creatorAccess
     ? "all"
     : getSelectedViewWindowMode(args.searchParams);
   const videoFetchMode = getSelectedVideoFetchMode(args.searchParams);
@@ -2521,10 +2528,13 @@ export async function getOrganizationUgcPayData(args: {
   }
 
   markTiming("db-creators-and-deals");
-  const creatorAccessViewTallyCreatorId = null;
+  const creatorAccessViewTallyCreatorId = args.creatorAccess?.applyDealViewWindows
+    ? await resolveViewTallyCreatorIdForLocalCreator({organizationId,creatorId:args.creatorAccess.creatorId})
+    : null;
   const creatorAccessCampaignCreator = payoutCampaignCreators[0] ?? null;
   const viewTallyData = args.creatorAccess
     ? await getCreatorAccessLocalViewTallyData({
+        waitForPaidLookup: args.creatorAccess.waitForPaidLookup,
         organizationSlug: args.organizationSlug,
         organizationId,
         creatorId: args.creatorAccess.creatorId,
@@ -2603,7 +2613,22 @@ export async function getOrganizationUgcPayData(args: {
         );
   let unmatchedVideos = 0;
 
-  const viewWindowAdjustedRows =
+  let viewWindowAdjustedRows: {rows: ViewTallyListItem[]; warnings: string[]};
+  if(args.creatorAccess?.applyDealViewWindows && creatorAccessCampaignCreator) {
+    if(!creatorAccessViewTallyCreatorId) throw new Error("Cannot match the creator's account for deal-window calculation.");
+    const groups=new Map<number,ViewTallyListItem[]>();
+    for(const row of candidatePayableRows){
+      const days=resolveDealForVideo({campaignCreator:creatorAccessCampaignCreator,row,reportTimeZone,fallbackStartDate:start}).viewWindowDays;
+      groups.set(days,[...(groups.get(days)??[]),row]);
+    }
+    viewWindowAdjustedRows={rows:[],warnings:[]};
+    for(const [days,rows] of groups){
+      const adjusted=await applyGlobalViewWindowToRows({organizationSlug:args.organizationSlug,organizationId,viewTallyCreatorId:creatorAccessViewTallyCreatorId,rows,startDate,endDate,reportTimeZone,videoFetchMode,globalViewWindowDays:days,includePaidViews:args.includePaidViews,topVideoLimit:args.topVideoLimit,includeInstagram});
+      viewWindowAdjustedRows.rows.push(...adjusted.rows);
+      viewWindowAdjustedRows.warnings.push(...adjusted.warnings);
+    }
+  } else {
+  viewWindowAdjustedRows =
     viewWindowMode === "first-days"
       ? await applyGlobalViewWindowToRows({
           organizationSlug: args.organizationSlug,
@@ -2623,6 +2648,7 @@ export async function getOrganizationUgcPayData(args: {
           rows: candidatePayableRows,
           warnings: [] as string[],
         };
+  }
   const payableRows = viewWindowAdjustedRows.rows;
   warnings.push(...viewWindowAdjustedRows.warnings);
   const videoContentTypesBySourceVideoId = await getLocalVideoContentTypes({

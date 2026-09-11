@@ -1,3 +1,4 @@
+import {hasPaidDelivery,needsPostMapping,getResolvedVideoPaidStatus} from "./paid-attribution-guards";
 import { cache as reactCache } from "react";
 
 import { Platform, SparkAuthorizationStatus } from "@/lib/prisma-shim";
@@ -1545,19 +1546,6 @@ async function resolveExactItemIdsFromAdMetadata(args: {
   for (const group of fallback.groups) {
     if (group.itemIds.length === 0) {
       adGroupsWithoutResolvedPostId += 1;
-
-      if (group.postBackingStatus === "non_post_backed") {
-        if (group.adId !== "Unknown") {
-          unresolvedNonPostBackedGroupIds.add(group.adId);
-        }
-        unresolvedNonPostBackedGroupCount += 1;
-      } else {
-        if (group.adId !== "Unknown") {
-          unresolvedPostBackedGroupIds.add(group.adId);
-        }
-        unresolvedUnknownGroupCount += 1;
-      }
-
       continue;
     }
 
@@ -1614,7 +1602,7 @@ async function resolveExactItemIdsFromAdMetadata(args: {
     itemIds: args.itemIds,
     startDate: args.startDate,
     endDate: args.endDate,
-    groups: fallback.groups,
+    groups: fallback.groups.filter(needsPostMapping),
     singularMatchMode: args.singularMatchMode,
   });
 
@@ -3076,65 +3064,6 @@ export async function getTikTokCampaignVideoViewsForOrganization(args: {
   };
 }
 
-function getResolvedVideoPaidStatus(args: {
-  matchedReportRowCount: number;
-  hasAmbiguousMatch: boolean;
-  hadAnyPaidRows: boolean;
-  hasOpaqueReportRows: boolean;
-  hasPendingExternalResolution: boolean;
-  unresolvedUnknownGroupCount: number;
-  onlyNonPostBackedDelivery: boolean;
-}): {
-  paidStatus: TikTokVideoPaidStatus;
-  paidStatusReason: TikTokVideoPaidStatusReason;
-} {
-  if (args.matchedReportRowCount > 0) {
-    return {
-      paidStatus: "yes",
-      paidStatusReason: "exact_post_match",
-    };
-  }
-
-  if (args.hasAmbiguousMatch) {
-    return {
-      paidStatus: "unknown",
-      paidStatusReason: "ambiguous_post_mapping",
-    };
-  }
-
-  if (!args.hadAnyPaidRows) {
-    return {
-      paidStatus: "no",
-      paidStatusReason: "no_paid_rows_in_window",
-    };
-  }
-
-  if (args.hasPendingExternalResolution) {
-    return {
-      paidStatus: "unknown",
-      paidStatusReason: "pending_external_match",
-    };
-  }
-
-  if (args.hasOpaqueReportRows || args.unresolvedUnknownGroupCount > 0) {
-    return {
-      paidStatus: "unknown",
-      paidStatusReason: "unresolved_post_mapping",
-    };
-  }
-
-  if (args.onlyNonPostBackedDelivery) {
-    return {
-      paidStatus: "unsupported",
-      paidStatusReason: "non_post_backed_delivery",
-    };
-  }
-
-  return {
-    paidStatus: "no",
-    paidStatusReason: "no_exact_post_match",
-  };
-}
 
 export async function getAdSpendForOrganization(args: {
   organizationSlug: string;
@@ -3215,7 +3144,7 @@ export async function getAdSpendForOrganization(args: {
     });
     const normalizedRows = report.rows.map((row) =>
       normalizeReportRow(row, report.apiMetricName),
-    );
+    ).filter(hasPaidDelivery);
     const metadataRows = [...normalizedRows]
       .filter((row) => row.metricValue > 0)
       .sort((left, right) => right.metricValue - left.metricValue)
@@ -3349,7 +3278,7 @@ export async function getPaidViewsForCreatorForOrganization(
   });
   const normalizedRows = report.rows.map((row) =>
     normalizeReportRow(row, report.apiMetricName),
-  );
+  ).filter(hasPaidDelivery);
   const itemIdSet = new Set(itemIds);
   const rowsIncludeItemIds = normalizedRows.some((row) => row.itemId !== null);
   const rowsIncludeAdIds = normalizedRows.some((row) => row.adId !== null);
@@ -3444,7 +3373,7 @@ export async function getPaidViewsForItemIdsForOrganization(args: {
     });
     const normalizedRows = report.rows.map((row) =>
       normalizeReportRow(row, report.apiMetricName),
-    );
+    ).filter(hasPaidDelivery);
     const rowsIncludeItemIds = normalizedRows.some((row) => row.itemId !== null);
     const rowsIncludeAdIds = normalizedRows.some((row) => row.adId !== null);
     const itemIdSet = new Set(itemIds);
@@ -3571,7 +3500,7 @@ export async function getPaidViewsForItemIdsForOrganization(args: {
               ...report.warnings,
               ...fallbackResolution.warnings,
               onlyNonPostBackedDelivery
-                ? "TikTok only exposed non-post-backed ad delivery for this date window, so exact post-level tallies are unsupported here."
+                ? "Unmapped delivery is ad-only creative delivery; it is not deducted from public creator posts."
                 : rowsIncludeAdIds
                 ? "TikTok report rows did not include item_id, and neither TikTok metadata nor Singular could resolve exact post IDs for these tallies."
                 : "TikTok report rows did not include item_id or ad_id, so paid video tallies could not be safely scoped.",
@@ -3643,7 +3572,7 @@ export async function warmTikTokPaidViewResolution(args: {
     });
     const normalizedRows = report.rows.map((row) =>
       normalizeReportRow(row, report.apiMetricName),
-    );
+    ).filter(hasPaidDelivery);
 
     if (!normalizedRows.some((row) => row.adId !== null)) {
       return;
@@ -3799,7 +3728,7 @@ export async function getPaidViewsForSourceVideosForCreatorForOrganization(args:
   markPaidViewsStep("report");
   const normalizedRows = report.rows.map((row) =>
     normalizeReportRow(row, report.apiMetricName),
-  );
+  ).filter(hasPaidDelivery);
   const rowsIncludeItemIds = normalizedRows.some((row) => row.itemId !== null);
   const rowsIncludeAdIds = normalizedRows.some((row) => row.adId !== null);
   const paidViewsByItemId = new Map<string, number>();
@@ -3960,7 +3889,7 @@ export async function getPaidViewsForSourceVideosForCreatorForOrganization(args:
             ...report.warnings,
             ...fallbackResolution.warnings,
             onlyNonPostBackedDelivery
-              ? "TikTok only exposed non-post-backed ad delivery for this date window, so exact post-level tallies are unsupported here."
+              ? "Unmapped delivery is ad-only creative delivery; it is not deducted from public creator posts."
               : rowsIncludeAdIds
               ? "TikTok report rows did not include item_id, and neither TikTok metadata nor Singular could resolve exact post IDs for these tallies."
               : "TikTok report rows did not include item_id or ad_id, so paid video tallies could not be safely scoped.",
@@ -4086,7 +4015,7 @@ export async function getPaidViewTimelineForSourceVideosForCreatorForOrganizatio
   });
   const normalizedRows = report.rows.map((row) =>
     normalizeReportRow(row, report.apiMetricName),
-  );
+  ).filter(hasPaidDelivery);
   const rowsIncludeItemIds = normalizedRows.some((row) => row.itemId !== null);
   const rowsIncludeAdIds = normalizedRows.some((row) => row.adId !== null);
   const paidViewsByItemId = new Map<string, number>();
@@ -4339,7 +4268,7 @@ export async function getPaidViewTimelineForSourceVideosForCreatorForOrganizatio
             ...report.warnings,
             ...fallbackResolution.warnings,
             onlyNonPostBackedDelivery
-              ? "TikTok only exposed non-post-backed ad delivery for this date window, so exact post-level tallies are unsupported here."
+              ? "Unmapped delivery is ad-only creative delivery; it is not deducted from public creator posts."
               : rowsIncludeAdIds
                 ? "TikTok report rows did not include item_id, and neither TikTok metadata nor Singular could resolve exact post IDs for these tallies."
                 : "TikTok report rows did not include item_id or ad_id, so paid video tallies could not be safely scoped.",

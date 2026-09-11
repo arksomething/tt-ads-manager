@@ -1597,6 +1597,10 @@ function flattenUniqueWhere(where: RecordValue | undefined) {
 }
 
 function getRowIdentifier(row: RecordValue) {
+  if (typeof row.cacheKey === "string" && row.cacheKey.length > 0) {
+    return { cacheKey: row.cacheKey };
+  }
+
   if (typeof row.id === "string" && row.id.length > 0) {
     return { id: row.id };
   }

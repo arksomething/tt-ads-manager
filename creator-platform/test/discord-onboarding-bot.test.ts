@@ -54,21 +54,21 @@ describe("Discord onboarding test bot", () => {
 
   it("uses the highest reached milestone", () => {
     expect([49_999, 50_000, 100_000, 300_000, 1_000_000].map(payoutForViews))
-      .toEqual([0, 20, 50, 100, 300]);
+      .toEqual([0, 20, 50, 100, 500]);
   });
 
-  it("pays only videos with every required GoTall marker", () => {
-    expect(evaluateVideo({ plug: true, mention: true, yap: true, patner: true, views: 100_000 }))
-      .toEqual({ eligible: true, missing: [], payout: 50 });
-    expect(evaluateVideo({ plug: false, mention: true, yap: true, patner: false, views: 1_000_000 }))
-      .toEqual({ eligible: false, missing: ["GoTall plug in the video", "#patner"], payout: 0 });
+  it("estimates only videos with required markers while partner remains provisional", () => {
+    expect(evaluateVideo({ plug: true, mention: true, yap: true, partner: true, views: 100_000 }))
+      .toMatchObject({ eligible: true, missing: [], payout: 50 });
+    expect(evaluateVideo({ plug: false, mention: true, yap: true, partner: false, views: 1_000_000 }))
+      .toMatchObject({ eligible: false, missing: ["GoTall plug in the video"], payout: 0 });
   });
 
-  it("moves creators at three days and makes four-day removal safe in test mode", () => {
+  it("moves creators at three days and waits four full At Risk days before simulated removal", () => {
     const now = Date.parse("2026-09-03T12:00:00.000Z");
     expect(inactivityDecision({ stage: "active", lastPostAt: "2026-08-31T12:00:00.000Z", now }))
       .toBe("at_risk");
-    expect(inactivityDecision({ stage: "at_risk", lastPostAt: "2026-08-30T12:00:00.000Z", now, testMode: true }))
+    expect(inactivityDecision({ stage: "at_risk", lastPostAt: "2026-08-27T12:00:00.000Z", riskStartedAt: "2026-08-30T12:00:00.000Z", now, testMode: true }))
       .toBe("would_remove");
     expect(inactivityDecision({
       stage: "active",

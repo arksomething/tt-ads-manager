@@ -18,6 +18,9 @@ const LIST_PAGE_SIZE = 100;
 const LIST_PAGE_FETCH_CONCURRENCY = 3;
 const AD_GET_FIELDS_CANDIDATES: Array<readonly string[] | undefined> = [
   [
+    "video_id",
+    "smart_plus_ad_id",
+    "campaign_automation_type",
     "ad_id",
     "ad_name",
     "identity_id",
@@ -29,6 +32,9 @@ const AD_GET_FIELDS_CANDIDATES: Array<readonly string[] | undefined> = [
     "secondary_status",
   ],
   [
+    "video_id",
+    "smart_plus_ad_id",
+    "campaign_automation_type",
     "ad_id",
     "ad_name",
     "identity_id",

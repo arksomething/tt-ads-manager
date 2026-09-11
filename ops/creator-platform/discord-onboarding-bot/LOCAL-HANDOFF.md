@@ -1,5 +1,9 @@
 # Discord local-desktop handoff — 2026-09-07
 
+> Historical checkpoint. The September 10 implementation integrates the flow and
+> Blazie messages into the deployed test runtime. Read [README.md](README.md) and
+> [MESSAGE-SOURCES.md](MESSAGE-SOURCES.md) for current behavior and verification.
+
 This is an unfinished development checkpoint, not a production-readiness claim.
 Read this file first when continuing the Codex task on the local Windows desktop.
 

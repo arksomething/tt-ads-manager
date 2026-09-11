@@ -1,0 +1,8 @@
+[Unit]
+Description=Run pending earnings calculations
+[Timer]
+OnBootSec=30
+OnUnitInactiveSec=10
+Unit=gotall-discord-earnings.service
+[Install]
+WantedBy=timers.target
