@@ -832,3 +832,43 @@ in their respective audit stages. The next persisted account recheck is
 2026-09-11 02:25:47 UTC. dgetstaller remains availability-unconfirmed with its
 recheck at 2026-09-11 00:45:16 UTC. Both temporary maintenance units were removed.
 Overall coverage remains degraded; no payout readiness is inferred.
+
+
+### September 11: large-profile pagination and ordinary scheduling age
+
+Deployed collector release
+`8329ae38b355e100f5acf217db25ad8be867a85aa4e8c14289ecc6037acde4cb`
+from app commit `2b9d200c82f258e9110ac8a786c5613941805079`.
+Ordinary account scheduling now uses persisted due age before stable-ID tie
+breaking, while preserving hard target priority. Large normal-profile runs
+receive a bounded inventory-sized paid allowance (maximum 60 requests); small
+accounts retain the 20-request base. Truncated pagination stores a validated,
+stable-account-bound cursor for continuation within 24 hours, fetching the fresh
+head first and retaining capped inventory status. Provider and item recovery
+share the remaining batch deadline. Global request limits and credit reserves
+remain enforced.
+
+Verification: 837 tests, typecheck, production build, and zero-vulnerability
+dependency audit passed. The ordinary-age regression was confirmed to fail with
+the comparator disabled. The 47-page cutover gate passed with producer
+`d1971ee4-9743-44cd-8cde-7ba8e231d0b6` and capture
+`264aa4bc6a0eeb1b83d14012b36399ec69462fdc90d383943978d50dac2c0505`.
+
+Live recovery run `7c674e5b-3a7b-4241-af64-35df0cb5481f` refreshed all 196 due
+known audrius_ma videos after the public extractor timed out: 40 paid pages
+against the adaptive allowance of 42, 251 observations including 55 incidental
+alignments, and zero missing observations. Inventory remains capped; this does
+not claim complete historical discovery. Bounded paid catch-up also refreshed
+30 gotallmoggings observations, 30 tallvex profile observations and 15/17 tallvex
+individual attempts. Two individual attempts returned HTTP 404, without being
+reclassified as private or deleted.
+
+Between 00:51:42 and 01:08:12 EDT, TikTok overdue videos fell from 399 to 145,
+and current failed videos from 287 to 95. Audrius_ma overdue fell 192 to zero,
+gotallmoggings 30 to zero, and tallvex 32 to zero. Tallvex still has four current
+failed videos; zero overdue is not equivalent to zero failures. Overall coverage
+remains degraded. A normal full-roster scheduler run reported 142/160 modeled
+daily starts and one clustered target-window miss, so these catch-up results do
+not establish sustained target feasibility or payout readiness. Both temporary
+recovery units were removed; HTTP health passed and the worker plus all eight
+managed timers were enabled and active.
