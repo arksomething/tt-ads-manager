@@ -8,10 +8,6 @@
     "test": "cd web && npm run test",
     "lint": "cd web && npm run lint",
     "typecheck": "cd web && npm run typecheck",
-    "db:generate": "cd web && npm run db:generate",
-    "db:push": "cd web && npm run db:push",
-    "db:migrate": "cd web && npm run db:migrate",
-    "db:studio": "cd web && npm run db:studio",
     "creator:dev": "npm --prefix creator-platform run dev",
     "creator:build": "npm --prefix creator-platform run build",
     "creator:start": "npm --prefix creator-platform run start",
@@ -19,6 +15,7 @@
     "creator:lint": "npm --prefix creator-platform run lint",
     "creator:typecheck": "npm --prefix creator-platform run typecheck",
     "creator:verify": "npm --prefix creator-platform run verify",
-    "tracker:autopilot:verify": "bash ops/creator-tracker-autopilot/tests/verify.sh"
+    "tracker:autopilot:verify": "bash ops/creator-tracker-autopilot/tests/verify.sh",
+    "db:generate-shim": "cd web && npm run db:generate-shim"
   }
 }

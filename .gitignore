@@ -32,3 +32,7 @@ __pycache__/
 *.sqlite3
 *.sqlite3-shm
 *.sqlite3-wal
+
+# Point-in-time artifacts kept on disk but not in source control.
+/reports/
+/inspo/Screenshot*
