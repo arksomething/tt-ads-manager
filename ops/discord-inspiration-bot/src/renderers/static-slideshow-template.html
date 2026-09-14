@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Static Slideshow</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'SF Pro', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background-color: {{BACKGROUND_COLOR}};
+            color: #000;
+            width: 1080px;
+            height: 1920px;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        .card {
+            background-color: {{BACKGROUND_COLOR}};
+            width: 100%;
+            height: 100%;
+            padding: 100px 120px 200px 120px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            border-radius: 0;
+        }
+
+        .title {
+            font-size: 120px;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 48px;
+        }
+
+        .title-line-1 {
+            display: block;
+        }
+
+        .title-line-2 {
+            display: block;
+        }
+
+        .icon-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 48px;
+            height: 300px;
+        }
+
+        .person-icon-wrapper {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 500px;
+        }
+
+        .person-icon-wrapper i {
+            font-size: 450px;
+            color: #000;
+            line-height: 1;
+            display: block;
+        }
+
+        .content-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            width: 100%;
+            margin-top: 0;
+        }
+
+        .label {
+            font-size: 90px;
+            font-weight: bold;
+            margin-bottom: 24px;
+        }
+
+        .height-value {
+            font-size: 200px;
+            font-weight: bold;
+            line-height: 1;
+            margin-bottom: 0;
+        }
+
+        .age-value {
+            font-size: 90px;
+            font-weight: bold;
+            margin-top: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="title">
+            <span class="title-line-1">PREDICTING</span>
+            <span class="title-line-2">YOUR HEIGHT</span>
+        </div>
+
+        <div class="icon-container">
+            <div class="person-icon-wrapper">
+                {{PERSON_ICON}}
+            </div>
+        </div>
+
+        <div class="content-section">
+            <div class="label">{{LABEL}}</div>
+            <div class="height-value">{{HEIGHT}}</div>
+            {{AGE_SECTION}}
+        </div>
+    </div>
+</body>
+</html>

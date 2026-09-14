@@ -1,0 +1,58 @@
+{
+  "name": "gotall-slideshow-gen",
+  "version": "1.0.0",
+  "description": "Discord bot that generates TikTok slideshow images using OpenAI DALL-E",
+  "main": "dist/bot.js",
+  "scripts": {
+    "build": "tsc && npm run copy-assets",
+    "copy-assets": "node -e \"const fs=require('fs'),path=require('path'); if(!fs.existsSync('dist/renderers')) fs.mkdirSync('dist/renderers',{recursive:true}); if(fs.existsSync('src/renderers/framed-template.html')) fs.copyFileSync('src/renderers/framed-template.html','dist/renderers/framed-template.html'); if(fs.existsSync('src/renderers/static-slideshow-template.html')) fs.copyFileSync('src/renderers/static-slideshow-template.html','dist/renderers/static-slideshow-template.html'); if(fs.existsSync('src/renderers/icon.png')) fs.copyFileSync('src/renderers/icon.png','dist/renderers/icon.png');\"",
+    "start": "node dist/bot.js",
+    "dev": "ts-node src/bot.ts",
+    "watch": "tsc -w",
+    "dev-server": "vite",
+    "preview": "vite preview",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "dalle",
+    "slideshow",
+    "tiktok"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@types/puppeteer": "^5.4.7",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "convert-units": "^2.3.4",
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.3.1",
+    "openai": "^4.20.1",
+    "puppeteer": "24.40.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-native": "^0.79.5",
+    "react-native-svg": "^15.11.2",
+    "react-native-web": "^0.20.0",
+    "sharp": "^0.33.5"
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-code": "^2.0.30",
+    "@types/convert-units": "^2.3.12",
+    "@types/jest": "^29.5.11",
+    "@types/node": "^20.10.5",
+    "@types/react-native-web": "^0.19.2",
+    "jest": "^29.7.0",
+    "ts-jest": "29.4.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3",
+    "vite": "^7.1.12"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
