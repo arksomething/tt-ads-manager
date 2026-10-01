@@ -75,6 +75,7 @@ fi
 writer_lock_name=''
 writer_lock_wait_seconds=0
 writer_lock_timeout_exit=75
+writer_lock_mode=exclusive
 secondary_lock_name=''
 case "$job_name" in
   roster-refresh|provider-reconcile|instagram-discovery|instagram-credit-rearm|migrate-database)
@@ -84,6 +85,9 @@ case "$job_name" in
     ;;
   scheduler-tick)
     writer_lock_name=owned-tracker-writer
+    # Minute-aligned read-only probes can hold a snapshot fence for 45s.
+    # Wait through that short overlap instead of losing a whole 3m tick.
+    writer_lock_wait_seconds=45
     ;;
   instagram-scheduler)
     # The five-minute Instagram lane must eventually get a turn even when a
@@ -97,6 +101,7 @@ case "$job_name" in
     # can own the WAL instead of reporting a false coverage failure from an
     # intentionally uncheckpointed in-flight transaction.
     writer_lock_name=owned-tracker-writer
+    writer_lock_mode=shared
     secondary_lock_name=canonical-delivery
     ;;
 esac
@@ -256,10 +261,10 @@ if [[ -n "$writer_lock_name" ]]; then
   fi
   exec {writer_lock_fd}>"$writer_lock_file"
   if ((writer_lock_wait_seconds > 0)); then
-    /usr/bin/flock -w "$writer_lock_wait_seconds" "$writer_lock_fd"
+    /usr/bin/flock --"$writer_lock_mode" -w "$writer_lock_wait_seconds" "$writer_lock_fd"
     writer_lock_exit=$?
   else
-    /usr/bin/flock -n "$writer_lock_fd"
+    /usr/bin/flock --"$writer_lock_mode" -n "$writer_lock_fd"
     writer_lock_exit=$?
   fi
   if ((writer_lock_exit != 0)); then
@@ -282,7 +287,7 @@ if [[ -n "$secondary_lock_name" ]]; then
     }
   fi
   exec {secondary_lock_fd}>"$secondary_lock_file"
-  if ! /usr/bin/flock -n "$secondary_lock_fd"; then
+  if ! /usr/bin/flock --shared -n "$secondary_lock_fd"; then
     write_marker \
       "$health_dir/$job_name.secondary-lock-busy" \
       75 \

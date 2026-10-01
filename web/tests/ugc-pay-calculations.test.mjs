@@ -6,6 +6,9 @@ import {
   applyUgcPayVideoContentTypeCpm,
   applyUgcPayVideoDealOverride,
   calculateUgcPayVideoAmounts,
+  selectUgcPayDealForPublication,
+  GOTALL_NON_TALKING_CHANGE_AT,
+  GOTALL_ORGANIZATION_ID,
 } from "../src/server/ugc-pay/calculations.ts";
 import {
   getCreatorDealFromForm,
@@ -27,6 +30,36 @@ function deal(overrides = {}) {
     ...overrides,
   };
 }
+
+test("September GoTall non-talking rates use the exact announcement cutoff and preserve overrides", () => {
+  const before = new Date(Date.parse(GOTALL_NON_TALKING_CHANGE_AT) - 1);
+  const args = {isTalking:false,creatorIsTalking:true,hasVideoDealOverride:false,
+    organizationId:GOTALL_ORGANIZATION_ID,postedDateOnly:"2026-09-17"};
+  const talkingDeal = deal({cpmAmount:1,payoutCapPerVideo:300,perVideoCapScope:"CPM",fixedFeePerVideo:10});
+  const prior = applyUgcPayVideoContentTypeCpm(talkingDeal,{...args,postedAt:before});
+  const after = applyUgcPayVideoContentTypeCpm(talkingDeal,{...args,postedAt:GOTALL_NON_TALKING_CHANGE_AT});
+  assert.equal(calculateWithDeal(prior).videoPay,16);
+  assert.equal(calculateWithDeal(after).videoPay,12.4);
+  assert.equal(after.payoutCapPerVideo,100);
+  assert.equal(applyUgcPayVideoContentTypeCpm(talkingDeal,{...args,postedAt:GOTALL_NON_TALKING_CHANGE_AT,organizationId:"another-org"}).cpmAmount,.5);
+  assert.equal(applyUgcPayVideoContentTypeCpm(talkingDeal,{...args,postedAt:GOTALL_NON_TALKING_CHANGE_AT,hasVideoDealOverride:true}).cpmAmount,1);
+  assert.equal(applyUgcPayVideoContentTypeCpm(talkingDeal,{...args,postedAt:GOTALL_NON_TALKING_CHANGE_AT,isTalking:true}).cpmAmount,1);
+  const exception=deal({cpmAmount:.5,payoutCapPerVideo:100});
+  assert.equal(applyUgcPayVideoContentTypeCpm(exception,{...args,postedAt:GOTALL_NON_TALKING_CHANGE_AT,creatorIsTalking:false}),exception);
+});
+
+test("publication instant selects the September deal without repricing older posts or changing inclusive date deals", () => {
+  const cutoff=Date.parse(GOTALL_NON_TALKING_CHANGE_AT);
+  const old={...deal({cpmAmount:.5}),effectiveStartDate:new Date("2026-07-20Z"),effectiveEndDate:new Date(cutoff-1)};
+  const fresh={...deal({cpmAmount:.2}),effectiveStartDate:new Date(cutoff),effectiveEndDate:null};
+  assert.equal(selectUgcPayDealForPublication([old,fresh],new Date(cutoff-1),"2026-09-17"),old);
+  assert.equal(selectUgcPayDealForPublication([old,fresh],new Date(cutoff),"2026-09-17"),fresh);
+  // Reporting timezone cannot move an intraday policy boundary.
+  assert.equal(selectUgcPayDealForPublication([old,fresh],new Date(cutoff),"2026-09-18"),fresh);
+  const july={...old,effectiveStartDate:new Date("2026-07-01Z"),effectiveEndDate:new Date("2026-07-19Z")};
+  assert.equal(selectUgcPayDealForPublication([july],new Date("2026-07-19T23:59:59Z"),"2026-07-19"),july);
+  assert.equal(selectUgcPayDealForPublication([fresh],null,"2026-09-17"),null);
+});
 
 function calculateWithDeal(currentDeal) {
   return calculateVideo({
@@ -619,4 +652,14 @@ test("local per-video override save recalculates the selected video and creator 
   assert.equal(untouchedVideo.videoPay, 5);
   assert.equal(recalculated.videoDealOverrideCount, 1);
   assert.equal(recalculated.totalPay, 55);
+});
+
+test('editing creator terms cannot resurrect a reviewed no-plug video in the payout preview', () => {
+  const video = videoRow({ organizationId: GOTALL_ORGANIZATION_ID, sourceVideoId: '7671324275168578838', videoUrl: 'https://www.tiktok.com/@renamed/video/7671324275168578838', hasVideoDealOverride: false });
+  const creator = creatorRow({ videos: [video] });
+  const updated = recalculateCreatorWithDeal({ creator, deal: creatorDeal({ cpmAmount: 20, fixedFeePerVideo: 100, perVideoCapScope: 'NONE' }), hasCustomDeal: true, options: { startDate: '2026-08-01', endDate: '2026-08-31', payMode: 'posted' } });
+  assert.equal(updated.videos[0].videoPay, 0);
+  assert.equal(updated.videos[0].fixedFeePerVideo, 0);
+  assert.equal(updated.videos[0].payableViews, 0);
+  assert.match(updated.videos[0].videoDealNotes, /No GoTall plug/);
 });

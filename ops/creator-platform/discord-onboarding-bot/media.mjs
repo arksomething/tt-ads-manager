@@ -34,7 +34,7 @@ export async function resolveVideo(value, request = fetch) {
 export async function resolvePublishedField(value, platform, {testMode=false,request=fetch}={}) {
   const raw=String(value||'').trim();
   const candidates=raw.match(/(?:https?:\/\/)?(?:[a-z0-9-]+\.)+(?:com|be|net)(?:\/[^\s<>]*)?/giu)||[];
-  if(candidates.length!==1)throw new Error(`Paste one ${platform==='instagram'?'Instagram reel or post':'TikTok video or share'} link in this field.`);
+  if(candidates.length!==1)throw new Error(`Paste one ${platform} published video link in this field.`);
   let link=candidates[0].replace(/[)\],.!?;]+$/u,'');
   if(!/^https?:\/\//iu.test(link))link='https://'+link;
   const url=new URL(link);
@@ -46,8 +46,8 @@ export async function resolvePublishedField(value, platform, {testMode=false,req
     if(!match)throw new Error('Use the Instagram reel or post link, not the account profile. Open the post and choose Share → Copy link.');
     return {key:`instagram:${match[1]}`,url:`https://www.instagram.com/reel/${match[1]}/`};
   }
-  const video=await resolveVideo(link,request);
-  if(!video.key.startsWith('tiktok:'))throw new Error('The TikTok field needs a TikTok video or share link.');
+  const video=platform==='tiktok'?await resolveVideo(link,request):canonicalVideo(link);
+  if(!video.key.startsWith(platform+':'))throw new Error(`The ${platform} field needs a ${platform} video link.`);
   return video;
 }
 
@@ -100,5 +100,5 @@ export function publicCreatorResponse(interaction, creator, startChannelId, staf
   if (interaction.type === 5 && interaction.data?.custom_id === 'gotall-apply-v1') return true;
   if (interaction.type === 2) return interaction.data?.name === 'status' && creator?.discord_user_id === user && !(interaction.data?.options || []).some(o => o.name === 'creator' && o.value !== user);
   if (['guide','resume','help'].includes(action)) return false;
-  return creator?.discord_user_id === user && ['accounts','ready','post','leave','complete_warmup','signed','first_video','test_signed'].includes(action);
+  return creator?.discord_user_id === user && ['accounts','ready','post','first_posted','leave','complete_warmup','signed','first_video','test_signed'].includes(action);
 }

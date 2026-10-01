@@ -60,9 +60,39 @@ export const LEGACY_NON_TALKING_VIDEO_PAYOUT_CAP_PER_VIDEO = 300;
 // Jul 20 2026 policy: classified non-talking videos take the full non-talking
 // terms (CPM and cap) of whichever era the video was posted in.
 export const NON_TALKING_VIDEO_CAP_EFFECTIVE_DATE_ONLY = "2026-07-20";
+// Announcement 1549797121111236619: applies to posts 24 hours after publication.
+export const GOTALL_NON_TALKING_CHANGE_AT = "2026-09-17T15:00:27.511Z";
+export const GOTALL_ORGANIZATION_ID = "org_public_tt_ads_manager";
+
+// Older deals use inclusive calendar dates. Explicit intraday boundaries use
+// publication instants, so a new rate cannot reprice earlier posts that day.
+export function selectUgcPayDealForPublication<T extends {
+  effectiveStartDate: Date;
+  effectiveEndDate: Date | null;
+}>(deals: T[], postedAt: Date | null, postedDateOnly: string): T | null {
+  const instant = postedAt?.getTime();
+  const matches = deals.filter((deal) => {
+    const start = deal.effectiveStartDate;
+    const end = deal.effectiveEndDate;
+    const midnight = (date: Date) => date.toISOString().slice(11) === "00:00:00.000Z";
+    const afterStart = midnight(start)
+      ? postedDateOnly >= start.toISOString().slice(0, 10)
+      : instant != null && instant >= start.getTime();
+    const beforeEnd = !end || (midnight(end)
+      ? postedDateOnly <= end.toISOString().slice(0, 10)
+      : instant != null && instant <= end.getTime());
+    return afterStart && beforeEnd;
+  });
+  return matches.sort((a, b) => b.effectiveStartDate.getTime() - a.effectiveStartDate.getTime())[0] ?? null;
+}
 
 export function normalizeMoney(value: number) {
-  return Number(value.toFixed(2));
+  // Decimal half-cents must round away from zero. Binary toFixed can turn
+  // $18.395 into $18.39, underpaying otherwise identical view-earnings lines.
+  // Drop arithmetic noise from e.g. (10 + 1.505) - 10 before cent rounding.
+  const absolute = Number(Math.abs(value).toPrecision(15));
+  const cents = Math.round((absolute + Number.EPSILON * Math.max(1, absolute)) * 100);
+  return (value < 0 ? -cents : cents) / 100;
 }
 
 export function applyUgcPayVideoContentTypeCpm<
@@ -74,6 +104,8 @@ export function applyUgcPayVideoContentTypeCpm<
     hasVideoDealOverride: boolean;
     postedDateOnly?: string | null;
     creatorIsTalking?: boolean;
+    organizationId?: string;
+    postedAt?: Date | string | null;
   },
 ): TDeal {
   // The non-talking downgrade reprices a mismatched video: a non-talking
@@ -94,7 +126,9 @@ export function applyUgcPayVideoContentTypeCpm<
 
   return {
     ...deal,
-    cpmAmount: NON_TALKING_VIDEO_CPM_AMOUNT,
+    cpmAmount: args.organizationId === GOTALL_ORGANIZATION_ID &&
+      args.postedAt != null && new Date(args.postedAt).getTime() >= Date.parse(GOTALL_NON_TALKING_CHANGE_AT)
+      ? 0.2 : NON_TALKING_VIDEO_CPM_AMOUNT,
     payoutCapPerVideo: appliesNonTalkingCap
       ? NON_TALKING_VIDEO_PAYOUT_CAP_PER_VIDEO
       : LEGACY_NON_TALKING_VIDEO_PAYOUT_CAP_PER_VIDEO,

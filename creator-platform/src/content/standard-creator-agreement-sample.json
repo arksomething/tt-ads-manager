@@ -1,7 +1,7 @@
 {
   "documentTitle": "GoTall Standard Creator Agreement",
-  "version": "Sample draft v0.1",
-  "documentDate": "September 1, 2026",
+  "version": "Sample draft v0.2",
+  "documentDate": "September 15, 2026",
   "status": "DRAFT — NON-BINDING — NOT FOR SIGNATURE",
   "summary": "A counsel-review sample showing the proposed standard creator economics, content ownership, advertising rights, and operating terms. It is not an assigned deal version.",
   "notices": [
@@ -58,6 +58,11 @@
       "label": "Payment timing",
       "value": "[TO APPROVE: statement period, due date, payment rail, minimum payout, tax and invoice requirements]",
       "status": "Approval required"
+    },
+    {
+      "label": "Participation and future changes",
+      "value": "At will: either party may end participation at any time. GoTall may change future program terms by written notice, but changes do not reduce compensation already earned or alter an accepted assignment retroactively.",
+      "status": "Owner-directed proposed term; notice method and timing to approve with counsel"
     }
   ],
   "recitals": [
@@ -228,7 +233,8 @@
       "number": "14",
       "title": "Term, termination, and takedowns",
       "paragraphs": [
-        "The Agreement begins on the Effective Date and continues until terminated. [TO APPROVE: at-will notice period, for-cause termination, cure period, suspension rights, and effect of account inactivity.]",
+        "Participation in the GoTall creator program is voluntary and at will. Either Creator or GoTall may end Creator’s participation at any time, with or without cause, by written notice through the creator platform, the creator’s designated program channel, email, or another approved notice method. No minimum term, minimum number of assignments, or promise of continued participation applies. [TO APPROVE WITH COUNSEL: whether termination is effective immediately or after a stated notice period, the final notice methods, any cure period, suspension rights, and the effect of account inactivity.]",
+        "GoTall may pause new assignments or access while it investigates suspected fraud, platform-policy violations, unsafe or unlawful content, account-security issues, or a material breach. Creator may decline any future Campaign Brief or revised deal and may stop accepting new work at any time.",
         "Termination does not erase accepted work or payment already earned under the final rules. GoTall’s ownership of Deliverables and the advertising, publicity, confidentiality, records, enforcement, dispute, and other provisions intended by their nature to survive will survive termination.",
         "[TO APPROVE: whether Creator must keep previously accepted organic posts live after termination, when GoTall must stop handle-based paid ads, and whether already-launched ads may complete a wind-down period.]"
       ],
@@ -251,7 +257,8 @@
       "title": "General terms and electronic signatures",
       "paragraphs": [
         "The final Agreement, its assigned Schedule A, and incorporated Campaign Briefs will be the entire agreement about the program and will replace prior discussions on the same subject. A conflict will be resolved in this order: signed creator-specific amendment, assigned deal version and Schedule A, this Agreement, then Campaign Brief—except that a Campaign Brief may set deliverable-specific requirements and approved additional compensation.",
-        "Any amendment must be in a written record accepted by both parties, except GoTall may update operational instructions that do not reduce already-assigned compensation or expand rights already granted. Failure to enforce a term is not a waiver. If a term is unenforceable, it will be narrowed to the minimum extent necessary and the rest remains effective.",
+        "GoTall may change program rules, eligibility criteria, workflows, posting expectations, and compensation offered for future Campaign Briefs or future deal periods by written notice. A change applies only prospectively from the stated effective date. It does not reduce compensation already earned, change the economics of work Creator already accepted, or expand rights in an existing Deliverable unless Creator accepts that change in a written record. Creator may decline the changed terms by not accepting new work and may end participation at any time.",
+        "Any other amendment must be in a written record accepted by both parties. GoTall may update operational instructions without additional acceptance when the update does not reduce already-assigned compensation, materially increase Creator’s obligations for accepted work, or expand rights already granted. Failure to enforce a term is not a waiver. If a term is unenforceable, it will be narrowed to the minimum extent necessary and the rest remains effective.",
         "Creator may not assign the Agreement without GoTall’s written consent. GoTall may assign it together with the program, brand, business, or substantially all relevant assets. Notices will be sent to the account email and [TO APPROVE: LEGAL NOTICE ADDRESSES AND METHOD].",
         "The final Agreement may be signed electronically and in counterparts. The signing record must identify the exact immutable deal version presented to Creator. A return from the signing provider does not activate the account until GoTall verifies completion evidence."
       ],

@@ -176,6 +176,7 @@ export function createDeals(db,io){
    return io.reply(i,dealCard(db,c,true,draft(c,i)));
   }
   if(action!=='publish')throw Error('Unknown deal action.');
+  if(io.testMode===false&&!binding(db,c))throw Error('This creator needs a verified payout record before deal changes can be published. Ask the team to verify the record first.');
   const terms=JSON.parse(d.payload_json);
   const draftId=terms._draftId;delete terms._draftId;
   const baseSource=terms._baseSource;delete terms._baseSource;
@@ -199,7 +200,7 @@ export function createDeals(db,io){
    db.prepare('INSERT INTO creator_deal_versions VALUES (?,?,?,?,?)').run(c.discord_user_id,version+1,JSON.stringify(terms),actor(i),new Date().toISOString());
    db.prepare('DELETE FROM creator_deal_drafts WHERE creator_id=? AND actor_id=?').run(c.discord_user_id,actor(i));
    db.prepare('INSERT INTO flow_events VALUES (?,?,?,?,?)').run(i.id,c.discord_user_id,actor(i),'publish_deal',new Date().toISOString());
-   io.enqueue(`deal-published:${c.discord_user_id}:${version+1}`,c.channel_id,{...flow.card('📄 Your deal has been updated',`Version ${version+1} · Effective ${terms.effectiveStartDate.slice(0,10)}\n\nOpen **My deal** to review the full terms. Contact your manager here if anything needs correcting. This update does not sign an agreement or change recorded payments.${c.status_message_id?`\n\n[Open your creator directory](https://discord.com/channels/1245112089647775877/${c.channel_id}/${c.status_message_id})`:""}`),content:`<@${c.discord_user_id}>`,allowed_mentions:{parse:[],users:[c.discord_user_id]},components:[row(button(`${c.discord_user_id}:view`,'My deal',1))]});
+   io.enqueue(`deal-published:${c.discord_user_id}:${version+1}`,c.channel_id,{...flow.card('📄 Your deal has been updated',`Version ${version+1} · Effective ${terms.effectiveStartDate.slice(0,10)}\n\nOpen **My deal** to review the full terms. Contact your manager here if anything needs correcting. This update does not sign an agreement or change recorded payments.${c.status_message_id?`\n\n[Open your creator directory](https://discord.com/channels/${io.guildId||flow.TEST_GUILD_ID}/${c.channel_id}/${c.status_message_id})`:""}`),content:`<@${c.discord_user_id}>`,allowed_mentions:{parse:[],users:[c.discord_user_id]},components:[row(button(`${c.discord_user_id}:view`,'My deal',1))]});
    db.exec('COMMIT');
   }catch(e){db.exec('ROLLBACK');throw e;}
   await io.deliver();return io.reply(i,dealCard(db,c,true));
@@ -215,7 +216,7 @@ export function createDeals(db,io){
      db.prepare('DELETE FROM creator_deal_drafts WHERE creator_id=? AND actor_id=?').run(r.creator_id,r.actor_id);
     }
     io.enqueue(`deal-result:${r.id}`,c.channel_id,{
-     ...flow.card(r.status==='published'?'📄 Deal published':'Deal publication needs attention',r.status==='published'?`**${flow.markdown(linked?.display_name||c.name)}** · Effective **${result.effectiveStartDate.slice(0,10)}**\n\nThe payout calculator now uses this deal for its effective period. Previously finalized payment amounts are unchanged.\n\n[Open creator directory](https://discord.com/channels/1245112089647775877/${c.channel_id}/${c.status_message_id})`:flow.markdown(r.error||'Reopen the deal and try again.')),
+     ...flow.card(r.status==='published'?'📄 Deal published':'Deal publication needs attention',r.status==='published'?`**${flow.markdown(linked?.display_name||c.name)}** · Effective **${result.effectiveStartDate.slice(0,10)}**\n\nThe payout calculator now uses this deal for its effective period. Previously finalized payment amounts are unchanged.\n\n[Open creator directory](https://discord.com/channels/${io.guildId||flow.TEST_GUILD_ID}/${c.channel_id}/${c.status_message_id})`:flow.markdown(r.error||'Reopen the deal and try again.')),
      content:`<@${r.actor_id}>`,allowed_mentions:{parse:[],users:[r.actor_id]},components:[row(button(`${r.creator_id}:view`,'View deal',1))]
     });
     db.prepare('UPDATE creator_deal_outbox SET settled=1 WHERE id=?').run(r.id);

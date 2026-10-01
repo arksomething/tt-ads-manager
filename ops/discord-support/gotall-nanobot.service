@@ -1,0 +1,24 @@
+[Unit]
+Description=GoTall Nanobot Discord support and operator gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ark296/projects/tt-ads-manager/ops/discord-support
+ExecStart=/home/ark296/.local/share/gotall-nanobot/venv/bin/python /home/ark296/projects/tt-ads-manager/ops/discord-support/support.py
+Environment=PYTHONUNBUFFERED=1
+Environment=GOTALL_SUPPORT_STATE=/home/ark296/.local/state/gotall-nanobot
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/ark296/.local/state/gotall-nanobot
+MemoryMax=512M
+CPUQuota=75%
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

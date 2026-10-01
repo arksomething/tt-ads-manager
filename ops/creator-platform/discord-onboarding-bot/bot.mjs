@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import { startInspiration } from './inspiration.mjs';
+import {assertRuntime,runtimeAllowed} from './runtime-scope.mjs';
+import { syncResourceGuidance } from './resource-guidance.mjs';
+import {webhookQueue,webhookServer,webhookPump} from './jotform-webhook.mjs';
 import {replyBody} from './audit.mjs';
 import {hubCommands} from './hubs.mjs';
 import { publicCreatorResponse, saveDraftUpload } from './media.mjs';
@@ -8,6 +12,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import {protectOffboardingChannelWrites} from './offboarding.mjs';
 import { createWorkspace, migrate, privateOverwrites } from "./workspace.mjs";
 import * as flow from "./flow.mjs";
 import {adminCommand,handleAdminCommand} from './admin.mjs';
@@ -32,7 +37,7 @@ const commandDefinitions = [
   {name:"deal",description:"View your full creator deal and agreement"},
   {name:"apply",description:"Start or reopen your GoTall creator application"},
   {name:"status",description:"Open creator workspace controls",options:[{name:"creator",description:"Creator to inspect (staff only)",type:6,required:false}]},
-  {name:"setup",description:"Repair the test-server layout and onboarding card",default_member_permissions:"32"},
+  {name:"setup",description:"Repair the server layout and onboarding card",default_member_permissions:"32"},
   {name:"invite",description:"Create a one-use creator invite",default_member_permissions:"32",options:[{name:"hours",description:"Hours before expiry",type:4,required:false,min_value:1,max_value:168}]},
   {name:"video-check",description:"Record a manual content assessment and payout estimate",default_member_permissions:"32",options:[
     {name:"url",description:"Video URL",type:3,required:true},
@@ -64,7 +69,7 @@ function safeText(value, maximum = 500) {
     : "";
 }
 
-async function api(config, pathname, init = {}) {
+export async function api(config, pathname, init = {}, attempt = 0) {
   const response = await fetch(`${API}${pathname}`, {
     ...init,
     headers: {
@@ -78,6 +83,10 @@ async function api(config, pathname, init = {}) {
   const raw = await response.text();
   let body = {};
   try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+  if(response.status===429&&attempt<6) {
+    await new Promise(resolve=>setTimeout(resolve,Math.max(1000,Number(body.retry_after||5)*1000)));
+    return api(config,pathname,init,attempt+1);
+  }
   if (!response.ok) {
     const details=[];
     const collect=(value,path='')=>{
@@ -88,6 +97,7 @@ async function api(config, pathname, init = {}) {
     collect(body.errors);
     const error = new Error(`Discord could not complete this request (HTTP ${response.status}, code ${body.code ?? 'unknown'}): ${body.message ?? 'request failed'}${details.length?' — '+details.join('; ').slice(0,1200):''}`);
     error.status = response.status;
+    error.code = body.code;
     throw error;
   }
   return body;
@@ -175,7 +185,7 @@ async function findOrCreateChannel(config, database, channels, key, name, type, 
   let channel = channels.find((item) => item.id === cached) ??
     channels.find((item) => item.name === name && item.type === type && (parentId === null || item.parent_id === parentId));
   if (!channel) {
-    channel = await api(config, `/guilds/${config.guildId}/channels`, {
+    channel = await protectOffboardingChannelWrites(database,config,api,resourceMap)(config, `/guilds/${config.guildId}/channels`, {
       method: "POST",
       body: JSON.stringify({ name, type, parent_id: parentId, permission_overwrites: overwrites }),
     });
@@ -186,6 +196,8 @@ async function findOrCreateChannel(config, database, channels, key, name, type, 
 }
 
 export async function ensureGuildResources(config, database) {
+  assertRuntime(config);
+  const safeApi=protectOffboardingChannelWrites(database,config,api,resourceMap);
   const [guild, roles, channels, bot] = await Promise.all([
     api(config, `/guilds/${config.guildId}`),
     api(config, `/guilds/${config.guildId}/roles`),
@@ -196,13 +208,31 @@ export async function ensureGuildResources(config, database) {
   config.ownerId = guild.owner_id;
 
   const onboardingRoleId = await findOrCreateRole(config, database, roles, "role_onboarding", "Onboarding", 0xf5c542);
+  const newcomerRoleId = await findOrCreateRole(config, database, roles, "role_newcomer", "Newcomer", 0x99aab5);
   const activeRoleId = await findOrCreateRole(config, database, roles, "role_active", "Active Creator", 0x57f287);
   const atRiskRoleId = await findOrCreateRole(config, database, roles, "role_at_risk", "Inactive / At Risk", 0xed4245);
   const staffRoleId = await findOrCreateRole(config, database, roles, "role_staff", "Manager", 0x5865f2);
   if(roles.find(r=>r.id===staffRoleId)?.name!=='Manager'||!roles.find(r=>r.id===staffRoleId)?.mentionable)
-    await api(config,`/guilds/${config.guildId}/roles/${staffRoleId}`,{method:'PATCH',body:JSON.stringify({name:'Manager',mentionable:true})});
+    await safeApi(config,`/guilds/${config.guildId}/roles/${staffRoleId}`,{method:'PATCH',body:JSON.stringify({name:'Manager',mentionable:true})});
 
   config.staffRoleId = staffRoleId;
+  const founderRoleId=await findOrCreateRole(config,database,roles,'role_founder','Founder',0xe6bb49);
+  const adminRoleId=await findOrCreateRole(config,database,roles,'role_admin','Admin',0x7799bb);
+  const adminPermissions=BigInt(roles.find(r=>r.id===adminRoleId)?.permissions||'0')|ADMINISTRATOR;
+  try {
+    await safeApi(config,`/guilds/${config.guildId}/roles/${adminRoleId}`,{method:'PATCH',body:JSON.stringify({permissions:adminPermissions.toString(),hoist:false})});
+  } catch(error) {
+    if(!String(error.message).includes('50013'))throw error;
+    console.warn('Admin role needs Administrator enabled by the server owner; bot cannot grant this permission.');
+  }
+  // Preserve founders' authority through Admin when retiring Founder privileges.
+  const members=await safeApi(config,`/guilds/${config.guildId}/members?limit=1000`);
+  for(const member of members)if(member.roles.includes(founderRoleId)&&!member.roles.includes(adminRoleId))
+    await safeApi(config,`/guilds/${config.guildId}/members/${member.user.id}/roles/${adminRoleId}`,{method:'PUT'});
+  const founder=roles.find(r=>r.id===founderRoleId);
+  if(founder?.permissions!=='0')await safeApi(config,`/guilds/${config.guildId}/roles/${founderRoleId}`,{method:'PATCH',body:JSON.stringify({permissions:'0',hoist:true,mentionable:false})});
+  const scriptsRoleId=await findOrCreateRole(config,database,roles,'role_scripts','Scripts',0x50aa80);
+  await findOrCreateRole(config,database,roles,'role_new_deal','New Deal',0x5798cc);
   const onboardingCategoryId = await findOrCreateChannel(config, database, channels, "category_onboarding", "New / Onboarding", 4);
   const activeCategoryId = await findOrCreateChannel(config, database, channels, "category_active", "Active Creators", 4);
   const atRiskCategoryId = await findOrCreateChannel(config, database, channels, "category_at_risk", "Inactive / At Risk", 4);
@@ -210,40 +240,38 @@ export async function ensureGuildResources(config, database) {
   const reviewOverwrites=[
     {id:config.guildId,type:0,allow:'0',deny:VIEW_CHANNEL.toString()},
     {id:staffRoleId,type:0,allow:CREATOR_CHANNEL_ALLOW.toString(),deny:'0'},
+    {id:adminRoleId,type:0,allow:CREATOR_CHANNEL_ALLOW.toString(),deny:'0'},
     ...[bot.id,guild.owner_id].map(id=>({id,type:1,allow:CREATOR_CHANNEL_ALLOW.toString(),deny:'0'})),
   ];
-  const reviewId=await findOrCreateChannel(config,database,channels,'channel_staff_reviews','staff-reviews',0,null,reviewOverwrites);
-  await api(config,`/channels/${reviewId}`,{method:'PATCH',body:JSON.stringify({permission_overwrites:reviewOverwrites})});
+  const reviewId=await findOrCreateChannel(config,database,channels,'channel_staff_reviews','onboarding-reviews',0,null,reviewOverwrites);
+  await safeApi(config,`/channels/${reviewId}`,{method:'PATCH',body:JSON.stringify({name:'onboarding-reviews',permission_overwrites:reviewOverwrites})});
+  const videoReviewId=await findOrCreateChannel(config,database,channels,'channel_video_reviews','video-reviews',0,null,reviewOverwrites);
+  await safeApi(config,`/channels/${videoReviewId}`,{method:'PATCH',body:JSON.stringify({permission_overwrites:reviewOverwrites})});
+  const scriptsOverwrites=[
+    {id:config.guildId,type:0,allow:'0',deny:(VIEW_CHANNEL|SEND_MESSAGES|(1n<<35n)|(1n<<36n)|(1n<<38n)).toString()},
+    {id:scriptsRoleId,type:0,allow:(VIEW_CHANNEL|READ_MESSAGE_HISTORY).toString(),deny:(SEND_MESSAGES|(1n<<35n)|(1n<<36n)|(1n<<38n)).toString()},
+    ...[staffRoleId,adminRoleId].map(id=>({id,type:0,allow:(CREATOR_CHANNEL_ALLOW|(1n<<17n)).toString(),deny:'0'})),
+    ...[bot.id,guild.owner_id].map(id=>({id,type:1,allow:CREATOR_CHANNEL_ALLOW.toString(),deny:'0'}))];
+  const scriptsId=await findOrCreateChannel(config,database,channels,'channel_scripts','scripts',0,null,scriptsOverwrites);
+  await safeApi(config,`/channels/${scriptsId}`,{method:'PATCH',body:JSON.stringify({permission_overwrites:scriptsOverwrites})});
 
-  const hubAccessRoleId=await findOrCreateRole(config,database,roles,'role_hub_access','Creator Hub Access',0x57f287);
-  // Resource access starts at first-video preparation, without starting the trial.
-  const hubOverwrites = [
-    {id:config.guildId,type:0,allow:"0",deny:VIEW_CHANNEL.toString()},
-    ...[activeRoleId,hubAccessRoleId,staffRoleId].map(id=>({id,type:0,allow:CREATOR_CHANNEL_ALLOW.toString(),deny:"0"})),
-    {id:bot.id,type:1,allow:CREATOR_CHANNEL_ALLOW.toString(),deny:"0"},
-  ];
-  const hubId = await findOrCreateChannel(config,database,channels,'category_hub','Creator Hub',4,null,hubOverwrites);
-  await api(config,`/channels/${hubId}`,{method:'PATCH',body:JSON.stringify({permission_overwrites:hubOverwrites})});
-  for(const [key,name] of [['app_access','get-the-app'],['script_library','script-library'],['winning_formats','winning-formats'],['assets','assets'],['creator_community','creator-community']]) {
-    const id=await findOrCreateChannel(config,database,channels,`channel_${key}`,name,0,hubId,hubOverwrites);
-    const overwrites = key === 'creator_community' ? hubOverwrites : hubOverwrites.map(o=>[activeRoleId,hubAccessRoleId].includes(o.id)?{...o,allow:(VIEW_CHANNEL|READ_MESSAGE_HISTORY).toString(),deny:SEND_MESSAGES.toString()}:o);
-    await api(config,`/channels/${id}`,{method:'PATCH',body:JSON.stringify({permission_overwrites:overwrites})});
-    if(key==='app_access'&&!resourceMap(database).message_app_access) {
-      const message=await api(config,`/channels/${id}/messages`,{method:'POST',body:JSON.stringify({content:'**📲 Get GoTall for free**\n\n**Android**\nFollow the [Android creator access guide](https://gotall-creator-platform.vercel.app/access/android-7c91f4a2b6e8) for installation and free access.\n\n**iPhone**\nJoin [GoTall on TestFlight](https://testflight.apple.com/join/HcVu4HWx).\n\nNeed help? Ask the managers in your private creator channel.\n\nThese are the download links shared in the GoTall Creators server’s get-app-for-free channel.',allowed_mentions:{parse:[]}})});
-      setResource(database,'message_app_access',message.id);
-    }
-  }
+  await findOrCreateRole(config,database,roles,'role_hub_access','Creator Hub Access',0x57f287);
 
   const startHereOverwrites = [
-    { id: config.guildId, type: 0, allow: (VIEW_CHANNEL | READ_MESSAGE_HISTORY).toString(), deny: SEND_MESSAGES.toString() },
+    { id: config.guildId, type: 0, allow: "0", deny: (VIEW_CHANNEL | SEND_MESSAGES).toString() },
+    { id: newcomerRoleId, type: 0, allow: (VIEW_CHANNEL | READ_MESSAGE_HISTORY).toString(), deny: SEND_MESSAGES.toString() },
     { id: bot.id, type: 1, allow: CREATOR_CHANNEL_ALLOW.toString(), deny: "0" },
   ];
+  const legacyRoleId=resourceMap(database).role_legacy;
+  if(legacyRoleId)startHereOverwrites.push({id:legacyRoleId,type:0,allow:'0',deny:VIEW_CHANNEL.toString()});
+  for(const id of [staffRoleId,adminRoleId])startHereOverwrites.push({id,type:0,allow:CREATOR_CHANNEL_ALLOW.toString(),deny:'0'});
   const startHereId = await findOrCreateChannel(
     config, database, channels, "channel_start_here", "start-here", 0,
     onboardingCategoryId, startHereOverwrites,
   );
+  await safeApi(config,`/channels/${startHereId}`,{method:'PATCH',body:JSON.stringify({permission_overwrites:startHereOverwrites})});
   if (!resourceMap(database).message_start_here) {
-    const message = await api(config, `/channels/${startHereId}/messages`, {
+    const message = await safeApi(config, `/channels/${startHereId}/messages`, {
       method: "POST",
       body: JSON.stringify({
         ...startCard(),
@@ -252,6 +280,8 @@ export async function ensureGuildResources(config, database) {
     }).catch(() => null);
     if (message?.id) setResource(database, "message_start_here", message.id);
   }
+
+  await syncResourceGuidance({config,database,roles,channels,bot,api:safeApi,findRole:findOrCreateRole,findChannel:findOrCreateChannel,resources:resourceMap,save:setResource});
 
   return {
     guild, bot, onboardingRoleId, activeRoleId, atRiskRoleId, staffRoleId,
@@ -269,7 +299,7 @@ function modalResponse() {
         input("name", "What should we call you?", "Alex", 80,1,true,"Your preferred name or nickname — whatever you’d like the team to call you."),
         input("phone", "Phone number", "+1 202 555 0147", 30,1,true,"Include your country code. This is shared with the team in your creator workspace."),
         input("location", "Location / timezone", "London, UK / Europe/London", 100,1,true,"Enter your city and country or timezone. We’ll use this to set your posting day."),
-        input("platforms", "Usernames and platforms", "TikTok @name; Instagram @name", 400, 2,true,"List the social accounts you use. Campaign profile links are collected after this application."),
+        input("platforms", "Usernames and platforms", "TikTok, Instagram, YouTube, Facebook usernames", 400, 2,true,"List the social accounts you use. Campaign profile links are collected after this application."),
         input("best_video", "Best video link (optional)", "https://www.tiktok.com/...", 500, 1, false,"Share a sample of your work, or leave this blank. A sample is not required to apply."),
       ],
     },
@@ -296,7 +326,7 @@ function isAdmin(interaction, config) {
   if (actorId(interaction) === config.ownerId) return true;
   if ((interaction.member?.roles ?? []).includes(config.staffRoleId)) return true;
   const permissions = BigInt(interaction.member?.permissions ?? "0");
-  return (permissions & (MANAGE_GUILD | ADMINISTRATOR)) !== 0n;
+  return (permissions & ADMINISTRATOR) !== 0n;
 }
 
 function creatorByContext(database, interaction, allowSelf = false) {
@@ -344,6 +374,16 @@ async function setRole(config, userId, roleId, add) {
   });
 }
 
+export async function handleGuildMemberAdd(config, database, member) {
+  if (member.guild_id !== config.guildId || member.user?.bot) return false;
+  const existing=database.prepare('SELECT * FROM creators WHERE discord_user_id=?').get(member.user.id);
+  if(existing?.offboarding_id) {await workspace(config,database).offboarding.rejoined(existing);return true;}
+  const roleId = resourceMap(database).role_newcomer;
+  if (!roleId) throw new Error("Newcomer role is not configured.");
+  await setRole(config, member.user.id, roleId, true);
+  return true;
+}
+
 async function createCreatorChannel(config, database, application, userId) {
   const resources = resourceMap(database);
   const channels = await api(config, `/guilds/${config.guildId}/channels`);
@@ -363,7 +403,18 @@ async function createCreatorChannel(config, database, application, userId) {
   return channel.id;
 }
 
+export function legacyApplicant(database, interaction) {
+  const userId=actorId(interaction),legacyRole=resourceMap(database).role_legacy;
+  const legacy=Boolean(database.prepare('SELECT 1 FROM legacy_participants WHERE creator_id=?').get(userId)) ||
+    database.prepare('SELECT cohort FROM creators WHERE discord_user_id=?').get(userId)?.cohort==='legacy' ||
+    Boolean(legacyRole&&interaction.member?.roles?.includes(legacyRole));
+  if(legacy)database.prepare('INSERT OR IGNORE INTO legacy_participants VALUES(?,?)').run(userId,new Date().toISOString());
+  return legacy;
+}
+const LEGACY_ONBOARDING_NOTICE='You are already a legacy creator. Your existing deal stays unchanged, and new-deal onboarding is not available to you. Keep using your creator channel; ask Judy there if you need help.';
+
 async function handleApplication(config, database, interaction) {
+  if(legacyApplicant(database,interaction))return editReply(config,interaction,LEGACY_ONBOARDING_NOTICE);
   const values = modalValues(interaction);
   const checked = validateApplication({
     name: values.name, phone: values.phone, location: values.location,
@@ -372,6 +423,7 @@ async function handleApplication(config, database, interaction) {
   if (!checked.ok) return editReply(config, interaction, checked.error);
 
   const userId = actorId(interaction);
+  if(database.prepare('SELECT 1 FROM legacy_participants WHERE creator_id=?').get(userId))return editReply(config,interaction,'Your existing creator arrangement is preserved. Contact Judy in your creator channel; new-deal onboarding is not available for existing creators.');
   const existing = database.prepare("SELECT * FROM creators WHERE discord_user_id = ?").get(userId);
   if (existing) {
     if (!existing.welcome_sent_at) {
@@ -462,15 +514,21 @@ async function handleCommand(config, database, interaction) {
   return w.reply(interaction,{...statusCard(c,config.testMode),content:'Use the workspace buttons and Staff controls. Legacy commands cannot skip account approval, signing, or trial review.'});
 }
 export async function handleInteraction(config, database, interaction) {
-  if(config.guildId!==TEST_GUILD_ID || !config.testMode || interaction.guild_id!==config.guildId)return;
+  if (config.inspiration?.owns(interaction)) return config.inspiration.handle(interaction);
+  if(!runtimeAllowed(config) || interaction.guild_id!==config.guildId)return;
   try {
     const w=workspace(config,database), id=interaction.data?.custom_id;
+    const applying=(interaction.type===2&&interaction.data?.name==='apply') ||
+      (interaction.type===3&&id==='gt:apply') || (interaction.type===5&&id==='gotall-apply-v1');
+    if(applying&&database.prepare('SELECT offboarding_id FROM creators WHERE discord_user_id=?').get(actorId(interaction))?.offboarding_id)return await interactionCallback(config,interaction,{type:4,data:{content:'Your program participation is closed. Use your private channel for payment support or ask staff about returning.',flags:64}});
+    if(applying&&legacyApplicant(database,interaction))return await interactionCallback(config,interaction,{type:4,data:{content:LEGACY_ONBOARDING_NOTICE,flags:64,allowed_mentions:{parse:[]}}});
     if(id==='gt:test_signed'||id==='gt:form:test_signed')throw new Error('This control is no longer available. Use Review & sign on your current status card.');
     if((interaction.type===2&&interaction.data?.name==='apply')||(interaction.type===3&&id==='gt:apply'))return await interactionCallback(config,interaction,modalResponse());
     if(interaction.type===3&&/^gt:deal:\d+:edit_/u.test(id||''))return await w.openModal(interaction,id.slice(3));
     const buttonAction=id?.replace(/^gt:(?:review:\d+:)?/u,'');
     if(interaction.type===3 && (buttonAction?.startsWith('hub_issue:')||buttonAction?.startsWith('hub_resolve:')))return await w.openModal(interaction,buttonAction);
-    if(interaction.type===3 && ['pay_wise','pay_paypal','pay_bank','accounts','post','leave','changes','agreement_link','exception','deny_leave','test_clock','first_video','confirm_signature','revise_first_video'].includes(buttonAction))return await w.openModal(interaction,buttonAction);
+    if(interaction.type===3 && buttonAction?.startsWith('manual_next:'))return await w.openModal(interaction,buttonAction);
+    if(interaction.type===3 && ['pay_wise','pay_paypal','pay_bank','accounts','add_accounts','post','leave','changes','agreement_link','exception','deny_leave','test_clock','first_video','confirm_signature','revise_first_video'].includes(buttonAction))return await w.openModal(interaction,buttonAction);
     const channelCreator=database.prepare('SELECT * FROM creators WHERE channel_id=?').get(interaction.channel_id || '');
     await defer(config,interaction,publicCreatorResponse(interaction,channelCreator,resourceMap(database).channel_start_here,resourceMap(database).channel_staff_reviews,w.staff(interaction)));
     await serialized(async()=>{
@@ -510,16 +568,21 @@ function connectGateway(config, database) {
         if (packet.op === 10) {
           heartbeat = setInterval(() => socket.send(JSON.stringify({ op: 1, d: sequence })), packet.d.heartbeat_interval);
           socket.send(JSON.stringify({ op: 2, d: {
-            token: config.token, intents: 1,
+            token: config.token, intents: 515,
             properties: { os: process.platform, browser: "gotall-onboarding", device: "gotall-onboarding" },
           } }));
         } else if (packet.op === 7 || packet.op === 9) {
           socket.close();
         } else if (packet.t === "READY") {
           reconnectDelay = 1_000;
-          console.log(new Date().toISOString(), `ready as ${packet.d.user.username} in test guild ${config.guildId}`);
+          console.log(new Date().toISOString(), `ready as ${packet.d.user.username} in guild ${config.guildId}`);
         } else if (packet.t === "INTERACTION_CREATE") {
           void handleInteraction(config, database, packet.d);
+        } else if (packet.t === "GUILD_MEMBER_ADD") {
+          void serialized(() => handleGuildMemberAdd(config, database, packet.d))
+            .catch(error => console.error("Newcomer role", error.message));
+        } else if(['MESSAGE_CREATE','MESSAGE_UPDATE'].includes(packet.t)&&packet.d.guild_id===config.guildId) {
+          void serialized(async()=>{const w=workspace(config,database);if(packet.t==='MESSAGE_CREATE')await w.offboarding.observe(packet.d);const nonTalking=packet.t==='MESSAGE_CREATE'&&await w.scripts.ingestNonTalking(packet.d);const script=await w.scripts.ingest(packet.d);if(nonTalking||script)await w.schedule();}).catch(e=>console.error('Script delivery',e.message));
         }
       });
       socket.addEventListener("close", () => {
@@ -541,7 +604,9 @@ function connectGateway(config, database) {
 function loadConfig() {
   return {
     token: readCredential("discord-bot-token"),
-    guildId: requiredEnvironment("DISCORD_TEST_GUILD_ID"),
+    jotformApiKey: process.env.GOTALL_JOTFORM_ENABLED === 'true' ? readCredential('jotform-api-key') : undefined,
+    guildId: process.env.DISCORD_GUILD_ID || requiredEnvironment("DISCORD_TEST_GUILD_ID"),
+    productionApproved: process.env.DISCORD_PRODUCTION_ENABLED === 'true',
     databasePath: requiredEnvironment("DISCORD_ONBOARDING_DATABASE_PATH"),
     testMode: process.env.DISCORD_TEST_MODE !== "false",
     applicationId: "",
@@ -551,14 +616,26 @@ function loadConfig() {
 
 async function main() {
   const config = loadConfig();
-  if (config.guildId !== TEST_GUILD_ID || !config.testMode) throw new Error("This runtime is restricted to Retconned test guild in test mode.");
+  assertRuntime(config);
   const database = await openDatabase(config.databasePath);
+  if(!config.testMode&&resourceMap(database).production_cutover_guild!==config.guildId)throw Error('Production roster must be imported before startup.');
   const resources = await ensureGuildResources(config, database);
+  await workspace(config,database).offboarding.ensureResources();
   await workspace(config,database).publishStart();
   // Refresh existing status cards when a release changes the copy or controls.
   database.prepare("UPDATE creators SET sync_pending=1").run();
   await registerCommands(config);
   console.log(new Date().toISOString(), `registered ${commandDefinitions.length} commands; start channel ${resources.startHereId}`);
+  let startingInspiration = false;
+  const initializeInspiration = async () => {
+    if (config.inspiration || startingInspiration) return;
+    startingInspiration = true;
+    try { config.inspiration = await startInspiration(config, readCredential); }
+    catch (error) { console.error('Inspiration initialization failed; retrying:', error.message); }
+    finally { startingInspiration = false; }
+  };
+  await initializeInspiration();
+  if (process.env.GOTALL_INSPIRATION_ENABLED === 'true') setInterval(() => void initializeInspiration(), 60000);
   connectGateway(config, database);
   let checking = false;
   const check = async () => {
@@ -569,6 +646,15 @@ async function main() {
   };
   setInterval(()=>void check(),CHECK_INTERVAL_MS);
   void check();
+  if(process.env.GOTALL_JOTFORM_WEBHOOK_PORT) {
+    if(!config.jotformApiKey)throw Error('Webhook requires Jotform API access.');
+    const queue=webhookQueue(database);
+    const pump=webhookPump(queue,()=>serialized(()=>workspace(config,database).schedule(Date.now(),true)),{onError:()=>console.error('Jotform webhook verification failed; queued for retry.')});
+    const server=webhookServer({secret:readCredential('jotform-webhook-secret'),queue,onQueued:()=>void pump()});
+    server.on('error',()=>{console.error('Jotform webhook listener failed.');process.exit(1);});
+    server.listen(Number(process.env.GOTALL_JOTFORM_WEBHOOK_PORT),'127.0.0.1',()=>console.log('Jotform webhook listener ready.'));
+    setInterval(()=>void pump(),1000);void pump();
+  }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
@@ -577,5 +663,3 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     process.exitCode = 1;
   });
 }
-
-

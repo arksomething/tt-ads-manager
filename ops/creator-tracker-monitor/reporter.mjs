@@ -2,6 +2,7 @@
 
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
+import { openSync, closeSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 export const HEARTBEAT_PATH = "/api/v1/creator-tracker/heartbeat";
@@ -21,7 +22,11 @@ const CURRENT_RELEASE_PATH = process.env.CREATOR_TRACKER_CURRENT_RELEASE_PATH
 const COVERAGE_COMMAND = process.env.CREATOR_TRACKER_COVERAGE_COMMAND
   ?? "/opt/creator-tracker/current/bin/check-coverage";
 const REQUEST_TIMEOUT_MS = 10_000;
-const COVERAGE_TIMEOUT_MS = 20_000;
+const COVERAGE_TIMEOUT_MS = 45_000;
+const COVERAGE_LOCK_PATHS = [
+  "/run/creator-tracker/locks/owned-tracker-writer.lock",
+  "/run/creator-tracker/locks/canonical-delivery.lock",
+];
 const MAX_LATEST_TIKTOK_DIRECT_AGE_SECONDS = 3 * 60 * 60;
 const MAX_HEARTBEAT_ISSUE_CODES = 32;
 export const OPERATOR_ACTION_REQUIRED_CODE = "operator_action_required";
@@ -505,6 +510,9 @@ export function evaluateCoverageProbeResult(result) {
     return { status: "failing", issueCodes: ["coverage_probe_failed"] };
   }
   const stderr = typeof result?.stderr === "string" ? result.stderr.trim() : "";
+  if (result?.status === 75 && stderr === "" && result?.stdout === "") {
+    return { status: "degraded", issueCodes: ["coverage_probe_snapshot_contended"] };
+  }
   const snapshotContended = isCoverageSnapshotContention(result?.status, stderr);
   const metrics = parseCoverageMetrics(result?.stdout);
   if (metrics != null) {
@@ -540,17 +548,45 @@ export function evaluateCoverageProbeResult(result) {
   return { status: "failing", issueCodes: ["coverage_probe_invalid"] };
 }
 
+// Open existing locks read-only: the reporter cannot create or mutate lock
+// files. The inherited descriptors retain shared locks for the whole probe,
+// matching dashboard-health's writer/delivery fences without delaying writers
+// when either lock is already held. This also prevents repeated large snapshot
+// copies when a collector checkpoints during the multi-query coverage audit.
+export function runCoverageProbe({
+  command = COVERAGE_COMMAND,
+  credentialDirectory,
+  lockPaths = COVERAGE_LOCK_PATHS,
+  timeout = COVERAGE_TIMEOUT_MS,
+} = {}) {
+  const descriptors = [];
+  try {
+    for (const path of lockPaths) descriptors.push(openSync(path, "r"));
+    if (descriptors.length !== 2) throw new Error("Coverage requires both existing tracker locks.");
+    return spawnSync("/bin/sh", ["-c",
+      '/usr/bin/flock --shared --nonblock --conflict-exit-code 75 3 || exit $?; ' +
+      '/usr/bin/flock --shared --nonblock --conflict-exit-code 75 4 || exit $?; exec "$1"',
+      "creator-tracker-coverage", command,
+    ], {
+      encoding: "utf8",
+      env: { CREDENTIALS_DIRECTORY: credentialDirectory },
+      stdio: ["ignore", "pipe", "pipe", ...descriptors],
+      maxBuffer: 1024 * 1024,
+      timeout,
+    });
+  } catch (error) {
+    return { error, status: null, stdout: "", stderr: "" };
+  } finally {
+    for (const descriptor of descriptors) closeSync(descriptor);
+  }
+}
+
 function collectCriticalCoverage() {
   const credentialDirectory = process.env.CREDENTIALS_DIRECTORY;
   if (!credentialDirectory?.startsWith("/run/credentials/")) {
     return { status: "failing", issueCodes: ["coverage_probe_credentials_missing"] };
   }
-  const result = spawnSync(COVERAGE_COMMAND, [], {
-    encoding: "utf8",
-    env: { CREDENTIALS_DIRECTORY: credentialDirectory },
-    maxBuffer: 1024 * 1024,
-    timeout: COVERAGE_TIMEOUT_MS,
-  });
+  const result = runCoverageProbe({ credentialDirectory });
   return evaluateCoverageProbeResult(result);
 }
 

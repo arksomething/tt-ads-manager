@@ -97,6 +97,25 @@ def healthy_snapshot() -> dict:
     }
 
 
+class ActionableCoverageTests(unittest.TestCase):
+    def test_suspended_gaps_do_not_become_current_recovery_work(self):
+        import json
+        from types import SimpleNamespace
+        for same_invocation in [True, False]:
+            rows = [
+                {"MESSAGE": "[tracker actionable collection] overdue_tiktok=0 failed_tiktok=0 suspended_missing=379; full coverage gaps retained below",
+                 "_SYSTEMD_INVOCATION_ID": "a" * 32, "__REALTIME_TIMESTAMP": str(NOW * 1000000)},
+                {"MESSAGE": "[tracker coverage] overdue_tiktok_videos=273 failed_tiktok_videos=0",
+                 "_SYSTEMD_INVOCATION_ID": ("a" if same_invocation else "b") * 32,
+                 "__REALTIME_TIMESTAMP": str(NOW * 1000000)},
+            ]
+            with mock.patch.object(autopilot, "run", return_value=SimpleNamespace(returncode=0, stdout="\n".join(map(json.dumps, rows)))):
+                fields = autopilot.latest_coverage(NOW)["fields"]
+            self.assertEqual(fields["overdue_tiktok_videos"], "0" if same_invocation else "273")
+            if same_invocation:
+                self.assertEqual(fields["retained_overdue_tiktok_videos"], "273")
+
+
 class AtomicStateTests(unittest.TestCase):
     def test_atomic_json_normalizes_root_ownership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

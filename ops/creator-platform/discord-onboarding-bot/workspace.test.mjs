@@ -4,21 +4,29 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {openDatabase,handleInteraction} from './bot.mjs';
 import * as flow from './flow.mjs';
-import {createWorkspace,approveLeave,isStaff,privateOverwrites,patchCreator} from './workspace.mjs';
+import {createWorkspace,approveLeave,isStaff,privateOverwrites,patchCreator,backfillFourPlatformAccounts} from './workspace.mjs';
 import {adminCommand,handleAdminCommand} from './admin.mjs';
 import {creatorSuccess,messageCopy,creatorDecision} from './messages.mjs';
 
 const now=Date.parse('2026-09-07T12:00:00Z'), iso=t=>new Date(t).toISOString();
+test('additional profile parser accepts repeated platforms without changing onboarding requirements',()=>{
+  const value='TikTok: @extra1\nTikTok: @extra2\nInstagram: @extra3';
+  assert.equal(flow.parseAccountLinks(value,{requireAll:false,multiple:true}).split('\n').length,3);
+  assert.throws(()=>flow.parseAccountLinks(value),/only one/);
+  assert.throws(()=>flow.parseAccountLinks('https://instagram.com/reel/123',{requireAll:false,multiple:true}),/profile/);
+});
 const config={guildId:flow.TEST_GUILD_ID,testMode:true,applicationId:'1534630446959427686',ownerId:'571179674323910667'};
 const uid='222222222222222222', other='333333333333333333';
-const resources={role_staff:'staff',role_onboarding:'onboard',role_active:'active',role_at_risk:'risk',category_onboarding:'new',category_active:'live',category_at_risk:'riskcat',category_inactive:'done',channel_start_here:'start'};
-async function fixture({channelFailure=false,topicFailure=false,staffReviews=false}={}) {
+const resources={role_staff:'staff',role_newcomer:'newcomer',role_onboarding:'onboard',role_active:'active',role_at_risk:'risk',role_hub_access:'hub',category_onboarding:'new',category_active:'live',category_at_risk:'riskcat',category_inactive:'done',channel_start_here:'start'};
+async function fixture({channelFailure=false,topicFailure=false,staffReviews=false,workflowMembers=false,memberFailure=()=>null}={}) {
   const db=await openDatabase(':memory:');
   db.prepare('INSERT INTO creators (discord_user_id,name,phone,location,platforms,best_video,channel_id,stage,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run(uid,'Test Creator','+15555555555','New York','TikTok @test','','channel','warmup',iso(now),iso(now));
+  patchCreator(db,uid,{campaign_accounts:'https://www.tiktok.com/@test\nhttps://www.instagram.com/test/\nhttps://www.youtube.com/@demo\nhttps://www.facebook.com/demo'});
   const calls=[], messages=[], replies=[], modals=[];
   let fail=false;
   const api=async(c,path,init={})=>{
     calls.push({path,...init});
+    if(workflowMembers&&path.includes('/members/')&&!init.method){const error=memberFailure(path);if(error)throw error;return {roles:[]};}
     if(path===`/guilds/${config.guildId}/members/${other}`&&!init.method)return {roles:['staff']};
     if(topicFailure&&path==='/channels/channel'&&init.method==='PATCH'&&Object.hasOwn(JSON.parse(init.body),'topic'))throw Object.assign(new Error('Topic rate limited'),{status:429});
     if(path==='/channels/channel' && init.method==='PATCH' && channelFailure)throw new Error('Discord channel rate limit');
@@ -34,12 +42,100 @@ async function fixture({channelFailure=false,topicFailure=false,staffReviews=fal
     }
     return {};
   };
-  const w=createWorkspace(config,db,{api,resourceMap:()=>staffReviews?{...resources,channel_staff_reviews:'reviews',user_reviewer_blazie:other}:resources,setResource:()=>{},callback:async(c,i,p)=>modals.push(p),editReply:async(c,i,p)=>replies.push(p),input:flow.formInput,saveUpload:async()=> 'https://discord.com/channels/guild/channel/upload'});
+  const mappedResources=()=>({...resources,...(workflowMembers?{role_scripts:'scripts-role',role_new_deal:'new-deal',channel_scripts:'scripts'}:{})});
+  const w=createWorkspace(config,db,{api,resourceMap:()=>staffReviews?{...mappedResources(),channel_staff_reviews:'reviews',channel_video_reviews:'video-reviews',user_reviewer_blazie:other}:mappedResources(),setResource:()=>{},callback:async(c,i,p)=>modals.push(p),editReply:async(c,i,p)=>replies.push(p),input:flow.formInput,saveUpload:async()=> 'https://discord.com/channels/guild/channel/upload'});
   let n=0;
   const interaction=(action,fields={},user=uid,id=String(++n))=>({id,channel_id:'channel',guild_id:config.guildId,type:5,member:{user:{id:user},roles:user===other?['staff']:[],permissions:'0'},data:{custom_id:`gt:${action}`,components:[{components:Object.entries(fields).map(([custom_id,value])=>({custom_id,value}))}]}});
   return {db,w,calls,messages,replies,modals,interaction,fail:()=>{fail=true;},c:()=>w.creator(uid)};
 }
 
+for(const [label,error] of [['departed member',Object.assign(new Error('Unknown Member'),{status:404,code:10007})],['transient API failure',Object.assign(new Error('Unavailable'),{status:503})]]) {
+ test(`scheduler isolates ${label} and continues script polling and healthy creator reminders`,async()=>{
+  const healthy='444444444444444444';
+  let failing=true;
+  const f=await fixture({workflowMembers:true,memberFailure:path=>failing&&path.endsWith('/'+uid)?error:null});
+  try {
+   f.db.prepare('INSERT INTO creators (discord_user_id,name,phone,location,platforms,best_video,channel_id,stage,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run(healthy,'Healthy','','UTC','','','healthy-channel','warmup',iso(now),iso(now));
+   await f.w.schedule(now+flow.DAY);
+   assert(f.calls.some(c=>c.path.startsWith('/channels/scripts/messages?')));
+   assert(f.messages.some(m=>m.content===`<@${healthy}>`&&m.embeds?.[0]?.title==='Your next onboarding step'));
+   assert(!f.messages.some(m=>m.content===`<@${uid}>`));
+   assert.equal(f.c().stage,'warmup');
+   assert.equal(Boolean(f.c().discord_member_missing_at),error.code===10007);
+   failing=false;
+   if(error.code===10007)patchCreator(f.db,uid,{discord_member_missing_at:iso(Date.now()-300_001)});
+   await f.w.schedule(now+2*flow.DAY);
+   assert.equal(f.c().discord_member_missing_at,null);
+   assert(f.messages.some(m=>m.content===`<@${uid}>`));
+  }finally{f.db.close();}
+ });
+}
+
+test('legacy status refresh preserves private channel membership, category and cosmetic roles',async()=>{
+ const f=await fixture();try {
+  patchCreator(f.db,uid,{stage:'active',cohort:'legacy',workflow_roles_initialized:1});
+  await f.w.sync(f.c());
+  assert(!f.calls.some(c=>c.path==='/channels/channel'&&c.method==='PATCH'));
+  assert(!f.calls.some(c=>c.path.includes('/roles/')&&['PUT','DELETE'].includes(c.method)));
+  assert.equal(f.c().sync_pending,0);
+  assert(f.messages[0].embeds[0].description.includes('usual submission channels'));
+ }finally{f.db.close();}
+});
+test('new creators stay isolated until first-video preparation opens',async()=>{
+ const f=await fixture();try {
+  patchCreator(f.db,uid,{stage:'agreement',agreement_signed_at:null});
+  await f.w.sync(f.c());
+  assert(f.calls.some(c=>c.path.endsWith('/roles/newcomer')&&c.method==='DELETE'));
+  assert(f.calls.some(c=>c.path.endsWith('/roles/hub')&&c.method==='DELETE'));
+  f.calls.length=0;
+  patchCreator(f.db,uid,{stage:'first_video',agreement_signed_at:iso(now)});
+  await f.w.sync(f.c());
+  assert(f.calls.some(c=>c.path.endsWith('/roles/hub')&&c.method==='PUT'));
+ }finally{f.db.close();}
+});
+
+test('additional accounts require staff approval and preserve progress',async()=>{
+  const f=await fixture({staffReviews:true});try{
+    patchCreator(f.db,uid,{stage:'active',first_video_approved_at:iso(now),timezone:'UTC'});
+    const original=f.c().campaign_accounts;
+    assert(flow.statusCard(f.c()).components.flatMap(r=>r.components).some(b=>b.custom_id==='gt:add_accounts'));
+    await f.w.handle(f.interaction('add_accounts',{accounts:'TikTok: @extra1\nTikTok: @extra2'},uid,'add-test'));
+    assert.equal(f.c().campaign_accounts,original);
+    await assert.rejects(f.w.handle(f.interaction('approve_accounts:add-test',{},uid)),/staff/);
+    await f.w.handle(f.interaction('approve_accounts:add-test',{},other));
+    assert.equal(f.c().stage,'active');assert.equal(f.c().first_video_approved_at,iso(now));
+    assert.equal(f.c().campaign_accounts.split('\n').length,6);
+    await f.w.handle(f.interaction('approve_accounts:add-test',{},other));
+    assert.equal(f.c().campaign_accounts.split('\n').length,6);
+  }finally{f.db.close();}
+});
+
+test('four-platform backfill preserves completed work, resumes after review, and keeps tracking on two platforms',async()=>{
+  const f=await fixture({staffReviews:true});try {
+    patchCreator(f.db,uid,{stage:'hub_ready',campaign_accounts:'https://www.tiktok.com/@test\nhttps://www.instagram.com/test/',agreement_signed_at:iso(now),first_video_approved_at:iso(now),timezone:'UTC'});
+    assert.throws(()=>backfillFourPlatformAccounts(f.db,'wrong'),/test server/);
+    assert.deepEqual(backfillFourPlatformAccounts(f.db,config.guildId,now),[uid]);
+    assert.deepEqual(backfillFourPlatformAccounts(f.db,config.guildId,now),[]);
+    assert.equal(f.c().account_resume_stage,'hub_ready');assert.equal(f.c().agreement_signed_at,iso(now));
+    assert.equal(flow.statusCard(f.c()).embeds[0].title,'Update your campaign accounts');
+    await f.w.sync(f.c());await f.w.deliver();
+    const notice=f.messages.find(m=>m.embeds?.[0]?.title==='Add your YouTube and Facebook accounts');
+    assert.equal(notice.content,`<@${uid}>`);assert.match(notice.embeds[0].description,/Metrics are tracked only for TikTok and Instagram/);
+    await assert.rejects(f.w.handle(f.interaction('accounts',{instagram:'@test',tiktok:'@test',youtube:'@test'})),/Facebook/);
+    assert.equal(f.c().stage,'warmup');
+    await f.w.handle(f.interaction('accounts',{instagram:'@test',tiktok:'@test',youtube:'https://youtube.com/channel/UC_TEST',facebook:'https://facebook.com/profile.php?id=12345'}));
+    await f.w.openModal({...f.interaction('accounts'),type:3},'accounts');
+    const fields=f.modals.at(-1).data.components;
+    assert.match(fields.find(f=>f.component.custom_id==='youtube').component.value,/channel\/UC_TEST/);
+    assert.match(fields.find(f=>f.component.custom_id==='facebook').component.value,/id=12345/);
+    await f.w.handle(f.interaction('approve_account',{},other));
+    assert.equal(f.c().stage,'hub_ready');assert.equal(f.c().account_resume_stage,null);
+    assert.equal(f.c().first_video_approved_at,iso(now));
+    const tracked=JSON.parse(f.db.prepare('SELECT accounts_json FROM creator_hub_sources WHERE creator_id=?').get(uid).accounts_json);
+    assert.deepEqual(tracked.map(a=>a.platform),['instagram','tiktok']);
+    const card=flow.statusCard(f.c(),true);assert.match(JSON.stringify(card),/TikTok, Instagram, YouTube and Facebook/);
+  }finally{f.db.close();}
+});
 test('application timezone is reused and account modal respects Discord field limits',async()=>{
   const f=await fixture();
   try {
@@ -47,22 +143,22 @@ test('application timezone is reused and account modal respects Discord field li
     assert.equal(f.c().timezone,'America/New_York');
     await f.w.openModal({...f.interaction('accounts'),type:3},'accounts');
     const components=f.modals.at(-1).data.components;
-    assert.doesNotMatch(components[0].content,/timezone/i);
+    assert.ok(components.length<=5);
     for(const item of components.filter(c=>c.type===18)) {
       assert.ok(item.label.length<=45);
       assert.ok(item.description.length<=100);
       assert.ok(item.component.placeholder.length<=100);
     }
     assert.equal(components.some(c=>c.component?.custom_id==='timezone'),false);
-    assert.deepEqual(components.filter(c=>c.type===18).map(c=>c.component.custom_id),['instagram','tiktok']);
-    await f.w.handle(f.interaction('accounts',{instagram:'@demo',tiktok:'tiktok.com/@demo'}));
+    assert.deepEqual(components.filter(c=>c.type===18).map(c=>c.component.custom_id),['instagram','tiktok','youtube','facebook']);
+    await f.w.handle(f.interaction('accounts',{instagram:'@demo',youtube:'@demo',facebook:'demo',tiktok:'tiktok.com/@demo'}));
     assert.equal(f.c().timezone,'America/New_York');
-    assert.equal(f.c().campaign_accounts,'https://www.instagram.com/demo/\nhttps://www.tiktok.com/@demo');
-    assert.throws(()=>flow.parseAccountFields('https://tiktok.com/@wrong','@demo'),/belongs to tiktok/);
+    assert.equal(f.c().campaign_accounts,'https://www.instagram.com/demo/\nhttps://www.tiktok.com/@demo\nhttps://www.youtube.com/@demo\nhttps://www.facebook.com/demo');
+    assert.throws(()=>flow.parseAccountFields('https://tiktok.com/@wrong','@demo','@demo','demo'),/belongs to tiktok/);
     assert.throws(()=>flow.parseAccountFields('','@demo'),/Instagram field/);
     assert.equal(f.c().stage,'account_review');
     patchCreator(f.db,uid,{stage:'warmup'});
-    await f.w.handle(f.interaction('accounts',{accounts:'TT: @demo\nIG: @demo',timezone:'GMT+8'}));
+    await f.w.handle(f.interaction('accounts',{accounts:'TT: @demo\nIG: @demo\nYT: @demo\nFB: demo',timezone:'GMT+8'}));
     assert.equal(f.c().timezone,'+08:00');
   } finally {f.db.close();}
 });
@@ -82,7 +178,7 @@ test('ambiguous application location asks for clarification without blocking onb
 test('submitting accounts enters review and alerts staff once',async()=>{
   const f=await fixture({staffReviews:true});
   try {
-    const i=f.interaction('accounts',{instagram:'@creator',tiktok:'@creator',timezone:'UTC'});
+    const i=f.interaction('accounts',{instagram:'@creator',youtube:'@demo',facebook:'demo',tiktok:'@creator',timezone:'UTC'});
     await f.w.handle(i);
     assert.equal(f.c().stage,'account_review');
     const alerts=()=>f.messages.filter(m=>m.embeds?.[0]?.title==='🔎 Accounts ready for review');
@@ -98,25 +194,25 @@ test('submitting accounts enters review and alerts staff once',async()=>{
 test('edit answers prefills saved accounts and updates pending review',async()=>{
   const f=await fixture();
   try {
-    await f.w.handle(f.interaction('accounts',{instagram:'@first',tiktok:'@first',timezone:'UTC'}));
+    await f.w.handle(f.interaction('accounts',{instagram:'@first',youtube:'@demo',facebook:'demo',tiktok:'@first',timezone:'UTC'}));
     assert.match(JSON.stringify(flow.statusCard(f.c())),/Edit answers/);
     await f.w.openModal({...f.interaction('accounts'),type:3},'accounts');
     const fields=f.modals.at(-1).data.components.filter(c=>c.type===18);
     assert.equal(fields[0].component.value,'https://www.instagram.com/first/');
     assert.equal(fields[1].component.value,'https://www.tiktok.com/@first');
-    await f.w.handle(f.interaction('accounts',{instagram:'@updated',tiktok:'@first'}));
+    await f.w.handle(f.interaction('accounts',{instagram:'@updated',youtube:'@demo',facebook:'demo',tiktok:'@first'}));
     assert.equal(f.c().stage,'account_review');
     assert.match(f.c().campaign_accounts,/instagram.com\/updated\//);
     assert.ok(f.calls.some(call=>call.path==='/channels/channel'&&call.method==='PATCH'&&JSON.parse(call.body).name==='🟡-test-creator-first'));
     patchCreator(f.db,uid,{stage:'account_ready'});
-    await assert.rejects(f.w.handle(f.interaction('accounts',{instagram:'@other',tiktok:'@other'})),/during setup or account review/);
+    await assert.rejects(f.w.handle(f.interaction('accounts',{instagram:'@other',youtube:'@demo',facebook:'demo',tiktok:'@other'})),/during setup or account review/);
   }finally{f.db.close();}
 });
 
 test('Manager alert controls target the creator and preserve modal routing',async()=>{
   const f=await fixture({staffReviews:true});
   try {
-    await f.w.handle(f.interaction('accounts',{instagram:'@demo',tiktok:'@demo',timezone:'UTC'}));
+    await f.w.handle(f.interaction('accounts',{instagram:'@demo',youtube:'@demo',facebook:'demo',tiktok:'@demo',timezone:'UTC'}));
     const alert=f.messages.find(m=>m.embeds?.[0]?.title==='🔎 Accounts ready for review');
     assert.ok(alert.components.flatMap(r=>r.components).some(b=>b.custom_id===`gt:review:${uid}:approve_account`));
     const i={...f.interaction('changes',{},other),channel_id:'reviews',type:3,data:{custom_id:`gt:review:${uid}:changes`}};
@@ -131,7 +227,7 @@ test('Manager alert controls target the creator and preserve modal routing',asyn
   }finally{f.db.close();}
 });
 
-test('first video grants Hub resources without starting the trial',async()=>{
+test('first-video preparation grants Hub resources without starting the trial',async()=>{
   const f=await fixture();
   resources.role_hub_access='hub-access';resources.channel_app_access='app-guide';resources.channel_assets='assets';
   try {
@@ -140,27 +236,31 @@ test('first video grants Hub resources without starting the trial',async()=>{
     assert.ok(f.calls.some(call=>call.path.endsWith('/roles/hub-access')&&call.method==='PUT'));
     assert.equal(f.c().trial_started_at,null);
     const description=f.messages.at(-1).embeds[0].description;
-    assert.match(description,/<#app-guide>/);assert.match(description,/<#assets>/);
     assert.match(description,/Wait for approval before posting/);
   }finally{delete resources.role_hub_access;delete resources.channel_app_access;delete resources.channel_assets;f.db.close();}
 });
 
-test('published submission saves both platform links atomically and alerts once',async()=>{
+test('first publication is a confirmation without links or post validation',async()=>{
   const f=await fixture({staffReviews:true});
   try {
-    patchCreator(f.db,uid,{stage:'active',timezone:'UTC'});
-    await assert.rejects(f.w.handle(f.interaction('post',{tiktok_url:'https://www.tiktok.com/@demo/video/123',instagram_url:''})),/Both links/);
+    patchCreator(f.db,uid,{stage:'hub_ready',timezone:'UTC',agreement_signed_at:iso(now),warmup_approved_at:iso(now),first_video_approved_at:iso(now)});
+    await assert.rejects(f.w.handle(f.interaction('post',{url:'https://example.com'})),/no longer required/);
+    const i={...f.interaction('first_posted'),type:3};
+    const before=Date.now();
+    await f.w.handle(i);await f.w.handle(i);
+    assert.equal(f.c().stage,'trial');
+    assert.ok(Date.parse(f.c().trial_started_at)>=before&&Date.parse(f.c().trial_started_at)<=Date.now());
+    assert.equal(f.modals.length,0);
+    assert.equal(f.replies.at(-1).embeds[0].title,'Set up your payment details');
+    assert.match(f.replies.at(-1).embeds[0].description,/video ideas every day/);
+    assert.match(f.replies.at(-1).embeds[0].description,/submit it here in your creator channel/);
+    assert.equal(f.replies.at(-1).components[0].components[0].custom_id,'gt:payments');
+    assert.doesNotMatch(JSON.stringify(f.replies.at(-1)),/Saved\. Your current step/);
+    assert.equal(Date.parse(f.c().trial_ends_at)-Date.parse(f.c().trial_started_at),7*flow.DAY);
     assert.equal(f.db.prepare('SELECT count(*) n FROM creator_posts').get().n,0);
-    const fields={tiktok_url:'https://www.tiktok.com/@demo/video/123',instagram_url:'https://www.instagram.com/reel/ABC/'};
-    await f.w.handle(f.interaction('post',fields));
-    assert.equal(f.db.prepare('SELECT count(*) n FROM creator_posts').get().n,2);
-    const directory=f.calls.filter(call=>call.method==='PATCH'&&call.path.includes('/messages/')).map(call=>JSON.parse(call.body)).find(body=>body.embeds?.[0]?.title==='📌 Your creator directory')||f.messages.find(body=>body.embeds?.[0]?.title==='📌 Your creator directory');
-    assert.ok(directory);
-    assert.equal(f.messages.filter(m=>m.embeds?.[0]?.title==='💸 Your payment hub').length,1);
-    const alerts=f.messages.filter(m=>m.embeds?.[0]?.title==='🎉 Posts published');
-    assert.equal(alerts.length,1);assert.match(alerts[0].embeds[0].description,/\[TikTok\]/);assert.match(alerts[0].embeds[0].description,/\[Instagram\]/);
-    await f.w.handle(f.interaction('post',fields));
-    assert.equal(f.db.prepare('SELECT count(*) n FROM creator_posts').get().n,2);
+    assert.equal(f.messages.filter(m=>m.embeds?.[0]?.title==='Your seven-day trial has started').length,0);
+    assert.equal(f.messages.filter(m=>m.embeds?.[0]?.title==='Your Creator Hub is open').length,0);
+    assert.equal(f.messages.filter(m=>m.embeds?.[0]?.title==='🎉 Posts published').length,0);
   }finally{f.db.close();}
 });
 
@@ -171,7 +271,7 @@ test('payment forms save privately, prefill edits and restrict manager detail ac
       await f.w.openModal({...f.interaction('pay_'+method),type:3},'pay_'+method);
       const fields=f.modals.at(-1).data.components;
       assert.ok(fields.length<=5);
-      assert.equal(fields[0].component.required,method==='bank');
+      assert.equal(fields[0].component.required,method!=='paypal');
       assert.equal(fields[2].component.value,'USD');
       for(const field of fields){assert.ok(field.label.length<=45);assert.ok((field.description||'').length<=100);}
     }
@@ -250,25 +350,25 @@ test('welcome says Start onboarding and reminders wait for inactivity without du
   } finally {f.db.close();}
 });
 
-test('account setup requires TikTok and Instagram profiles and excludes YouTube',async()=>{
+test('account setup requires all four campaign profiles',async()=>{
   const f=await fixture();
   try {
-    for(const accounts of ['https://www.youtube.com/@test','https://www.tiktok.com/@test','https://www.tiktok.com/@test https://www.instagram.com/reel/123/','https://www.tiktok.com/@test https://www.instagram.com/test/ https://youtube.com/@test'])
-      await assert.rejects(f.w.handle(f.interaction('accounts',{accounts,timezone:'UTC'})),/both your TikTok and Instagram/);
-    await f.w.handle(f.interaction('accounts',{accounts:'https://www.tiktok.com/@test\nhttps://www.instagram.com/test/',timezone:'UTC'}));
-    assert.equal(f.c().campaign_accounts,'https://www.tiktok.com/@test\nhttps://www.instagram.com/test/');
+    for(const accounts of ['https://www.youtube.com/@test','https://www.tiktok.com/@test','https://www.tiktok.com/@test https://www.instagram.com/reel/123/','https://www.tiktok.com/@test https://www.instagram.com/test/ https://www.youtube.com/@demo https://www.facebook.com/demo https://youtube.com/@test'])
+      await assert.rejects(f.w.handle(f.interaction('accounts',{accounts,timezone:'UTC'})),/all four/);
+    await f.w.handle(f.interaction('accounts',{accounts:'https://www.tiktok.com/@test\nhttps://www.instagram.com/test/\nhttps://www.youtube.com/@demo\nhttps://www.facebook.com/demo',timezone:'UTC'}));
+    assert.equal(f.c().campaign_accounts,'https://www.tiktok.com/@test\nhttps://www.instagram.com/test/\nhttps://www.youtube.com/@demo\nhttps://www.facebook.com/demo');
   }finally{f.db.close();}
 });
 
 test('labeled account handles and profile links normalize without AI',()=>{
-  const expected='https://www.tiktok.com/@example\nhttps://www.instagram.com/example/';
-  for(const input of ['TikTok: @Example\nInstagram: @Example','TT account = example; IG handle: @example','TikTok username example Instagram account example','tiktok.com/@Example instagram.com/Example?igsh=123','TikTok: https://www.tiktok.com/@example\nIG: example'])assert.equal(flow.parseAccountLinks(input),expected);
+  const expected='https://www.tiktok.com/@example\nhttps://www.instagram.com/example/\nhttps://www.youtube.com/@demo\nhttps://www.facebook.com/demo';
+  for(const input of ['TikTok: @Example\nInstagram: @Example','TT account = example; IG handle: @example','TikTok username example Instagram account example','tiktok.com/@Example instagram.com/Example?igsh=123','TikTok: https://www.tiktok.com/@example\nIG: example'])assert.equal(flow.parseAccountLinks(input+'\nYT: @demo\nFB: demo'),expected);
   for(const input of ['@example\n@example','TikTok: @example','TikTok: instagram.com/example\nIG: example','TikTok: @example\nYouTube: @example','TikTok: @example\nIG: instagram.com/reel/123','TikTok: https://tiktok.com.evil.test/@example\nIG: example'])assert.throws(()=>flow.parseAccountLinks(input));
 });
 
 test('account errors identify the token and exact parser failure',()=>{
-  assert.throws(()=>flow.parseAccountLinks('TikTok: @evan'),/Instagram account is missing/);
-  assert.throws(()=>flow.parseAccountLinks('@evan IG: @evan'),/couldn’t parse “@evan”.*\nThis entry has no recognized platform label/);
+  assert.throws(()=>flow.parseAccountLinks('TikTok: @evan'),/Missing accounts: instagram, youtube, facebook/);
+  assert.throws(()=>flow.parseAccountLinks('@evan IG: @evan'),/couldn’t parse “@evan”.*\nUse TikTok/);
   assert.throws(()=>flow.parseAccountLinks('TT: instagram.com/evan IG: evan'),/label says tiktok, but this URL belongs to instagram/);
   assert.throws(()=>flow.parseAccountLinks('TT: @bad! IG: evan'),/unsupported characters/);
 });
@@ -291,7 +391,7 @@ test('staff cards omit debug previews while the staff slash command remains avai
 test('account approval pings only the creator once with the current status link',async()=>{
   const f=await fixture();
   try {
-    patchCreator(f.db,uid,{stage:'account_review',campaign_accounts:'https://www.tiktok.com/@test\nhttps://www.instagram.com/test/',timezone:'UTC'});
+    patchCreator(f.db,uid,{stage:'account_review',campaign_accounts:'https://www.tiktok.com/@test\nhttps://www.instagram.com/test/\nhttps://www.youtube.com/@demo\nhttps://www.facebook.com/demo',timezone:'UTC'});
     const i=f.interaction('approve_account',{},other);
     await f.w.handle(i);
     const notices=()=>f.messages.filter(m=>m.embeds?.[0]?.title==='🎉 Your accounts are approved!');
@@ -373,12 +473,12 @@ test('status card is pinned once and stays pinned across every workflow stage',a
   }finally{f.db.close();}
 });
 
-test('drafts, revisions, published posts and leave all notify the staff reviewer',async()=>{
+test('drafts and revisions route to video reviews while leave routes to onboarding reviews',async()=>{
   const f=await fixture({staffReviews:true});
   try {
     patchCreator(f.db,uid,{stage:'first_video'});
     await f.w.handle(f.interaction('first_video',{url:'https://example.com/v1.mp4'}));
-    const alerts=()=>f.calls.filter(c=>c.path==='/channels/reviews/messages'&&c.method==='POST').map(c=>JSON.parse(c.body));
+    const alerts=()=>f.calls.filter(c=>['/channels/reviews/messages','/channels/video-reviews/messages'].includes(c.path)&&c.method==='POST').map(c=>JSON.parse(c.body));
     assert.equal(alerts().length,1);
     assert.match(alerts()[0].embeds[0].description,/v1.mp4/);
     await f.w.handle(f.interaction('revise_first_video',{reason:'Fix hook'},other));
@@ -386,9 +486,10 @@ test('drafts, revisions, published posts and leave all notify the staff reviewer
     assert.equal(alerts().length,2);
     assert.match(alerts()[1].embeds[0].description,/v2.mp4/);
     patchCreator(f.db,uid,{stage:'trial'});
-    await f.w.handle(f.interaction('post',{url:'https://www.tiktok.com/@test/video/123'}));
     await f.w.handle(f.interaction('leave',{reason:'Away tomorrow'}));
-    assert.equal(alerts().length,4);
+    assert.equal(alerts().length,3);
+    assert.equal(f.calls.filter(c=>c.path==='/channels/video-reviews/messages'&&c.method==='POST').length,2);
+    assert.equal(f.calls.filter(c=>c.path==='/channels/reviews/messages'&&c.method==='POST').length,1);
     for(const m of alerts())assert.deepEqual(m.allowed_mentions,{parse:[],roles:[resources.role_staff]});
     assert.equal(BigInt(privateOverwrites(config,resources,uid).find(o=>o.id===uid).allow)&(1n<<51n),0n);
   }finally{f.db.close();}
@@ -402,12 +503,10 @@ test('first-video approval pings the creator to post and immediately enables rep
     const m=f.messages.find(m=>m.embeds?.[0]?.title==='🔥 Your video is approved — time to post!');
     assert.equal(m.content,`<@${uid}>`);
     assert.deepEqual(m.allowed_mentions,{parse:[],users:[uid]});
-    assert.match(m.embeds[0].description,/TikTok and Instagram/);
-    assert.match(m.embeds[0].description,/Submitted post/);
-    assert.ok(flow.statusCard(f.c(),true).components.flatMap(r=>r.components).some(b=>b.custom_id==='gt:post'));
-    await f.w.openModal({...f.interaction('post'),type:3},'post');
-    await f.w.handle(f.interaction('post',{url:'https://www.tiktok.com/@test/video/456'}));
-    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM creator_posts').get().n,1);
+    assert.match(m.embeds[0].description,/TikTok, Instagram, YouTube and Facebook/);
+    assert.match(m.embeds[0].description,/First video posted/);
+    assert.ok(flow.statusCard(f.c(),true).components.flatMap(r=>r.components).some(b=>b.custom_id==='gt:first_posted'));
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM creator_posts').get().n,0);
     assert.equal(f.c().stage,'hub_ready');
     assert.equal(f.c().trial_started_at,null);
   }finally{f.db.close();}
@@ -430,10 +529,10 @@ test('preferred names allow nicknames and preserve multiword names in greetings'
 });
 
 test('account parsing tolerates common pasted formatting without guessing a platform',()=>{
-  const expected='https://www.tiktok.com/@example\nhttps://www.instagram.com/example/';
-  for(const input of ['• Tik Tok： @ example\n• IG — @example','1. TikTok profile: (@example)\n2. Instagram link: <instagram.com/example/>','TT@example\nIG@example','http://m.tiktok.com/example instagram.com/@example/','[TikTok](https://www.tiktok.com/@example)\n[Instagram](https://instagram.com/example/)'])assert.equal(flow.parseAccountLinks(input),expected,input);
-  assert.doesNotThrow(()=>flow.parseAccountLinks('TT: unusually_long_handle_for_staff_to_review\nIG: name..with.dots'));
-  assert.throws(()=>flow.parseAccountLinks('@unlabeled\n@unlabeled'),/platform label/);
+  const expected='https://www.tiktok.com/@example\nhttps://www.instagram.com/example/\nhttps://www.youtube.com/@demo\nhttps://www.facebook.com/demo';
+  for(const input of ['• Tik Tok： @ example\n• IG — @example','1. TikTok profile: (@example)\n2. Instagram link: <instagram.com/example/>','TT@example\nIG@example','http://m.tiktok.com/example instagram.com/@example/','[TikTok](https://www.tiktok.com/@example)\n[Instagram](https://instagram.com/example/)'])assert.equal(flow.parseAccountLinks(input+'\nYT: @demo\nFB: demo'),expected,input);
+  assert.doesNotThrow(()=>flow.parseAccountLinks('TT: unusually_long_handle_for_staff_to_review\nIG: name..with.dots\nYT: @demo\nFB: demo'));
+  assert.throws(()=>flow.parseAccountLinks('@unlabeled\n@unlabeled'),/Use TikTok/);
 });
 
 test('trial and agreement stage gates cannot be skipped',()=>{
@@ -487,7 +586,7 @@ test('staff role and channel isolation',()=>{
 test('creator-to-staff lifecycle, repeated event, duplicate post, retry delivery',async()=>{
   const f=await fixture();
   try {
-    await f.w.handle(f.interaction('accounts',{accounts:'https://www.tiktok.com/@test https://www.instagram.com/test/',timezone:'America/New_York'}));
+    await f.w.handle(f.interaction('accounts',{accounts:'https://www.tiktok.com/@test https://www.instagram.com/test/ https://www.youtube.com/@demo https://www.facebook.com/demo',timezone:'America/New_York'}));
     assert.equal(f.c().stage,'account_review');
     await assert.rejects(f.w.handle(f.interaction('approve_account')),/staff/);
     await f.w.handle(f.interaction('approve_account',{},other));
@@ -498,15 +597,13 @@ test('creator-to-staff lifecycle, repeated event, duplicate post, retry delivery
     await f.w.handle(f.interaction('first_video',{url:'https://example.com/draft.mp4'}));
     await f.w.handle(f.interaction('approve_first_video',{},other));
     await f.w.handle(f.interaction('open_hub',{},other));
+    await f.w.handle(f.interaction('first_posted',{published_at:new Date().toISOString()}));
     assert.equal(f.c().stage,'trial');
     const i=f.interaction('extend_trial',{},other);
     await f.w.handle(i);const end=f.c().trial_ends_at;
     await f.w.handle(i);assert.equal(f.c().trial_ends_at,end);
-    await f.w.handle(f.interaction('post',{url:'https://www.tiktok.com/@test/video/123'}));
-    const post=f.c().last_post_at;
-    await f.w.handle(f.interaction('post',{url:'https://www.tiktok.com/@test/video/123?x=1'}));
-    assert.equal(f.c().last_post_at,post);
-    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM creator_posts').get().n,1);
+    assert.equal(f.c().last_post_at,null);
+    assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM creator_posts').get().n,0);
     f.fail();await f.w.handle(f.interaction('leave',{reason:'Tomorrow away'}));
     assert.equal(f.c().notice_pending,1);assert.equal(f.c().sync_pending,1);
     await f.w.schedule();assert.equal(f.c().sync_pending,0);
@@ -517,7 +614,7 @@ test('creator-to-staff lifecycle, repeated event, duplicate post, retry delivery
 });
 test('posting cannot skip signing and another creator cannot access forms',async()=>{
   const f=await fixture();try{
-    await assert.rejects(f.w.handle(f.interaction('post',{url:'https://www.tiktok.com/@a/video/123'})),/unavailable/);
+    await assert.rejects(f.w.handle(f.interaction('post',{url:'https://www.tiktok.com/@a/video/123'})),/unavailable|no longer required/);
     const i=f.interaction('accounts',{},'444444444444444444');
     await assert.rejects(f.w.openModal(i,'accounts'),/another creator/);
     assert.equal(f.c().stage,'warmup');
@@ -539,7 +636,7 @@ test('described modal fields accept Discord label responses and legacy responses
   assert.equal(input.component.custom_id,'timezone');assert.equal(input.component.required,true);
   const f=await fixture();try{
     const i=f.interaction('accounts');
-    i.data.components=[{type:18,component:{type:4,custom_id:'accounts',value:'https://www.tiktok.com/@test_name https://www.instagram.com/test_name/'}},{type:18,component:{type:4,custom_id:'timezone',value:'America/New_York'}}];
+    i.data.components=[{type:18,component:{type:4,custom_id:'accounts',value:'https://www.tiktok.com/@test_name https://www.instagram.com/test_name/ https://www.youtube.com/@demo https://www.facebook.com/demo'}},{type:18,component:{type:4,custom_id:'timezone',value:'America/New_York'}}];
     await f.w.handle(i);
     assert.equal(f.c().timezone,'America/New_York');assert.equal(f.c().stage,'account_review');
     assert.match(f.replies.at(-1).content,/submitted for review/);
@@ -550,15 +647,16 @@ test('described modal fields accept Discord label responses and legacy responses
 
 test('unchanged channel name is omitted and channel failure does not block status or deadlines',async()=>{
   const f=await fixture({channelFailure:true});try{
+    patchCreator(f.db,uid,{campaign_accounts:null});
     await assert.rejects(f.w.sync(f.c()),/rate limit/);
     const body=JSON.parse(f.calls.find(c=>c.path==='/channels/channel'&&c.method==='PATCH').body);
     assert.equal('name' in body,false);assert.equal('parent_id' in body,false);
     assert.ok(f.c().status_message_id);
     patchCreator(f.db,uid,{stage:'at_risk',risk_started_at:iso(now-4*flow.DAY),last_post_at:iso(now-7*flow.DAY),sync_pending:1});
     await f.w.schedule(now);
-    assert.equal(f.c().stage,'removal_due');assert.equal(f.c().sync_pending,1);
-    assert.ok(f.calls.some(c=>c.path.includes('/messages/')&&c.method==='PATCH'&&c.body.includes('Posting deadline passed')));
-    assert.ok(f.messages.some(m=>m.embeds?.[0]?.title==='Posting deadline passed'));
+    assert.equal(f.c().stage,'at_risk');assert.equal(f.c().sync_pending,1);
+    assert.ok(f.calls.some(c=>c.path.includes('/messages/')&&c.method==='PATCH'));
+    assert.equal(f.messages.some(m=>m.embeds?.[0]?.title==='You are now an inactive creator'),false);
   }finally{f.db.close();}
 });
 
@@ -615,13 +713,13 @@ test('slash schema stays within Discord limits and describes every argument',()=
 
 test('Blazie signing and first-video reviews require staff and cannot unlock Hub early',async()=>{
  const f=await fixture();try{
-  await f.w.handle(f.interaction('accounts',{accounts:'https://www.tiktok.com/@test https://www.instagram.com/test/',timezone:'UTC'}));
+  await f.w.handle(f.interaction('accounts',{accounts:'https://www.tiktok.com/@test https://www.instagram.com/test/ https://www.youtube.com/@demo https://www.facebook.com/demo',timezone:'UTC'}));
   await f.w.handle(f.interaction('approve_account',{},other));
   await assert.rejects(f.w.handle(f.interaction('send_agreement',{},other)),/unavailable/);
   await f.w.handle(f.interaction('complete_warmup'));
   await assert.rejects(f.w.handle(f.interaction('approve_warmup')),/staff/);
   await f.w.handle(f.interaction('approve_warmup',{},other));
-  assert.equal(f.c().agreement_url,'https://form.jotform.com/262506982690062');
+  assert.equal(f.c().agreement_url,'https://form.jotform.com/262582983401057');
   await f.w.handle(f.interaction('signed'));
   assert.equal(f.c().agreement_signed_at,null);
   await assert.rejects(f.w.handle(f.interaction('confirm_signature',{reason:'123'})),/staff/);
@@ -629,7 +727,7 @@ test('Blazie signing and first-video reviews require staff and cannot unlock Hub
   await f.w.handle(f.interaction('confirm_signature',{reason:'Verified submission test-123; adult creator'},other));
   assert.equal(f.c().agreement_source,'staff_verified_jotform');
   await assert.rejects(f.w.handle(f.interaction('open_hub',{},other)),/unavailable/);
-  await assert.rejects(f.w.handle(f.interaction('post',{url:'https://www.tiktok.com/@test/video/123'})),/unavailable/);
+  await assert.rejects(f.w.handle(f.interaction('post',{tiktok_url:'https://www.tiktok.com/@test/video/123',instagram_url:'https://instagram.com/reel/ABC/',youtube_url:'https://youtu.be/abcdefghijk',facebook_url:'https://facebook.com/reel/12345/'})),/unavailable|no longer required/);
   await f.w.handle(f.interaction('first_video',{url:'https://example.com/draft'}));
   await f.w.handle(f.interaction('revise_first_video',{reason:'Make GoTall visible'},other));
   assert.equal(f.c().stage,'first_video');
@@ -642,9 +740,9 @@ test('Blazie signing and first-video reviews require staff and cannot unlock Hub
   assert.equal(f.calls.some(x=>x.method==='PUT'&&x.path.endsWith('/roles/active')),false);
   const i=f.interaction('open_hub',{},other);
   await f.w.handle(i); await f.w.handle(i);
-  assert.equal(f.c().stage,'trial');
-  assert.equal(Date.parse(f.c().trial_ends_at)-Date.parse(f.c().trial_started_at),7*flow.DAY);
-  assert.equal(f.messages.filter(m=>m.embeds?.[0]?.title==='Your Creator Hub is open').length,1);
+  assert.equal(f.c().stage,'hub_ready');
+  assert.equal(f.c().trial_started_at,null);
+  assert.equal(f.messages.filter(m=>m.embeds?.[0]?.title==='Your Creator Hub is open').length,0);
  }finally{f.db.close();}
 });
 
@@ -655,10 +753,14 @@ test('new copy, placeholders, revised bonus boundaries and all three post platfo
   assert.doesNotMatch(copy,/\{\{first_name\}\}|\[NOTION|\[AGREEMENT LINK\]/);
   assert.ok(copy.length<4096);
  }
- assert.match(messageCopy(2,'Evan'),/https:\/\/example.com\/gotall\/account-creation/);
- assert.match(messageCopy(4),/placeholder, coming soon/);
- assert.match(messageCopy(7),/winning-formats/);
- assert.match(messageCopy(6),/262506982690062/);
+ assert.match(messageCopy(2,'Evan'),/https:\/\/app.notion.com\/p\/Account-Creation-/);
+ assert.match(messageCopy(4),/Warming-Up-Guide-3cc10f234e62803e945ee9734b5945cb/);
+ assert.match(messageCopy(2),/Account-Creation-3d310f234e62802a9b97ffff102185d3/);
+ assert.match(messageCopy(7),/GoTall-Content-Formats-3d510f234e62805183c3eff49f31bdf6/);
+ for(const n of [2,4,7])assert.doesNotMatch(messageCopy(n),/example.com|placeholder, coming soon/);
+ assert.match(messageCopy(7),/Winning formats/);
+ assert.match(messageCopy(6),/Review & sign/);
+ assert.doesNotMatch(messageCopy(6),/https:\/\/form.jotform.com/);
  assert.match(flow.guideCard().embeds[0].description,/\$500 monthly completion payment/);
  for(const [views,expected] of [[49999,0],[50000,20],[99999,20],[100000,50],[299999,50],[300000,100],[499999,100],[500000,250],[699999,250],[700000,350],[999999,350],[1000000,500],[1999999,500],[2000000,1000]])assert.equal(flow.payoutForViews(views),expected);
  assert.equal(flow.canonicalVideo('https://youtube.com/shorts/abcdefghijk').key,flow.canonicalVideo('https://youtu.be/abcdefghijk').key);
@@ -920,5 +1022,149 @@ test('two manager drafts cannot overwrite a newly published deal',async()=>{
   await f.w.handle(f.interaction(`deal:${uid}:publish:0`,{},other));
   await assert.rejects(f.w.handle(f.interaction(`deal:${uid}:publish:0`,{},config.ownerId)),/newer deal/);
   assert.equal(f.db.prepare('SELECT count(*) n FROM creator_deal_versions').get().n,1);
+ }finally{f.db.close();}
+});
+
+ test('payment setup guides US accounts and accepts international bank details through Wise',async()=>{
+ const f=await fixture();
+ try {
+ const details={recipient:'Test Creator',country:'GB',currency:'GBP',bank:'Test Bank',destination:'Test Bank; IBAN GB00TEST123456; SWIFT TESTGB00'};
+ await assert.rejects(f.w.handle(f.interaction('pay_bank',details)),/Choose Wise/);
+ await f.w.handle(f.interaction('pay_wise',details));
+ assert.equal(JSON.parse(f.c().payment_details).destination,details.destination);
+ assert.match(f.replies.at(-1).embeds[0].description,/US bank transfer \(preferred/);
+ assert.match(f.replies.at(-1).embeds[0].description,/Wise \(international bank transfers\)/);
+ assert.ok(!JSON.stringify(f.replies.at(-1)).includes(details.destination));
+ await f.w.handle(f.interaction('pay_bank',{...details,country:'US',currency:'USD',destination:'Account 12345678; ACH 021000021; checking'}));
+ assert.equal(JSON.parse(f.c().payment_details).method,'bank');
+ }finally{f.db.close();}
+ });
+
+test('warm-up and agreement cards use spaced sections and only personalized signing buttons',()=>{
+ const warmup=flow.statusCard({name:'Evan',stage:'account_ready'},true,{});
+ assert.match(warmup.embeds[0].description,/\n\n\*\*1\. Follow the warm-up guide\*\*/);
+ assert.doesNotMatch(warmup.embeds[0].description,/STEP 3|come back here and send:/);
+ const personal='https://form.jotform.com/262582983401057?gotallAgreementToken='+ 'a'.repeat(64);
+ const agreement=flow.statusCard({name:'Evan',stage:'agreement',agreement_url:personal},true,{});
+ assert.match(agreement.embeds[0].description,/No extra button press is required/);
+ assert.doesNotMatch(agreement.embeds[0].description,/https:\/\/form.jotform.com|STEP 4/);
+ assert.equal(agreement.components.flatMap(r=>r.components).find(b=>b.label==='Review & sign').url,personal);
+});
+
+ test('manual advance is available across onboarding and persists audited, private staff decisions',async()=>{
+ for(const [stage,target] of Object.entries(flow.MANUAL_NEXT)) {
+ const f=await fixture({staffReviews:true});
+ try {
+ patchCreator(f.db,uid,{stage});
+ const action=`manual_next:${stage}`,reason='Reviewed supporting evidence with creator';
+ const panel=flow.staffCard(f.c(),true);
+ assert.ok(panel.components.flatMap(r=>r.components).some(b=>b.custom_id===`gt:${action}`));
+ for(const row of panel.components)assert.ok(row.components.length<=5);
+ await assert.rejects(f.w.openModal({...f.interaction(action),type:3},action),/staff/);
+ await assert.rejects(f.w.handle(f.interaction(action,{reason,confirm:target})),/staff/);
+ await f.w.openModal({...f.interaction(action,{},other),type:3},action);
+ assert.equal(f.modals.at(-1).data.custom_id,`gt:form:${action}`);
+ await assert.rejects(f.w.handle(f.interaction(action,{reason:'',confirm:target},other)),/reason/);
+ await assert.rejects(f.w.handle(f.interaction(action,{reason,confirm:'wrong'},other)),/confirm/);
+ const i=f.interaction(action,{reason,confirm:target},other);
+ await f.w.handle(i);
+ assert.equal(f.c().stage,target);
+ const note=f.db.prepare('SELECT * FROM staff_notes').get();assert.equal(note.actor_id,other);assert.match(note.note,new RegExp(`${stage} -> ${target}`));
+ const notice=f.messages.find(m=>m.embeds?.[0]?.title==='Your next step is open');assert.ok(notice);
+ assert.deepEqual(notice.allowed_mentions,{parse:[],users:[uid]});
+ assert.match(notice.embeds[0].description,/https:\/\/discord.com\/channels/);
+ assert.ok(!JSON.stringify(notice).includes(reason));
+ await f.w.handle(i);assert.equal(f.messages.filter(m=>m.embeds?.[0]?.title==='Your next step is open').length,1);
+ await assert.rejects(f.w.handle(f.interaction(action,{reason,confirm:target},other)),/moved/);
+ if(stage==='agreement'||stage==='agreement_review')assert.equal(f.c().agreement_source,'staff_manual_override');
+ }finally{f.db.close();}
+ }
+ });
+ test('manual advance retries its creator notification after Discord sync fails',async()=>{
+ const f=await fixture();try {
+ f.fail();await f.w.handle(f.interaction('manual_next:warmup',{reason:'Account form recovery reviewed',confirm:'account_review'},other));
+ assert.equal(f.c().stage,'account_review');
+ assert.equal(f.messages.filter(m=>m.embeds?.[0]?.title==='Your next step is open').length,0);
+ await f.w.schedule(now);await f.w.schedule(now);
+ assert.equal(f.messages.filter(m=>m.embeds?.[0]?.title==='Your next step is open').length,1);
+ }finally{f.db.close();}
+ });
+
+test('agreement card uses automatic progression and offers owner support in a bottom FAQ',()=>{
+ const c={name:'Evan',stage:'agreement',agreement_url:'https://form.jotform.com/262582983401057?gotallAgreementToken='+ 'a'.repeat(64)};
+ const card=flow.statusCard(c,true,{});
+ assert.ok(!card.components.flatMap(r=>r.components).some(b=>b.custom_id==='gt:signed'||b.label==='Agreement signed'));
+ assert.ok(card.components.flatMap(r=>r.components).some(b=>b.label==='Review & sign'));
+ assert.doesNotMatch(card.embeds[0].description,/Agreement signed|Already signed/);
+ const faq=card.embeds[0].fields.at(-1);
+ assert.equal(faq.name,'FAQ · Need help?');assert.match(faq.value,/<@571179674323910667>/);assert.match(faq.value,/in this channel/);assert.match(faq.value,/don't sign again/);
+});
+
+test('missing post submissions do not warn or remove creators',async()=>{
+ const f=await fixture();try {
+ patchCreator(f.db,uid,{stage:'active',timezone:'UTC',last_post_at:iso(now)});
+ await f.w.schedule(now+2*flow.DAY);assert.equal(f.c().stage,'active');
+ await f.w.schedule(now+3*flow.DAY);assert.equal(f.c().stage,'active');
+ await f.w.schedule(now+7*flow.DAY);assert.equal(f.c().stage,'active');
+ assert.equal(f.messages.some(m=>m.embeds?.[0]?.title==='You are now an inactive creator'),false);
+ }finally{f.db.close();}
+});
+
+test('Calculation details renders all pages through the button handler, with and without a snapshot',async()=>{
+ const f=await fixture();try {
+ for(let page=0;page<4;page++){
+ await f.w.handle(f.interaction(`earnings_details:2026-09:${page}`));
+ const card=f.replies.at(-1);assert.equal(card.embeds[0].title,`Calculation details · ${page+1}/4`);
+ assert.ok(card.embeds[0].description.length<=4096);assert.ok(JSON.stringify(card).length<6000);
+ assert.equal(card.components[0].components[0].disabled,page===0);assert.equal(card.components[0].components[1].disabled,page===3);
+ }
+ const data={start_date:'2026-09-01',end_date:'2026-09-12',mode:'gained',calculated_at:iso(now),summary:{totalPay:28,cpmPay:8,videoFixedPay:20,fixedPay:0,payableViews:8000,videos:2},creators:[{currency:'USD',dealPeriods:[{viewWindowDays:7}]}],warnings:['Missing cumulative view context.']};
+ f.db.prepare('INSERT INTO creator_earnings(creator_id,month,state,request_id,requested_at,payload_json) VALUES(?,?,?,?,?,?)').run(uid,'2026-09','ready','fixture',iso(now),JSON.stringify(data));
+ await f.w.handle(f.interaction('earnings_details:2026-09:0'));assert.match(f.replies.at(-1).embeds[0].description,/28.00/);
+ await f.w.handle(f.interaction('earnings_details:2026-09:1'));assert.match(f.replies.at(-1).embeds[0].description,/7 days/);
+ await f.w.handle(f.interaction('earnings_details:2026-09:2'));assert.match(f.replies.at(-1).embeds[0].description,/August 29–September 4/);assert.match(f.replies.at(-1).embeds[0].description,/does not earn it again/);
+ await f.w.handle(f.interaction('earnings_details:2026-09:3'));assert.match(f.replies.at(-1).embeds[0].description,/Missing cumulative view context/);assert.match(f.replies.at(-1).embeds[0].description,/not an unpaid balance/);
+ data.audit_inputs={owned_tracker_captured_at:now};
+ f.db.prepare('UPDATE creator_earnings SET payload_json=? WHERE creator_id=? AND month=?').run(JSON.stringify(data),uid,'2026-09');
+ await f.w.handle(f.interaction('earnings_details:2026-09:1'));assert.match(f.replies.at(-1).embeds[0].description,/168 hours/);assert.doesNotMatch(f.replies.at(-1).embeds[0].description,/not.*exact-hour/);
+ await f.w.handle(f.interaction('earnings_details:2026-09:2'));assert.match(f.replies.at(-1).embeds[0].description,/September 5 at 15:00 UTC/);
+ await assert.rejects(f.w.handle(f.interaction('earnings_details:2026-09:0',{},'444444444444444444')),/another creator/);
+ }finally{f.db.close();}
+});
+
+test('creator FAQ routes all seven answers and preserves support and invoice guidance',async()=>{
+ const f=await fixture();
+ try {
+  const answers=[];
+  for(let page=0;page<7;page++){
+   await f.w.handle(f.interaction(`faq:${page}`));
+   const card=f.replies.at(-1);answers.push(card.embeds[0].description);
+   assert.equal(card.embeds[0].title,`Creator FAQ · ${page+1}/7`);
+   assert.ok(card.embeds[0].description.length<=4096);
+   assert.deepEqual(card.allowed_mentions,{parse:[]});
+   assert.equal(card.components[0].components[0].disabled,page===0);
+   assert.equal(card.components[0].components[1].disabled,page===6);
+   for(const row of card.components)assert.ok(row.components.length<=5);
+  }
+  assert.match(answers[0],/do not need to create a manual invoice/);
+  assert.match(answers[0],/missing or something looks wrong/);
+  assert.match(answers[0],/<@1470834529077035195>/);
+  assert.match(answers[0],/Never paste banking details/);
+  assert.match(answers[1],/eligible-view window in your own deal/);
+  assert.match(answers[3],/wait for approval/);assert.match(answers[6],/#yap/);
+  for(const page of [-1,99,NaN])assert.ok(flow.faqCard(page).embeds[0].description);
+ }finally{f.db.close();}
+});
+
+test('FAQ is reachable from onboarding, active directory and payment hub',async()=>{
+ const f=await fixture();
+ try{
+  for(const stage of ['warmup','agreement','active']){
+   const card=flow.statusCard({...f.c(),stage},resources);
+   assert.ok(card.components.flatMap(r=>r.components).some(b=>b.custom_id==='gt:faq:0'));
+   for(const row of card.components)assert.ok(row.components.length<=5);
+  }
+  await f.w.handle(f.interaction('payments'));
+  assert.ok(f.replies.at(-1).components.flatMap(r=>r.components).some(b=>b.custom_id==='gt:faq:0'));
  }finally{f.db.close();}
 });

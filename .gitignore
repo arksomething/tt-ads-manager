@@ -1,7 +1,8 @@
 .DS_Store
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.*.example
 *.secret
 *.credentials
 *.credentials.env
@@ -10,6 +11,13 @@ ops/**/private/
 OAuth Client ID - Billion Views.json
 
 node_modules
+.next/
+.vercel/
+.venv/
+venv/
+coverage/
+*.tsbuildinfo
+*.log
 
 web/.next
 web/node_modules
@@ -36,3 +44,11 @@ __pycache__/
 # Point-in-time artifacts kept on disk but not in source control.
 /reports/
 /inspo/Screenshot*
+
+# Private operational captures stay on the host, not in this public repository.
+/ops/discord-admin-audits/*.json
+/ops/creator-platform/discord-onboarding-bot/legacy-scripts-review.json
+/ops/discord-support/*-results.json
+/ops/discord-support/*verification*.json
+/ops/discord-support/*EVALUATION.md
+/ops/discord-support/CONVERSION-DATA-AUDIT.md

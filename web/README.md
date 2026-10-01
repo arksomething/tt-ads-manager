@@ -1,6 +1,8 @@
 # Web App
 
-This directory contains the actual Billion Views product app.
+This directory contains the existing GoTall operations dashboard, historically
+called Billion Views. The newer creator-facing application lives separately in
+`../creator-platform/`; both apps remain maintained with independent deployments.
 
 ## Stack
 
@@ -30,8 +32,10 @@ Copy `.env.example` to `.env.local` and fill in:
 
 ```bash
 npm run dev
+npm test
 npm run lint
 npm run typecheck
+npm run build
 npm run db:generate-shim
 ```
 
@@ -48,4 +52,6 @@ npm run db:generate-shim
 - The app now includes a styled landing page aligned to the product direction.
 - Supabase Auth now handles the primary sign-in flow for workspace access.
 - `DISABLE_AUTH=true` is the switch for public access mode; the old `DISABLE_GOOGLE_AUTH` flag only applies to legacy Google auth.
-- The external data provider client is intentionally generic until the real endpoint contract is confirmed.
+- Server integrations include Viral.app, TikTok Business, Singular, Superwall,
+  Adapty and ViewsBase. Their availability depends on each runtime's configured
+  credentials; a build does not prove provider access.

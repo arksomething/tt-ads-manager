@@ -354,7 +354,7 @@ function CreatorDealEditor({
           <p className="text-sm text-[#D4FFB2]">{successMessage}</p>
         ) : null}
         <button
-          className="rounded-[0.85rem] bg-white px-4 py-2 text-sm font-semibold text-black transition hover:bg-[#90FF4D] disabled:cursor-not-allowed disabled:opacity-60"
+          className="rounded-[0.85rem] bg-[#90FF4D] px-4 py-2 text-sm font-semibold text-black transition hover:bg-[#A9FF78] disabled:cursor-not-allowed disabled:opacity-60"
           disabled={isPending}
           type="submit"
         >

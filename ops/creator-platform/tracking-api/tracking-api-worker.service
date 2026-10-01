@@ -1,0 +1,33 @@
+[Unit]
+Description=Multi-organization video tracking API collector
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=creator-tracker-writer
+Group=creator-tracker-writer
+Slice=creator-tracker.slice
+WorkingDirectory=/opt/creator-tracker/current/app
+LoadCredential=provider-env:/etc/creator-tracker/credentials/instagram-scheduler.env
+LoadCredential=api-env:/etc/tracking-api/worker.env
+ExecStart=/bin/bash --noprofile --norc -p /opt/tracking-api-worker/current/worker-launcher.sh
+TimeoutStartSec=5min
+SuccessExitStatus=75
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/creator-tracker/state /run/creator-tracker/locks
+
+[Install]
+WantedBy=multi-user.target

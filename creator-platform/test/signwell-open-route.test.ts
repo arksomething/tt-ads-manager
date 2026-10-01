@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   createDraft: vi.fn(),
   getSigningUrl: vi.fn(),
   sendAgreement: vi.fn(),
+  sourceIntegrity: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -26,6 +27,11 @@ vi.mock("@/lib/server-env", () => ({
   getAppOrigin: () => "https://gotall-creator-platform.vercel.app",
 }));
 
+vi.mock("@/server/admin/deal-template-source-integrity", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/server/admin/deal-template-source-integrity")>(),
+  assertDealTemplateSourceIntegrity: mocks.sourceIntegrity,
+}));
+
 vi.mock("@/lib/agreements/signwell", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/agreements/signwell")>(),
   createSignWellAgreementDraft: mocks.createDraft,
@@ -35,6 +41,7 @@ vi.mock("@/lib/agreements/signwell", async (importOriginal) => ({
 }));
 
 import { POST } from "@/app/api/agreements/signwell/open/route";
+import { DealTemplateSourceIntegrityError } from "@/server/admin/deal-template-source-integrity";
 
 const signingUrl = "https://www.signwell.com/docs/creator-agreement";
 const externalAgreementId = "5ccaf055-993b-4e90-83fb-bd735a5793f4";
@@ -82,6 +89,7 @@ function redirect(response: Response) {
 }
 
 function expectNoProviderOrProvisioningCalls() {
+  expect(mocks.sourceIntegrity).not.toHaveBeenCalled();
   expect(mocks.adminRpc).not.toHaveBeenCalled();
   expect(mocks.createDraft).not.toHaveBeenCalled();
   expect(mocks.getSigningUrl).not.toHaveBeenCalled();
@@ -97,6 +105,11 @@ describe("SignWell agreement opening state gates", () => {
     });
     mocks.readiness.mockReturnValue({ readyToSend: true, testMode: true });
     mocks.getSigningUrl.mockResolvedValue(signingUrl);
+    mocks.sourceIntegrity.mockResolvedValue({
+      dealVersionId: "264df1b2-9ce7-439d-a7d4-38a464b23ed0",
+      snapshotHash: "a".repeat(64),
+      templateId: providerTemplateId,
+    });
   });
 
   it.each([
@@ -183,6 +196,14 @@ describe("SignWell agreement opening state gates", () => {
 
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(signingUrl);
+    expect(mocks.sourceIntegrity).toHaveBeenCalledWith({
+      dealVersionId: "264df1b2-9ce7-439d-a7d4-38a464b23ed0",
+      snapshotHash: dealSnapshotSha256,
+      templateId: providerTemplateId,
+    }, expect.objectContaining({ rpc: mocks.adminRpc }));
+    expect(mocks.sourceIntegrity.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.adminRpc.mock.invocationCallOrder[0],
+    );
     expect(mocks.adminRpc).toHaveBeenNthCalledWith(
       1,
       "begin_own_signwell_agreement_provisioning",
@@ -361,4 +382,23 @@ describe("SignWell agreement opening state gates", () => {
     expect(mocks.getSigningUrl).not.toHaveBeenCalled();
     expect(mocks.sendAgreement).not.toHaveBeenCalled();
   });
+
+  it.each(["assigned", "sent"])(
+    "blocks provisioning and provider calls when %s source integrity fails",
+    async (status) => {
+      mocks.routeRpc.mockResolvedValue({ data: signingContext(status, status === "sent"), error: null });
+      mocks.sourceIntegrity.mockRejectedValue(new DealTemplateSourceIntegrityError("artifact_bytes_mismatch"));
+
+      const location = redirect(await POST(request()));
+
+      expect(location.searchParams.get("error")).toBe(
+        "The archived agreement source failed its server integrity check. No signing action was taken.",
+      );
+      expect(mocks.sourceIntegrity).toHaveBeenCalledOnce();
+      expect(mocks.adminRpc).not.toHaveBeenCalled();
+      expect(mocks.createDraft).not.toHaveBeenCalled();
+      expect(mocks.getSigningUrl).not.toHaveBeenCalled();
+      expect(mocks.sendAgreement).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -129,10 +129,10 @@ writes run as the single no-login `creator-tracker-writer` identity. Scheduled
 discovery, polling, migration, and provider jobs additionally share the
 `owned-tracker-writer` flock. Canonical delivery does not hold that flock
 across HTTPS: its short SQLite lease/ack transactions are fenced and use the
-same writer identity. Frequent schedulers use a
-non-blocking lock and retry at their next tick; lower-frequency discovery and
-provider jobs wait at most five minutes so a short poll cannot starve their
-whole interval. Same-job or frequent-scheduler contention exits 75 and timer
+same writer identity. TikTok waits up to 45 seconds for its writer lock;
+Instagram, lower-frequency discovery, and provider jobs wait at most five
+minutes so a short overlap cannot starve their whole interval. Same-job or
+expired scheduler lock waits exit 75 and timer
 units treat that as benign overlap. A provider writer-lock timeout exits 76 and
 receives at most three consecutive systemd attempts inside a two-hour window.
 Successful provider activations reset that counter; otherwise systemd would
@@ -150,6 +150,26 @@ while it alone can write the separate verified archive. The dashboard and
 canonical uploader cannot write either CAS. The long-running worker updates
 its status heartbeat every 30 seconds and owns a separate process group for
 clean shutdown of launcher children.
+
+Health holds shared locks on both fences, so the off-host reporter and the
+dashboard probe can inspect the same checkpoint concurrently. TikTok scheduler
+ticks wait up to 45 seconds for a short snapshot overlap instead of skipping an
+entire three-minute cycle. An already queued Instagram scheduler still takes
+priority; all actual database writer jobs retain exclusive locks.
+
+Operational TikTok failure counts include failed videos only when the existing
+observation cadence says another collection is due. A closed first-week window
+does not require a new out-of-window sample just to clear an alarm. The same
+failure becomes actionable again when the next window or daily scan is due;
+retained failure counts and historical target outcomes remain unchanged.
+
+Paid TikTok fallback recovers missing first-week targets immediately after its
+first validated profile page, before paging through older inventory. A later
+page's missing credit telemetry still blocks further spending, but cannot
+starve those already collected target samples. Head and tail recovery share
+the same ten-detail-request allowance and provider guard. Each detail keeps its
+own raw response and request timestamp, and the run does not retry a failed
+detail twice or claim that a recovered detail proves complete profile inventory.
 
 Services execute the supervisor and health probe sealed inside the selected
 root-owned release. Unit definitions are sealed in the same artifact and
@@ -930,3 +950,191 @@ audit, and the 47-page cutover gate passed. HTTP health passed. The worker and
 all eight managed timers were enabled and active, and temporary recovery and
 diagnostic units were removed. The provider reported 20,040 credits remaining
 against a reserve of 100; no server or provider plan upgrade was needed.
+
+### September 13 provider credit efficiency
+
+Production release `3f6613a1ecde858368a1c3b0ded892c2dadcfaaed1bc823a954a5dee055ce5e4`
+uses app commit `e76c833491c3cd4ac1c2853c9aa20567c71e723f` from
+`/var/tmp/creator-tracker-credit-efficiency` (branch
+`codex/instagram-credit-efficiency`). It passed 859 tests, typecheck, production
+build, a zero-vulnerability audit, and the 47-page cutover completeness gate.
+
+Instagram routine observation cadence is now 72 hours after the first week,
+then seven days after day 30; the first-week windows and day-90 freeze remain.
+Discovery reuses returned older metrics without assigning an incidental sample
+a scheduled target. Observation profile batches stop paging once all required
+metrics have been collected. A lone due reel uses detail instead of a profile
+crawl. Full discovery continues to respect the configured inventory limit.
+
+Instagram account failures back off to one day after two failures and one week
+after five. Existing counters are honored on admission, so old 30-minute retry
+timestamps do not bypass the new policy. Two missing-video failures in distinct
+runs after the last complete direct observation suppress routine retries on
+both platforms. Generic extractor/server failures do not qualify. One final
+check may occur in the day-seven window; a later incidental direct observation
+restores collection. The coverage diagnostic reports `repeatedly missing` /
+`presumed_unavailable` separately, preserving old metrics and failure evidence.
+Suppression is not proof of deletion, recovered history, or payout readiness.
+
+At deployment the inventory contained 662 unique Instagram videos: 49 first-week,
+180 aged 7-30 days, 386 aged 30-90 days, and 47 already frozen. There were 10
+Instagram and 175 TikTok videos meeting the repeated-missing rule. Credit
+savings require a post-deployment observation period; no daily savings guarantee
+is inferred from scheduler success.
+
+First live readback at 05:20 EDT: Instagram observation completed with 2/2 due
+observations, one profile page, one charged credit, zero detail fallbacks, and
+10 repeatedly missing videos suppressed. Discovery completed with zero requests
+and zero charged credits. TikTok logged 175 suppressed videos, then failed the
+newly enrolled `itsjudynajm` discovery with `TIKTOK_NATIVE_OWNER_UNAVAILABLE`;
+that identity problem remains unresolved and is not a credit-policy success.
+The worker API passed, and all ten existing timers were enabled after cutover.
+
+### September 14 automatic account lifecycle recovery
+
+Production release `04db761cae80ac70a55389e3672d71245826b09d2fc406ea75ef15d22bb31c47`
+uses app commit `e3fa806dbe81560865411499b245098dc5a18792` from
+`/var/tmp/creator-tracker-reliability-20260914`. All 869 tests, typecheck,
+production build, audit and 47-page cutover gate passed. The worker HTTP check
+passed and all ten existing timers were restored.
+
+Instagram profile failures now use bounded exact-username identity recovery and
+parse privacy automatically. Nested/flat search results and no-results HTTP 404
+are supported; generic provider errors remain failures. Private/unavailable
+accounts stop video requests and recheck weekly. Invalid syntax stops requests
+until corrected. No per-handle override is used. Live probes classified evanzkliu
+as private and height.master7/aeronmoggz as unavailable; immediate repeat probes
+for each made zero provider requests. Old metrics are retained, never zeroed.
+
+TikTok itsjudynajm identity recovery produced 69 direct observations. Stable-ID
+probes classified dgetstaller and wimgoated.gotall as deactivated. gotallkae's
+successful profile evidence now prevents individual missing videos from marking
+the whole account failed. Newer complete Viral provider evidence permits retry
+after repeated misses without being relabeled as a direct reading. Historical
+gaps and the 90-day/slower-cadence differences from Viral remain visible.
+
+Detailed evidence: `reports/collector-reliability-2026-09-14/report.md`.
+
+### September 23: database growth and read-only snapshots
+
+Read-only health, dashboard, and cutover snapshots no longer stop at 512 MiB.
+The collector application copies the checkpointed database through its verified
+read-only descriptor in 1 MiB chunks to a private temporary file, normalizes
+only the copy's WAL header, and opens that copy with SQLite's OS-read-only flag,
+query-only mode, an 8 MiB page cache, and memory mapping disabled. The copy is
+unlinked before use and its space is released when the connection closes or the
+process exits. The existing source inode, permission, WAL, and concurrent-write
+checks still apply. Database growth is expected; retain tracking history rather
+than pruning it to satisfy a monitoring limit. The existing free-disk reserve
+remains the relevant storage guard.
+
+The regression test opens a file above the former size limit in a child process,
+checks query results and integrity, refuses writes even with query-only turned
+off, and asserts that peak resident memory growth stays below 128 MiB.
+
+Production release `ed5a711e02d729a31bdf106462eb6dd986ed29f6883c8d3a5bf081454dfac867`
+(app `c9e6d7c3d61d868f200cd2744ed8fd74bb0cc8d4`) passed 870 tests,
+typechecking, the production build, the dependency audit, and the 47-page
+release-bound completeness gate. Recovery refreshed all 104 initially
+actionable overdue videos plus two that became overdue during maintenance.
+The full live health check then passed with zero actionable overdue/failed
+TikTok videos, zero overdue Instagram videos, zero unresolved accounts, and
+zero imminent uncovered targets. Unavailable posts and historical missed/late
+windows remain in the evidence ledger.
+
+The off-host reporter now opens the existing writer and canonical-delivery
+locks read-only and holds shared locks across its coverage probe. Contention
+returns a degraded sample without launching a snapshot; missing locks and
+unexpected errors still fail. The probe allows 45 seconds, within a 75-second
+reporter service deadline. All 19 reporter tests passed, including actual
+exclusive/shared flock interaction, and production heartbeats 26770 and 26771
+were accepted as healthy with zero issues.
+
+The existing irreversible outside-target monitor baselines were explicitly
+reviewed from 955 to 1106 after recovery; those late windows predate this
+repair. The before-state and operator rationale are retained under
+`/var/lib/creator-tracker-autopilot/operator-acknowledgments/20260923T033040Z-*`.
+No observation, target outcome, or future regression detection was removed.
+
+### September 24: partial TikTok responses and recovery scheduling
+
+The collector repair preserves validated earlier provider pages when a later
+page fails, while keeping the result capped and leaving the shared credit guard
+blocked when the failed request has no trustworthy charge telemetry. No charge,
+missing metric, or deletion is inferred. With fallback available, public profile
+extraction is bounded to three minutes; pagination reserves 90 seconds and ten
+requests for targeted item recovery within the existing invocation budget.
+Older known posts that would become overdue before the next account scan also
+qualify for factual early item observations. Daily-only account scheduling uses
+the same 20-minute ordinary grace as coverage, while publication windows retain
+their existing tolerance.
+
+Autopilot now reads the actionable TikTok overdue count from the same systemd
+health invocation and retains the full overdue ledger count separately. Missing
+or mismatched invocation evidence falls back to the original full count. This
+prevents deliberately suspended missing posts from repeatedly opening a current
+recovery incident; it does not remove their evidence or historical target gaps.
+
+The deployed collector commit is `6e8293e798eefc50cbd8cf5dda4535803a347ced`
+(release `51c7d20410d0567d4c52c4d3a0c6ecd4d1ccea067b77bd56cf8d3f64cd580828`).
+Verification passed 872 collector tests, typecheck, the sealed build, the
+47-page cutover gate, and 92 autopilot tests plus installed-artifact checks.
+Bounded recovery wrote 215 fresh direct observations. The September 24 live
+check reduced actionable TikTok overdue work from 10 to 1 and cleared Kai's
+three failures; Instagram overdue and imminent uncovered targets were both
+zero. The remaining Abdul video, `7682014765106990350`, returned provider HTTP
+404, while its public-path attempt was locally deferred by the existing pacing
+guard. Its coverage gap remains visible; neither deletion nor zero views was
+inferred. Historical target counters were not reset. All temporary recovery
+units and their isolated credential were removed after completion.
+
+### September 29: read-lock contention and urgent TikTok recovery
+
+Dashboard health now shares the writer and delivery snapshot fences with the
+read-only monitor. TikTok scheduler ticks wait up to 45 seconds for the writer
+fence, preserving collection opportunities during short monitor snapshots.
+Integration tests exercise concurrent shared readers and a waiting writer.
+
+Actionable failure coverage uses the same current cadence as collection.
+Failures from closed first-week windows remain in retained evidence and become
+actionable again when collection is next due; historical missed or late windows
+are not rewritten. After the first validated paid profile page, the collector
+recovers urgent missing first-week items before requesting older profile pages.
+These requests share the existing ten-item recovery allowance, provider credit
+guard, deadline, and exact-response evidence path. A later pagination failure
+cannot discard the successful head or item observations.
+
+Collector commit `be38ee56897b807178dadf406cb42aa8a05592c4` is deployed in sealed
+release `b9fece7a8d46d71cb77de1b1008a79af699255d236aa51f3497df00ed37b1ab8`.
+Verification passed 876 collector tests, typecheck, production build, dependency
+audit, the operations verifier, and the 47-page release-bound completeness gate.
+Production run `d82902bf-0cc8-4676-831b-1ba79fef9e79` saved eight observations,
+including its one due missing item recovered before tail pagination failed.
+The later response lacked credit telemetry, so the shared provider guard
+correctly paused paid collection pending its rate-limited balance reconciliation.
+Neither missing telemetry nor absent profile items were converted into inferred
+charges, zero views, or deletion claims.
+
+At 06:38 UTC, normal one-request credit reconciliation restored a validated
+10,940-credit balance. Bounded recovery then saved both due item observations
+without errors, leaving 10,938 credits. The fresh dashboard probe passed with
+zero actionable overdue or failed TikTok videos, zero overdue Instagram videos,
+zero unresolved accounts, zero imminent uncovered targets, and ready credits.
+The worker and all ten timers remained enabled; raw verification was healthy
+and canonical delivery had no due outbox row.
+
+The full overdue ledger still contained 117 TikTok videos and 256 repeatedly
+missing videos remained suspended from routine retries. Enforced history retained
+64 missed and 1,290 outside-target windows. Only the two historical outside-target
+autopilot baselines were acknowledged from 1,259 to 1,290 after current health
+passed; operational baselines remain zero and future increases still alert.
+Before/after state, health evidence, and rationale are retained under
+`/var/lib/creator-tracker-autopilot/operator-acknowledgments/20260929T064015Z-tracker-recovery`.
+No metric, failure, or target record was removed or rewritten by this acknowledgment.
+
+Instagram discovery subsequently saved 116 direct observations across two
+accounts with no account or item errors; its bounded inventories remained
+correctly labeled capped. The provider balance was 10,926 afterward. Final
+scheduler/finalizer, dashboard-health, and autopilot checks passed, and the
+off-host receiver accepted healthy heartbeat 35088 with zero issues at
+06:42 UTC. All temporary recovery units were removed.

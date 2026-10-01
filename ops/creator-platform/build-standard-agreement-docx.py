@@ -23,7 +23,7 @@ DEFAULT_OUTPUT = (
     / "creator-platform"
     / "public"
     / "documents"
-    / "gotall-standard-creator-agreement-sample-v0.1.docx"
+    / "gotall-standard-creator-agreement-sample-v0.2.docx"
 )
 
 INK = "1F2328"

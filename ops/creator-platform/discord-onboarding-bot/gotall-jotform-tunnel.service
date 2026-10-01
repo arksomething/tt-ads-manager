@@ -1,0 +1,17 @@
+[Unit]
+Description=GoTall Jotform webhook HTTPS tunnel
+After=network-online.target gotall-discord-onboarding-test.service
+Wants=network-online.target
+[Service]
+User=gotall-discord
+Group=gotall-discord
+ExecStart=/usr/local/bin/cloudflared --no-autoupdate --config /etc/gotall-jotform-webhook/config.yml tunnel --loglevel fatal run
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target

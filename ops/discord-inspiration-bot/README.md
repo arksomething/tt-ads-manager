@@ -1,3 +1,5 @@
+> Current deployment: this feature now runs inside GoTall - Management on XPS. See [MANAGEMENT-DEPLOYMENT.md](MANAGEMENT-DEPLOYMENT.md). Railway and the separate bot are retired. The Railway instructions below are historical.
+
 # GoTall Inspiration Bot
 
 Imported from `/home/ark296/projects/archive/gotall-discord-bot` on 2026-09-14.

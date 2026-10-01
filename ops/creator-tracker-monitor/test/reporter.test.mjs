@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm, chmod } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 
 import {
   AUTOPILOT_HEALTH_MAX_AGE_SECONDS,
@@ -25,6 +27,7 @@ import {
   parseStatus,
   recordReporterRecoveryReadiness,
   requiredUnits,
+  runCoverageProbe,
   signHeartbeat,
 } from "../reporter.mjs";
 
@@ -702,4 +705,46 @@ test("installer requires a readable sanitized export and live autopilot timer", 
     install.indexOf("systemctl start creator-tracker-autopilot.service") <
       install.indexOf("systemctl enable --now creator-tracker-monitor.timer"),
   );
+});
+
+
+test("coverage locks defer without starting the probe and hold both fences while reading", async () => {
+  const root = await mkdtemp(join(tmpdir(), "tracker-monitor-locks-"));
+  const lockPaths = [join(root, "writer.lock"), join(root, "delivery.lock")];
+  try {
+    for (const path of lockPaths) await writeFile(path, "", { mode: 0o600 });
+    for (const path of lockPaths) {
+      const holder = spawn("/usr/bin/flock", ["--exclusive", path,
+        "/bin/sh", "-c", "printf ready; read release"], { stdio: ["pipe", "pipe", "pipe"] });
+      try {
+        await once(holder.stdout, "data");
+        const result = runCoverageProbe({ command: "/bin/echo", lockPaths, timeout: 2_000 });
+        assert.equal(result.status, 75);
+        assert.equal(result.stdout, "");
+        assert.deepEqual(evaluateCoverageProbeResult(result), {
+          status: "degraded", issueCodes: ["coverage_probe_snapshot_contended"],
+        });
+      } finally {
+        holder.stdin.end("release\n");
+        await once(holder, "exit");
+      }
+    }
+    const command = join(root, "probe.sh");
+    // A separate open description must be unable to acquire each exclusive lock.
+    await writeFile(command, `#!/bin/sh
+/usr/bin/flock --exclusive --nonblock '${lockPaths[0]}' /bin/true && exit 90
+/usr/bin/flock --exclusive --nonblock '${lockPaths[1]}' /bin/true && exit 91
+printf guarded
+`);
+    await chmod(command, 0o700);
+    const result = runCoverageProbe({ command, lockPaths, timeout: 2_000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "guarded");
+    assert.equal(runCoverageProbe({ command: "/bin/echo", lockPaths, timeout: 2_000 }).status, 0);
+    const missing = runCoverageProbe({ command: "/bin/echo", lockPaths: [join(root, "missing"), lockPaths[1]] });
+    assert.equal(evaluateCoverageProbeResult(missing).status, "failing");
+    assert.equal(evaluateCoverageProbeResult({ status: 75, stdout: "unexpected", stderr: "" }).status, "failing");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

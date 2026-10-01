@@ -12,13 +12,17 @@ Select `creator:@member` explicitly for every individual operation. Commands can
 
 1. `/creator list queue:accounts` → inspect each creator with `status`, open their accounts and check profile quality manually.
 2. `approve-account` if ready, or `request-changes reason:…` with concrete corrections.
-3. `attach-agreement url:…` → verify the personal signing link → `send-agreement`.
+3. Approve warm-up to send the creator's linked agreement. Complete Jotform
+   submissions automatically open first-video preparation, usually within five
+   minutes, and notify the Manager role with a provider submission link. No
+   Verify signature action is needed. Custom agreement links remain available through `attach-agreement`
+   and `send-agreement`. See [JOTFORM.md](JOTFORM.md).
 4. `/creator list queue:trials` → review submissions with `posts` → `trial decision:pass` or `trial decision:extend`.
 5. `/creator list queue:leave` → read the requested dates in `status` → approve or decline with a reason.
 6. `/creator list queue:risk` → check recent submissions, deadlines and leave before following up.
 7. `/creator health` → investigate the sync queue when needed. Read `history` before retrying an uncertain action.
 
-The same stage gates apply to slash commands and buttons. There is no arbitrary set-stage, force-sign, real payment or kick command.
+The same stage gates apply to slash commands and buttons. There is no arbitrary set-stage, force-sign, real payment or immediate kick command. Staff-confirmed offboarding has a guarded automatic removal timer; see [OFFBOARDING.md](OFFBOARDING.md).
 
 ## Command reference
 
@@ -68,6 +72,21 @@ Posting days use the creator's saved timezone. Discord renders timestamps in the
 
 Lifecycle commands retain Discord interaction IDs to avoid applying a redelivered interaction twice. Submitting a new command creates a new action; in particular, repeating an intentional extension adds another three days. Staff notes also deduplicate redelivered interactions. Synchronization can fail after the stage was saved. Check status/history before repeating a command; use retry for delivery-related recovery.
 
-Real signature callbacks, automatic content/view checks, payments and kicks are not enabled. Simulated signing remains a creator button in the test agreement stage. The pre-existing competing Hermes runtime answered `/status` during the audit; registration of the new `/creator` group does not prove that competing runtime is resolved. Do not stop unrelated production workers to address it.
+Historical test-service audit (not a current production feature inventory): real signature callbacks, automatic content/view checks, payments and kicks were not enabled at that audit. Current offboarding behavior is documented in [OFFBOARDING.md](OFFBOARDING.md). Simulated signing remains a creator button in the test agreement stage. The pre-existing competing Hermes runtime answered `/status` during the audit; registration of the new `/creator` group does not prove that competing runtime is resolved. Do not stop unrelated production workers to address it.
 
 Implementation: `admin.mjs` owns slash descriptions and routing, `workspace.mjs` owns authorization and durable lifecycle actions, and `flow.mjs` owns stage gates and copy. Keep this guide and `/creator help` aligned with any command changes.
+
+## Manual recovery at every onboarding step
+
+Open the creator's **Staff controls**, then **Manually advance…**. The form
+shows the current and next stages. Enter a reason and evidence reference, then
+type the target stage to confirm. This bypasses normal step checks, including
+provider matching and trial timing; check the underlying work first. For an
+unlinked Jotform signature, review the original submission and record its ID.
+The agreement source is recorded as `staff_manual_override`, not API verification.
+
+The change records the acting admin, previous/next stage, reason and time in
+history. The creator receives a private-channel mention and next-step link after
+card synchronization; retries do not duplicate the notification. Stale forms are
+rejected. Every onboarding/review step and trial has a next-step override; At Risk
+can resume posting. Active is complete; closed creators use Reopen onboarding.

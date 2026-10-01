@@ -13,6 +13,7 @@ class BridgeTests(unittest.TestCase):
     def test_recovery(self):
         row=self.row();row['status']='complete';self.assertEqual(b.classify(row,300),'healthy')
     def test_urls(self):
+        self.assertEqual(b.tracked_accounts('https://www.tiktok.com/@test\nhttps://www.instagram.com/test/\nhttps://www.youtube.com/@test\nhttps://www.facebook.com/test'),[('tiktok','test'),('instagram','test')])
         self.assertEqual(b.account('https://www.instagram.com/test/'),('instagram','test'))
         for url in ['https://example.com','https://instagram.com/reel/test/']:
             with self.assertRaises(ValueError):b.account(url)
@@ -21,15 +22,29 @@ class BridgeTests(unittest.TestCase):
             old=b.BOT;b.BOT=os.path.join(folder,'bot.db')
             try:
                 with sqlite3.connect(b.BOT) as db:
-                    db.executescript('CREATE TABLE creators(discord_user_id TEXT,stage TEXT,first_video_approved_at TEXT,campaign_accounts TEXT,channel_id TEXT,status_message_id TEXT); CREATE TABLE deliveries(id TEXT PRIMARY KEY,channel_id TEXT,payload TEXT,created_at TEXT);')
+                    db.executescript('CREATE TABLE resources(key TEXT,discord_id TEXT); CREATE TABLE creators(discord_user_id TEXT,stage TEXT,first_video_approved_at TEXT,campaign_accounts TEXT,channel_id TEXT,status_message_id TEXT); CREATE TABLE deliveries(id TEXT PRIMARY KEY,channel_id TEXT,payload TEXT,created_at TEXT);')
+                    db.execute('INSERT INTO resources VALUES (?,?)',('production_cutover_guild','1400610531189985310'))
                     db.execute('INSERT INTO creators VALUES (?,?,?,?,?,?)',('123','hub_ready','2026-09-10','https://www.tiktok.com/@test','channel','card'))
                 r=dict(discord_user_id='123',platform='tiktok',handle='test',account_id=1,active=True,state='private',evidence=1)
                 b.ingest([r]);r['evidence']=2;b.ingest([r])
-                with sqlite3.connect(b.BOT) as db:self.assertEqual(db.execute('SELECT count(*) FROM deliveries').fetchone()[0],1)
+                with sqlite3.connect(b.BOT) as db:
+                    self.assertEqual(db.execute('SELECT count(*) FROM deliveries').fetchone()[0],1)
+                    self.assertIn('1400610531189985310',db.execute('SELECT payload FROM deliveries').fetchone()[0])
                 r['state']=None;b.ingest([r])
                 r.update(state='healthy',evidence=3);b.ingest([r]);b.ingest([r])
                 with sqlite3.connect(b.BOT) as db:self.assertEqual(db.execute('SELECT count(*) FROM deliveries').fetchone()[0],2)
                 r.update(state='private',evidence=4);b.ingest([r])
                 with sqlite3.connect(b.BOT) as db:self.assertEqual(db.execute('SELECT count(*) FROM deliveries').fetchone()[0],3)
+            finally:b.BOT=old
+    def test_multiple_profiles_on_one_platform(self):
+        with tempfile.TemporaryDirectory() as folder:
+            old=b.BOT;b.BOT=os.path.join(folder,'bot.db')
+            try:
+                with sqlite3.connect(b.BOT) as db:
+                    db.executescript('CREATE TABLE creators(discord_user_id TEXT,stage TEXT,first_video_approved_at TEXT,campaign_accounts TEXT,channel_id TEXT,status_message_id TEXT); CREATE TABLE deliveries(id TEXT PRIMARY KEY,channel_id TEXT,payload TEXT,created_at TEXT);')
+                    db.execute('INSERT INTO creators VALUES (?,?,?,?,?,?)',('123','active','2026-09-10','https://www.tiktok.com/@one\nhttps://www.tiktok.com/@two','channel','card'))
+                rows=[dict(discord_user_id='123',platform='tiktok',handle=handle,account_id=i,active=True,state=None,evidence=None) for i,handle in enumerate(['one','two'])]
+                b.ingest(rows);b.ingest(rows)
+                with sqlite3.connect(b.BOT) as db:self.assertEqual(db.execute('SELECT count(*) FROM tracker_profile_links').fetchone()[0],2)
             finally:b.BOT=old
 unittest.main()

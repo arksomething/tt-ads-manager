@@ -47,7 +47,7 @@ describe("public standard agreement sample", () => {
   it("links to the checked-in versioned DOCX artifact", () => {
     render(<StandardAgreementPage />);
 
-    const href = "/documents/gotall-standard-creator-agreement-sample-v0.1.docx";
+    const href = "/documents/gotall-standard-creator-agreement-sample-v0.2.docx";
     const download = screen.getByRole("link", { name: "Download DOCX" });
     expect(download).toHaveAttribute("href", href);
     expect(download).toHaveAttribute("download");

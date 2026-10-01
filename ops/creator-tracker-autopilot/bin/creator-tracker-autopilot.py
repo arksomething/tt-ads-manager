@@ -973,6 +973,7 @@ def latest_coverage(now_epoch: int) -> dict[str, Any]:
     latest: dict[str, Any] = {"observed_at_epoch": None, "fields": {}}
     if result.returncode != 0:
         return latest
+    actionable_by_invocation: dict[str, str] = {}
     for line in result.stdout.splitlines():
         try:
             row = json.loads(line)
@@ -981,9 +982,22 @@ def latest_coverage(now_epoch: int) -> dict[str, Any]:
         message = row.get("MESSAGE")
         if not isinstance(message, str):
             continue
+        invocation = row.get("_SYSTEMD_INVOCATION_ID")
+        actionable = re.fullmatch(
+            r"\[tracker actionable collection\] overdue_tiktok=(\d+) failed_tiktok=\d+ suspended_missing=\d+; full coverage gaps retained below",
+            message,
+        )
+        if actionable and isinstance(invocation, str) and re.fullmatch(r"[0-9a-f]{32}", invocation):
+            actionable_by_invocation[invocation] = actionable.group(1)
+            continue
         fields = parse_coverage_message(message)
         if not fields:
             continue
+        if isinstance(invocation, str) and invocation in actionable_by_invocation and "overdue_tiktok_videos" in fields:
+            # The full ledger includes deliberately suspended missing posts.
+            # Compare recoverable work, while retaining the evidence-gap total.
+            fields["retained_overdue_tiktok_videos"] = fields["overdue_tiktok_videos"]
+            fields["overdue_tiktok_videos"] = actionable_by_invocation[invocation]
         raw_timestamp = row.get("__REALTIME_TIMESTAMP") or row.get("_SOURCE_REALTIME_TIMESTAMP")
         try:
             timestamp = int(str(raw_timestamp)) // 1_000_000

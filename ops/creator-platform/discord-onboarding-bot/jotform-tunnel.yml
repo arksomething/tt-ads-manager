@@ -1,0 +1,6 @@
+tunnel: 6ec20ef8-2870-4994-9fba-81c421ec2ae6
+credentials-file: /etc/gotall-jotform-webhook/tunnel.json
+ingress:
+  - hostname: gotall-webhooks.billionviews.app
+    service: http://127.0.0.1:18764
+  - service: http_status:404

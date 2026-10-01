@@ -270,7 +270,6 @@ export class ViralAppClient {
 
     const requestPromise = (async () => {
       const upstreamStartedAt = Date.now();
-      let responseStatus: number | undefined;
 
       let response!: Response;
       const patientRetries =
@@ -301,7 +300,7 @@ export class ViralAppClient {
           setTimeout(resolve, (retryAfterSeconds + 2) * 1_000),
         );
       }
-      responseStatus = response.status;
+      const responseStatus = response.status;
 
       if (!response.ok) {
         const payload = (await safeJson(response)) as

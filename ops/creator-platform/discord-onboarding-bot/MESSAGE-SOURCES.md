@@ -2,14 +2,21 @@
 
 Sources read directly:
 - https://app.notion.com/p/GoTall-Discord-Messages-3d310f234e6280f1841ad0ae60ad9bcd
-- https://form.jotform.com/262506982690062
+- https://form.jotform.com/262582983401057 (personal-account replacement;
+  migrated from the original source on 2026-09-16)
 
 The owner supplied both links and confirmed the revised bonus table in this task.
 The ten Notion messages are preserved in `messages.mjs`, with runtime substitutions
 for names, the agreement URL, button instructions, optional best-video wording,
-and the script-library typo. The owner requested placeholder URLs for the unfinished
-account-creation, warm-up and winning-formats guides; these use clearly labeled
-`https://example.com/gotall/...` URLs. Replace these in `messageCopy` when supplied.
+and the script-library typo. On September 12 the owner supplied screenshots with
+the account-creation, warm-up and content-formats Notion URLs, now configured in
+`GUIDE_LINKS`. On September 16 those four Blazie pages were copied into Evan Liu's
+connected Notion workspace. The three migrated creator guides must be published
+before replacing the production URLs; private workspace pages are not valid
+creator-facing targets.
+The payment screenshot specifies US bank transfer (preferred),
+PayPal, and Wise for international bank transfers. Payment forms and guidance
+now follow that selection; managers confirm country-specific bank requirements.
 
 ## Behavior
 
@@ -17,8 +24,10 @@ Existing `warmup` records retain that database key for account setup. Account
 approval now leads to actual warm-up, creator completion, and staff approval.
 Staff then send the supplied Jotform agreement. A creator confirmation is not a
 verified signature: staff must inspect the completed submission, check any required
-guardian signature, and record a reference. No automatic Jotform webhook or
-submission verification is claimed. Test signature simulation is separate.
+guardian signature, and record a reference. The September 11 integration now
+detects linked receipts through Jotform API polling and revalidates them before
+staff approval; see [JOTFORM.md](JOTFORM.md). It does not replace the staff signer
+and guardian review. Test signature simulation is separate.
 
 Signing opens first-video preparation. Creators share a draft URL, staff request
 revisions or approve, then explicitly open Creator Hub. Only successful channel

@@ -700,8 +700,7 @@ export async function getRevenueProfitabilityData(args: {
     return cached.promise;
   }
 
-  let promise!: Promise<RevenueProfitabilityData>;
-  promise = loadRevenueProfitabilityData(args).then((data) => {
+  const promise: Promise<RevenueProfitabilityData> = loadRevenueProfitabilityData(args).then((data) => {
     if (cache.get(cacheKey)?.promise === promise) {
       cache.set(cacheKey, {
         expiresAt:

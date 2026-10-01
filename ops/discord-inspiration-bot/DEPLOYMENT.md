@@ -1,3 +1,5 @@
+> Current deployment: this feature now runs inside GoTall - Management on XPS. See [MANAGEMENT-DEPLOYMENT.md](MANAGEMENT-DEPLOYMENT.md). Railway and the separate bot are retired. The Railway instructions below are historical.
+
 # Railway cutover — 2026-09-14
 
 Production inspiration bot migrated from archived gotall-discord-bot into this directory.

@@ -1,3 +1,4 @@
+import {loadOwnedEarningsSource} from './owned-earnings-loader.mjs';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import './calculator-loader.mjs';
@@ -17,11 +18,12 @@ for(const request of input){
  const terms=await prisma.campaignCreatorDeal.findMany({where:{campaignCreatorId:cc.id},orderBy:{id:'asc'}});
  const overrides=await prisma.campaignCreatorVideoDeal.findMany({where:{campaignCreatorId:cc.id},orderBy:{id:'asc'}});
  const [year,month]=request.month.split('-').map(Number),last=new Date(Date.UTC(year,month,0)).toISOString().slice(0,10),today=new Date().toISOString().slice(0,10);
- const result=await getOrganizationUgcPayData({organizationSlug:cc.campaign.organization.slug,creatorAccess:{organizationId:binding.organization_id,creatorId:cc.creatorId,campaignCreatorId:cc.id,applyDealViewWindows:true,waitForPaidLookup:true},searchParams:{campaign:cc.campaign.id,startDate:request.month+'-01',endDate:last<today?last:today,payMode:'gained',videoFetchMode:'global',reportTimeZone:'UTC'},includePaidViews:true});
+ const ownedTracker=await loadOwnedEarningsSource(prisma,{creatorId:cc.creatorId,organizationId:binding.organization_id,startDate:request.month+'-01',endDate:last<today?last:today});
+ const result=await getOrganizationUgcPayData({organizationSlug:cc.campaign.organization.slug,creatorAccess:{ownedTracker,organizationId:binding.organization_id,creatorId:cc.creatorId,campaignCreatorId:cc.id,applyDealViewWindows:true,waitForPaidLookup:true},searchParams:{campaign:cc.campaign.id,startDate:request.month+'-01',endDate:last<today?last:today,payMode:'gained',videoFetchMode:'global',reportTimeZone:'UTC'},includePaidViews:true});
  const after=await prisma.campaignCreatorDeal.findMany({where:{campaignCreatorId:cc.id},orderBy:{id:'asc'}});
  const afterOverrides=await prisma.campaignCreatorVideoDeal.findMany({where:{campaignCreatorId:cc.id},orderBy:{id:'asc'}});
  if(JSON.stringify(terms)!==JSON.stringify(after)||JSON.stringify(overrides)!==JSON.stringify(afterOverrides))throw Error('Deal terms changed during calculation; retry.');
- const engine=Object.fromEntries(['queries.ts','calculations.ts','creator-access-local-videos.ts'].map(name=>[name,createHash('sha256').update(readFileSync(`/home/ark296/projects/tt-ads-manager/web/src/server/ugc-pay/${name}`)).digest('hex')]));
- output.push({creator_id:request.creator_id,month:request.month,calculated_at:new Date().toISOString(),summary:result.summary,creators:result.creators,warnings:result.warnings,error:result.errorMessage,start_date:result.startDate,end_date:result.endDate,mode:result.payMode,audit_inputs:{report_timezone:'UTC',provider:'GoTall UGC calculator / viral.app and TikTok paid-view lookup',view_window:'Published deal window for each video',terms,video_overrides:overrides,engine_sha256:engine}});
+ const engine=Object.fromEntries(['queries.ts','calculations.ts','creator-access-local-videos.ts','owned-tracker-evidence.ts'].map(name=>[name,createHash('sha256').update(readFileSync(`/home/ark296/projects/tt-ads-manager/web/src/server/ugc-pay/${name}`)).digest('hex')]));
+ output.push({creator_id:request.creator_id,month:request.month,calculated_at:new Date().toISOString(),summary:result.summary,creators:result.creators,warnings:result.warnings,error:result.errorMessage,start_date:result.startDate,end_date:result.endDate,mode:result.payMode,audit_inputs:{report_timezone:'UTC',provider:'Owned tracker inventory and direct observations / TikTok paid-view lookup',owned_tracker_captured_at:ownedTracker.captured_at,owned_tracker_sha256:createHash('sha256').update(JSON.stringify(ownedTracker)).digest('hex'),view_window:'Published deal window for each video',terms,video_overrides:overrides,engine_sha256:engine}});
 }
 process.stdout.write(JSON.stringify(output));

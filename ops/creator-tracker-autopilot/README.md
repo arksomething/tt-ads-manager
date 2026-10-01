@@ -149,3 +149,9 @@ sudo /usr/bin/python3 -I /usr/local/libexec/creator-tracker-autopilot enqueue-sm
 The laptop must be powered on and able to reach the internet for Codex to run.
 A separate hosted dead-man heartbeat is still required to detect and notify on
 a completely powered-off laptop or total network outage.
+
+The September 24 collector recovery also distinguishes actionable overdue work
+from retained missing-post coverage debt. `latest_coverage` joins the actionable
+and full coverage journal messages only within one systemd invocation, exposing
+the original count as `retained_overdue_tiktok_videos`. Historical target-outcome
+regression counters remain independent and require explicit review.

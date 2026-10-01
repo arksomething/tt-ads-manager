@@ -1,3 +1,5 @@
+import { priceableOwnedWindow, verifyOwnedInventory, type OwnedTrackerEvidence } from "./owned-tracker-evidence";
+import { applyReviewedVideoExclusion, getReviewedVideoExclusion } from "./reviewed-video-exclusions";
 import {
   CreatorDealPaidTrafficMetric,
   CreatorStatus,
@@ -30,6 +32,7 @@ import {
 } from "@/server/videos/queries";
 import {
   getPaidViewsForSourceVideosForCreatorForOrganization,
+  type TikTokPaidViewMetric,
   type TikTokSourceVideoPaidViewsResult,
   type TikTokSourceVideoPaidViewsRow,
 } from "@/server/tiktok-business/reporting";
@@ -40,6 +43,7 @@ import {
   calculateUgcPayVideoAmounts,
   getUgcPayPerVideoGrossViewCap,
   normalizeMoney,
+  selectUgcPayDealForPublication,
   type UgcPayGainedViewCapContext,
 } from "./calculations";
 import {
@@ -258,6 +262,7 @@ const creatorAccessPaidLookupCache = new Map<
 >();
 
 export type UgcPayVideoRow = {
+  organizationId?: string;
   campaignCreatorId: string;
   campaignId: string;
   campaignName: string;
@@ -369,6 +374,8 @@ export type UgcPayCreatorAccessScope = {
   applyDealViewWindows?: boolean;
   /** Background workers wait for the paid lookup instead of a UI timeout. */
   waitForPaidLookup?: boolean;
+  /** Server-supplied snapshot, never populated from URL or creator input. */
+  ownedTracker?: OwnedTrackerEvidence;
 };
 
 function getSearchParamValue(
@@ -960,14 +967,6 @@ function isDealActiveInRange(
   return isCreatorDealApplicableToRange(deal, start, end);
 }
 
-function isDealActiveOnDate(deal: CampaignCreatorDealUgcPayRow, date: Date) {
-  const targetDate = startOfUtcDay(date);
-  const dealStart = startOfUtcDay(deal.effectiveStartDate);
-  const dealEnd = deal.effectiveEndDate ? startOfUtcDay(deal.effectiveEndDate) : null;
-
-  return dealStart <= targetDate && (!dealEnd || dealEnd >= targetDate);
-}
-
 function getActiveDealsInRange(
   deals: CampaignCreatorDealUgcPayRow[],
   start: Date,
@@ -1038,9 +1037,11 @@ function resolveDealForVideo(args: {
     args.reportTimeZone,
     args.fallbackStartDate,
   );
-  const activeDeal =
-    args.campaignCreator.deals.find((deal) => isDealActiveOnDate(deal, dealDate)) ??
-    null;
+  const activeDeal = selectUgcPayDealForPublication(
+    args.campaignCreator.deals,
+    getVideoPostedAt(args.row),
+    dealDate.toISOString().slice(0, 10),
+  );
 
   return resolveUgcPayDeal(activeDeal, args.fallbackStartDate);
 }
@@ -1626,12 +1627,14 @@ function getCreatorAccessPaidLookupCacheKey(args: {
   sourceVideoIds: string[];
   startDate: string;
   endDate: string;
+  metric?: TikTokPaidViewMetric;
 }) {
   return [
     args.organizationId,
     args.creatorId,
     args.startDate,
     args.endDate,
+    args.metric ?? "impressions",
     [...args.sourceVideoIds].sort().join(","),
   ].join("::");
 }
@@ -1643,6 +1646,7 @@ function getCreatorAccessPaidLookupPromise(args: {
   sourceVideoIds: string[];
   startDate: string;
   endDate: string;
+  metric?: TikTokPaidViewMetric;
 }) {
   const cacheKey = getCreatorAccessPaidLookupCacheKey(args);
   const now = Date.now();
@@ -1663,6 +1667,7 @@ function getCreatorAccessPaidLookupPromise(args: {
     sourceVideoIds: args.sourceVideoIds,
     startDate: args.startDate,
     endDate: args.endDate,
+    metric: args.metric,
   });
 
   creatorAccessPaidLookupCache.set(cacheKey, {
@@ -1685,6 +1690,7 @@ async function getCreatorAccessPaidLookupWithTimeout(args: {
   sourceVideoIds: string[];
   startDate: string;
   endDate: string;
+  metric?: TikTokPaidViewMetric;
 }) {
   const paidLookupPromise = getCreatorAccessPaidLookupPromise(args);
   let timeoutId: NodeJS.Timeout | null = null;
@@ -1955,7 +1961,83 @@ async function getCreatorAccessLocalViewTallyData(args: {
   });
 }
 
+async function getOwnedCreatorViewTallyData(args: {
+  evidence: OwnedTrackerEvidence; campaignCreator: CampaignCreatorUgcPayRow;
+  videoOverrides: Map<string, CampaignCreatorVideoDealUgcPayRow>;
+  organizationSlug: string; organizationId: string; startDate: string; endDate: string;
+  start: Date; endExclusive: Date; reportTimeZone: string;
+}) {
+  const creator = args.campaignCreator.creator;
+  const nativeIds = creator.platformAccounts.map(a=>a.sourceAccountId).filter((id): id is string=>Boolean(id));
+  verifyOwnedInventory(args.evidence, nativeIds, Date.now());
+  const contexts = new Map<string, GainedViewCapContext>();
+  const evidence = new Map<string, NonNullable<ReturnType<typeof priceableOwnedWindow>>>();
+  const videos: CreatorAccessLocalVideoRow[] = [];
+  const periodRows: CreatorAccessPeriodViewRow[] = [];
+  const warnings: string[] = [];
+  const paidMetricByVideo = new Map<string, TikTokPaidViewMetric>();
+  for (const video of args.evidence.videos) {
+    if (video.excluded) continue;
+    const publishedAt = new Date(video.publishedAt);
+    const row = { publishedAt, createdAt: publishedAt } as ViewTallyListItem;
+    const deal = applyUgcPayVideoDealOverride(
+      resolveDealForVideo({campaignCreator: args.campaignCreator, row, reportTimeZone: args.reportTimeZone, fallbackStartDate: args.start}),
+      args.videoOverrides.get(getVideoDealKey(args.campaignCreator.id, video.sourceVideoId)) ?? null,
+    );
+    const window = priceableOwnedWindow(video, {start: args.start.getTime(), endExclusive: args.endExclusive.getTime(), now: args.evidence.captured_at, windowDays: deal.viewWindowDays});
+    if (!window) continue;
+    paidMetricByVideo.set(video.sourceVideoId, deal.paidTrafficMetric === "VIDEO_PLAY_ACTIONS" ? "video_play_actions" : "impressions");
+    evidence.set(video.sourceVideoId, window);
+    contexts.set(video.sourceVideoId, window);
+    warnings.push(...window.warnings);
+    videos.push({id: `owned:${video.id}`, sourceVideoId: video.sourceVideoId, videoUrl: video.url,
+      titleOrCaption: video.caption, publishedAt, createdAt: publishedAt, views: window.views,
+      creator: {displayName: creator.displayName, platformAccounts: [{platform: 'TIKTOK',handle: video.handle}]}});
+    periodRows.push({sourceVideoId: video.sourceVideoId, views: window.views, publishedAt, createdAt: publishedAt});
+  }
+  // Paid delivery still comes from the ad platform, never from organic counters.
+  const paidReports: TikTokSourceVideoPaidViewsResult[] = [];
+  for (const metric of new Set(paidMetricByVideo.values())) {
+    paidReports.push(await getCreatorAccessPaidLookupPromise({organizationSlug: args.organizationSlug,
+      organizationId: args.organizationId, creatorId: creator.id,
+      sourceVideoIds: videos.filter(v=>paidMetricByVideo.get(v.sourceVideoId!)===metric).map(v=>v.sourceVideoId!),
+      startDate: args.startDate, endDate: args.endDate, metric}));
+  }
+  const paidRows = paidReports.flatMap(p=>p.rows);
+  warnings.push(...paidReports.flatMap(p=>p.warnings));
+  // Only posts with actual paid matches need narrower ad queries. Do not deduct
+  // delivery after the first-seven-day cutoff from an earlier organic window.
+  const groups = new Map<string, string[]>();
+  for (const row of paidRows) {
+    if (row.paidStatus !== 'yes') continue;
+    const cutoff = evidence.get(row.sourceVideoId)?.cutoff;
+    if (!cutoff) continue;
+    const clippedEnd = new Date(Math.min(cutoff, args.endExclusive.getTime()-1)).toISOString().slice(0,10);
+    const key=clippedEnd+"|"+paidMetricByVideo.get(row.sourceVideoId);
+    groups.set(key, [...(groups.get(key) ?? []), row.sourceVideoId]);
+  }
+  for (const [key, sourceVideoIds] of groups) {
+    const [endDate,metric]=key.split("|");
+    if (endDate === args.endDate) continue;
+    const clipped = await getCreatorAccessPaidLookupPromise({organizationSlug: args.organizationSlug,
+      organizationId: args.organizationId, creatorId: creator.id, sourceVideoIds,
+      startDate: args.startDate, endDate, metric: metric as TikTokPaidViewMetric});
+    warnings.push(...clipped.warnings);
+    for(const row of clipped.rows) { const index=paidRows.findIndex(p=>p.sourceVideoId===row.sourceVideoId); if(index>=0)paidRows[index]=row; }
+  }
+  if (paidRows.some(r=>r.paidStatus==='yes')) warnings.push('Paid delivery is reported by UTC calendar day; intraday cutoff attribution requires settlement review.');
+  const accruing=[...evidence.values()].filter(e=>e.state==='accruing').length;
+  if(accruing)warnings.push(`${accruing} videos are still accruing views in their deal windows; this is an estimate, not a final settlement.`);
+  const rows=buildCreatorAccessViewTallyRows({videos,periodRows,paidRows,
+    lookupWindowUnresolvedPostBackedGroupCount: Math.max(0,...paidReports.map(p=>p.unresolvedPostBackedGroupCount)),
+    lookupWindowUnresolvedNonPostBackedGroupCount: Math.max(0,...paidReports.map(p=>p.unresolvedNonPostBackedGroupCount))}) as ViewTallyListItem[];
+  return {contexts, evidence, data: buildLocalCreatorViewTallyData({creatorId: creator.id,
+    creatorName: creator.displayName, accountHandle: getTikTokHandle(args.campaignCreator),
+    startDate: args.startDate, endDate: args.endDate, rows, warnings: [...new Set(warnings)], errorMessage: null})};
+}
+
 function calculateVideoPay(args: {
+  organizationId: string;
   row: ViewTallyListItem;
   campaignCreator: CampaignCreatorUgcPayRow;
   deal: ResolvedUgcPayDeal;
@@ -1980,6 +2062,7 @@ function calculateVideoPay(args: {
   });
 
   return {
+    organizationId: args.organizationId,
     campaignCreatorId: args.campaignCreator.id,
     campaignId: args.campaignCreator.campaignId,
     campaignName: args.campaignCreator.campaign.name,
@@ -2007,7 +2090,7 @@ function calculateVideoPay(args: {
     perVideoCapScope: args.deal.perVideoCapScope,
     hasVideoDealOverride: args.videoDealOverride != null,
     videoDealId: args.videoDealOverride?.id ?? null,
-    videoDealNotes: args.videoDealOverride?.notes ?? null,
+    videoDealNotes: getReviewedVideoExclusion({ organizationId: args.organizationId, sourceVideoId: args.row.sourceVideoId, videoUrl: args.row.videoUrl })?.reason ?? args.videoDealOverride?.notes ?? null,
     cpmPay: amountResult.cpmPay,
     videoPay: amountResult.videoPay,
     viewCapReached: amountResult.viewCapReached,
@@ -2433,6 +2516,7 @@ export async function getOrganizationUgcPayData(args: {
             select: {
               handle: true,
               platform: true,
+              sourceAccountId: true,
             },
           },
         },
@@ -2528,11 +2612,18 @@ export async function getOrganizationUgcPayData(args: {
   }
 
   markTiming("db-creators-and-deals");
-  const creatorAccessViewTallyCreatorId = args.creatorAccess?.applyDealViewWindows
+  const ownedSource = args.creatorAccess?.ownedTracker;
+  const creatorAccessViewTallyCreatorId = !ownedSource && args.creatorAccess?.applyDealViewWindows
     ? await resolveViewTallyCreatorIdForLocalCreator({organizationId,creatorId:args.creatorAccess.creatorId})
     : null;
   const creatorAccessCampaignCreator = payoutCampaignCreators[0] ?? null;
-  const viewTallyData = args.creatorAccess
+  const ownedData = ownedSource && creatorAccessCampaignCreator ? await getOwnedCreatorViewTallyData({
+    evidence: ownedSource, campaignCreator: creatorAccessCampaignCreator,
+    videoOverrides: videoDealOverrideByKey,
+    organizationSlug: args.organizationSlug, organizationId, startDate, endDate,
+    start: reportDateBounds.start, endExclusive: reportDateBounds.endExclusive, reportTimeZone,
+  }) : null;
+  const viewTallyData = ownedData?.data ?? (args.creatorAccess
     ? await getCreatorAccessLocalViewTallyData({
         waitForPaidLookup: args.creatorAccess.waitForPaidLookup,
         organizationSlug: args.organizationSlug,
@@ -2561,12 +2652,12 @@ export async function getOrganizationUgcPayData(args: {
         includeSummaryAnalytics: false,
         topVideoLimit: args.topVideoLimit,
         includeInstagram,
-      });
+      }));
   markTiming("view-tally");
   const warnings = [...viewTallyData.warnings];
   let viewTallyRows = viewTallyData.rows;
 
-  if (payMode === "gained" && videoFetchMode === "per-creator") {
+  if (!ownedData && payMode === "gained" && videoFetchMode === "per-creator") {
     const perCreatorRows = await getPerCreatorViewTallyRows({
       organizationSlug: args.organizationSlug,
       organizationId,
@@ -2614,7 +2705,9 @@ export async function getOrganizationUgcPayData(args: {
   let unmatchedVideos = 0;
 
   let viewWindowAdjustedRows: {rows: ViewTallyListItem[]; warnings: string[]};
-  if(args.creatorAccess?.applyDealViewWindows && creatorAccessCampaignCreator) {
+  if (ownedData) {
+    viewWindowAdjustedRows = {rows: candidatePayableRows, warnings: []};
+  } else if(args.creatorAccess?.applyDealViewWindows && creatorAccessCampaignCreator) {
     if(!creatorAccessViewTallyCreatorId) throw new Error("Cannot match the creator's account for deal-window calculation.");
     const groups=new Map<number,ViewTallyListItem[]>();
     for(const row of candidatePayableRows){
@@ -2656,6 +2749,14 @@ export async function getOrganizationUgcPayData(args: {
     rows: payableRows,
   });
 
+  if (ownedData && organizationId === "org_public_tt_ads_manager") {
+    for (const row of payableRows) {
+      if (!/(?:^|\s)#yap(?:\s|$|[^a-z0-9_])/i.test(row.titleOrCaption ?? "")) {
+        videoContentTypesBySourceVideoId.set(row.sourceVideoId, false);
+      }
+    }
+  }
+
   if (
     !args.creatorAccess &&
     videoFetchMode === "global" &&
@@ -2684,7 +2785,7 @@ export async function getOrganizationUgcPayData(args: {
       warnings.push(...providerContextResult.warnings);
     }
 
-    localGainedViewCapContexts = await getLocalGainedViewCapContexts({
+    localGainedViewCapContexts = ownedData?.contexts ?? await getLocalGainedViewCapContexts({
       organizationId,
       rows: payableRows,
       periodStart: reportDateBounds.start,
@@ -2742,15 +2843,18 @@ export async function getOrganizationUgcPayData(args: {
       reportTimeZone,
       fallbackStartDate: start,
     });
-    const effectiveDeal = applyUgcPayVideoContentTypeCpm(
+    let effectiveDeal = applyUgcPayVideoContentTypeCpm(
       applyUgcPayVideoDealOverride(baseVideoDeal, videoDealOverride),
       {
         hasVideoDealOverride: videoDealOverride != null,
         isTalking: videoContentTypesBySourceVideoId.get(row.sourceVideoId) ?? campaignCreator.creator.isTalking,
         postedDateOnly: getVideoPostedDateOnly(row, reportTimeZone),
         creatorIsTalking: campaignCreator.creator.isTalking,
+        organizationId,
+        postedAt: getVideoPostedAt(row),
       },
     );
+    effectiveDeal = applyReviewedVideoExclusion(effectiveDeal, { organizationId, sourceVideoId: row.sourceVideoId, videoUrl: row.videoUrl });
     const includeFixedFeePerVideo =
       payMode === "posted" ||
       isVideoPostedInReportDateRange({
@@ -2796,6 +2900,7 @@ export async function getOrganizationUgcPayData(args: {
     }
 
     const videoPay = calculateVideoPay({
+      organizationId,
       row,
       campaignCreator,
       deal: effectiveDeal,
@@ -2806,6 +2911,7 @@ export async function getOrganizationUgcPayData(args: {
       payMode,
     });
 
+    if (ownedData) Object.assign(videoPay, {viewEvidence: ownedData.evidence.get(row.sourceVideoId)});
     accumulator.grossViews += videoPay.grossViews;
     accumulator.paidViewsDeducted += videoPay.paidViewsDeducted;
     accumulator.payableViews += videoPay.payableViews;

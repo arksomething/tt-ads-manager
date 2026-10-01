@@ -39,6 +39,7 @@ const AD_SPEND_REPORT_CACHE_TTL_MS = 5 * 60 * 1_000;
 
 const paidViewMetricMap = {
   impressions: "impressions",
+  video_play_actions: "video_play_actions",
 } as const;
 const tiktokReportMetricMap = {
   ...paidViewMetricMap,
@@ -4285,7 +4286,7 @@ export async function getTopAdsForOrganization(args: {
   organizationSlug: string;
   startDate: QueryDateInput;
   endDate: QueryDateInput;
-  metric?: TikTokPaidViewMetric;
+  metric?: "impressions";
   matchMode?: TikTokAdAttributionMatchMode;
 }): Promise<TikTokAdProfitabilityReport> {
   const membership = await requireOrganizationMembership(args.organizationSlug);

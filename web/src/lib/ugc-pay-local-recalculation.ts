@@ -1,3 +1,4 @@
+import { applyReviewedVideoExclusion, getReviewedVideoExclusion } from "../server/ugc-pay/reviewed-video-exclusions.ts";
 import {
   applyUgcPayVideoContentTypeCpm,
   calculateUgcPayVideoAmounts,
@@ -42,6 +43,7 @@ type UgcPayDeal = {
 };
 
 type UgcPayVideoRow = {
+  organizationId?: string;
   campaignCreatorId: string;
   campaignId: string;
   campaignName: string;
@@ -227,7 +229,7 @@ function recalculateVideo(args: {
   videoOverride: UgcPayVideoDealOverride | null;
   payMode: UgcPayMode;
 }) {
-  const effectiveDeal: UgcPayDeal = applyUgcPayVideoContentTypeCpm(
+  let effectiveDeal: UgcPayDeal = applyUgcPayVideoContentTypeCpm(
     args.videoOverride
       ? {
           ...args.creatorDeal,
@@ -254,8 +256,11 @@ function recalculateVideo(args: {
       isTalking: args.video.isTalking,
       postedDateOnly: getVideoPostedDateOnly(args.video),
       creatorIsTalking: args.creatorIsTalking,
+      organizationId: args.video.organizationId,
+      postedAt: args.video.publishedAt ?? args.video.createdAt,
     },
   );
+  effectiveDeal = applyReviewedVideoExclusion(effectiveDeal, args.video);
   const fixedFeePerVideo = effectiveDeal.fixedFeePerVideo ?? 0;
   const amountResult = calculateUgcPayVideoAmounts({
     grossViews: args.video.grossViews,
@@ -281,7 +286,7 @@ function recalculateVideo(args: {
     perVideoCapScope: effectiveDeal.perVideoCapScope,
     hasVideoDealOverride: args.videoOverride != null,
     videoDealId: args.videoOverride ? (args.video.videoDealId ?? "local") : null,
-    videoDealNotes: args.videoOverride?.notes ?? null,
+    videoDealNotes: getReviewedVideoExclusion(args.video)?.reason ?? args.videoOverride?.notes ?? null,
     cpmPay: amountResult.cpmPay,
     videoPay: amountResult.videoPay,
     viewCapReached: amountResult.viewCapReached,

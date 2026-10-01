@@ -659,10 +659,7 @@ grep -Fq 'instagram-scheduler)' "$wrapper"
 instagram_lock_source="$(sed -n '/^  instagram-scheduler)/,/^    ;;/p' "$wrapper")"
 grep -Fq 'writer_lock_wait_seconds=300' <<<"$instagram_lock_source"
 scheduler_lock_source="$(sed -n '/^  scheduler-tick)/,/^    ;;/p' "$wrapper")"
-if grep -Fq 'writer_lock_wait_seconds=' <<<"$scheduler_lock_source"; then
-  printf '%s\n' 'creator-tracker: TikTok scheduler must retain nonblocking writer admission' >&2
-  exit 1
-fi
+grep -Fq 'writer_lock_wait_seconds=45' <<<"$scheduler_lock_source"
 grep -Fq 'instagram_priority_lock_file="$lock_dir/instagram-scheduler.lock"' "$wrapper"
 grep -Fq 'priority_lock_busy' "$wrapper"
 grep -Fq 'secondary_lock_name=canonical-delivery' "$wrapper"
@@ -1612,19 +1609,6 @@ set -e
 grep -Fq 'state=writer_lock_busy' \
   "$tmp_dir/state/creator-tracker/health/dashboard-health.writer-lock-busy"
 
-set +e
-env \
-  XDG_RUNTIME_DIR="$tmp_dir/runtime" \
-  XDG_STATE_HOME="$tmp_dir/state" \
-  CREATOR_TRACKER_HEARTBEAT_INTERVAL_SECONDS=5 \
-  CREATOR_TRACKER_TEST_ONLY_ALLOW_ARBITRARY_COMMAND=1 \
-  /bin/bash "$wrapper" scheduler-tick -- "$fake_executable"
-tiktok_overlap_exit=$?
-set -e
-[[ "$tiktok_overlap_exit" -eq 75 ]]
-grep -Fq 'state=writer_lock_busy' \
-  "$tmp_dir/state/creator-tracker/health/scheduler-tick.writer-lock-busy"
-
 instagram_wait_start_ns="$(date +%s%N)"
 env \
   XDG_RUNTIME_DIR="$tmp_dir/runtime" \
@@ -1733,6 +1717,32 @@ set -e
 grep -Fq 'state=secondary_lock_busy' \
   "$tmp_dir/state/creator-tracker/health/dashboard-health.secondary-lock-busy"
 wait "$delivery_pid"
+
+# A read-only monitor can coexist with dashboard health, but a scheduler must
+# wait for the shared snapshot fence and then collect in this same tick.
+exec {monitor_writer_fd}<"$tmp_dir/runtime/creator-tracker/locks/owned-tracker-writer.lock"
+exec {monitor_delivery_fd}<"$tmp_dir/runtime/creator-tracker/locks/canonical-delivery.lock"
+/usr/bin/flock --shared "$monitor_writer_fd"
+/usr/bin/flock --shared "$monitor_delivery_fd"
+env XDG_RUNTIME_DIR="$tmp_dir/runtime" XDG_STATE_HOME="$tmp_dir/state" \
+  CREATOR_TRACKER_TEST_ONLY_ALLOW_ARBITRARY_COMMAND=1 \
+  /bin/bash "$wrapper" dashboard-health -- "$fake_executable"
+(
+  exec {monitor_writer_fd}>&-
+  exec {monitor_delivery_fd}>&-
+  env XDG_RUNTIME_DIR="$tmp_dir/runtime" XDG_STATE_HOME="$tmp_dir/state" \
+    FAKE_STARTED_FILE="$tmp_dir/tiktok-after-monitor" \
+    CREATOR_TRACKER_TEST_ONLY_ALLOW_ARBITRARY_COMMAND=1 \
+    /bin/bash "$wrapper" scheduler-tick -- "$blocking_executable"
+) &
+tiktok_wait_pid=$!
+sleep 0.2
+[[ ! -e "$tmp_dir/tiktok-after-monitor" ]]
+exec {monitor_writer_fd}>&-
+exec {monitor_delivery_fd}>&-
+wait "$tiktok_wait_pid"
+[[ -s "$tmp_dir/tiktok-after-monitor" ]]
+grep -Fq 'state=succeeded' "$tmp_dir/state/creator-tracker/health/scheduler-tick.success"
 
 process_tree_executable="$tmp_dir/process-tree"
 printf '%s\n' \

@@ -14,7 +14,7 @@ Environment=CREATOR_TRACKER_MONITOR_ENDPOINT=https://gotall-creator-platform.ver
 LoadCredential=monitor-secret:/etc/creator-tracker-monitor/monitor-secret
 LoadCredential=role-env:/etc/creator-tracker/credentials/check-coverage.env
 ExecStart=/opt/creator-tracker/node/v24.20.0/bin/node /opt/creator-tracker-monitor/reporter.mjs
-TimeoutStartSec=30s
+TimeoutStartSec=75s
 UMask=0077
 NoNewPrivileges=true
 CapabilityBoundingSet=

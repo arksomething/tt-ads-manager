@@ -321,7 +321,7 @@ export default async function CreatorPortalPage({
             startDate={formatDateInputValue(data.startDate)}
           />
           <button
-            className="rounded-[0.85rem] bg-white px-4 py-2 text-sm font-semibold text-black transition hover:bg-[#90FF4D]"
+            className="rounded-[0.85rem] bg-[#90FF4D] px-4 py-2 text-sm font-semibold text-black transition hover:bg-[#A9FF78]"
             type="submit"
           >
             Update

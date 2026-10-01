@@ -35,7 +35,7 @@ export default function StandardAgreementPage() {
             <a
               className={styles.download}
               download
-              href="/documents/gotall-standard-creator-agreement-sample-v0.1.docx"
+              href="/documents/gotall-standard-creator-agreement-sample-v0.2.docx"
             >
               <Download aria-hidden="true" size={15} />
               Download DOCX

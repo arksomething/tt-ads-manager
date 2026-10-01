@@ -98,8 +98,12 @@ describe("SignWell immutable template source archive migration", () => {
   });
 
   it("does not seed any release or default state", () => {
-    expect(migration).not.toMatch(/insert into public\.program_deal_versions/i);
-    expect(migration).not.toMatch(/insert into public\.program_deal_signing_bindings[\s\S]*values\s*\([^)]*'verified'/i);
-    expect(migration).not.toMatch(/is_default\s*=\s*true/i);
+    // Defining the gated activation function does not execute it. Inspect the
+    // migration's top-level statements, while the tests above protect RPC gates.
+    const topLevel = migration.replace(/as\s+\$\$[\s\S]*?\$\$;/gi, "");
+    expect(topLevel).not.toMatch(/insert into public\.program_deal_versions/i);
+    expect(topLevel).not.toMatch(/insert into public\.program_deal_signing_bindings[\s\S]*values\s*\([^)]*'verified'/i);
+    expect(topLevel).not.toMatch(/is_default\s*=\s*true/i);
+    expect(topLevel).not.toMatch(/(?:select|call)\s+(?:public\.)?activate_admin_program_deal_default/i);
   });
 });

@@ -71,7 +71,9 @@ test('start-here button replies and application receipts are private while creat
 });
 test('creator responses are channel visible; staff actions and cross-channel requests stay private',()=>{
   const c={discord_user_id:'creator'};
-  for(const action of ['accounts','ready','first_video','post','leave','signed','complete_warmup'])assert.equal(publicCreatorResponse({...interaction,data:{custom_id:'gt:form:'+action}},c),true);
+  for(const action of ['accounts','ready','first_video','post','first_posted','leave','signed','complete_warmup'])assert.equal(publicCreatorResponse({...interaction,data:{custom_id:'gt:form:'+action}},c),true);
+  assert.equal(publicCreatorResponse({...interaction,type:3,data:{custom_id:'gt:first_posted'}},c),true);
+  assert.equal(publicCreatorResponse({...interaction,type:3,data:{custom_id:'gt:payments'}},c),false);
   for(const action of ['staff','approve_account','confirm_signature','profile','review_posts','exception','test_clock'])assert.equal(publicCreatorResponse({...interaction,data:{custom_id:'gt:'+action}},c),false);
   assert.equal(publicCreatorResponse(interaction,{discord_user_id:'someone_else'}),false);
 });

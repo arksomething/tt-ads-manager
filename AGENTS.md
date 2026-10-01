@@ -11,6 +11,37 @@ approval, or avoid production deployment. The owner accepts that production
 deploys ship the current working tree. Preserve unrelated changes, verify the
 requested work, and deploy.
 
+## Watching TikTok videos
+
+Agents can watch any public TikTok, not just read its metrics. Use the engine in
+`tools/video-analysis/` instead of guessing from captions or thumbnails:
+
+```bash
+tools/video-analysis/video_analysis.py https://www.tiktok.com/@creator/video/123          # structured watch report (JSON)
+tools/video-analysis/video_analysis.py URL --transcript                                   # words only, ~3s when cached
+tools/video-analysis/video_analysis.py URL --ask "Does the creator show the app UI?"      # one timestamped answer
+tools/video-analysis/video_analysis.py URL --fetch-only                                   # download + frames only
+```
+
+The report covers transcript, on-screen text, scenes, brands shown, whether the
+creator speaks, hook, format and editing style. `paths.sheet` is a contact sheet
+JPEG and `paths.frames_dir` holds per-second frames; open them with the image
+reader when a question is about visual detail. Everything is cached under
+`~/.cache/tt-video-analysis/<video id>/`, so repeated calls are free. The default
+model is Gemini 3.5 Flash-Lite via OpenRouter; `--model careful` uses Gemini 3.1
+Pro. The returned `usage` records the actual model cost.
+
+A failure prints JSON on stderr with `code`, `retryable` and `advice`, and exits 2 when
+permanent (private, removed, login-gated, bad link, slideshow for visual modes) or 1 when
+transient (rate limit, network). Permanent failures are remembered per video id under the
+cache's `_failures/` folder and answered instantly; do not loop on them or spawn
+subagents to retry them. `--refresh` is the only way to force a new attempt.
+
+Do not use this module's `creator_speaks` as a payout verdict; the audited payout
+classifier is `tools/talking-classifier/pipeline.py` and stays on its own models.
+The Discord support agent exposes the same engine as `video_analysis` and
+`video_transcript` (creators and staff) and `ask_video` (operators) via `ops/discord-support/video_tools.py`.
+
 ## Web Production
 
 The web app is deployed on Vercel. The linked Vercel project metadata is already
