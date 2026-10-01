@@ -97,6 +97,7 @@ dispatch. Its five checks cover:
 
 Each Node application installs from its own lockfile with `npm ci`. Support
 dependencies use `ops/discord-support/requirements.lock`. The workflow has
+an additional `scripts/requirements.lock` for portable Python tooling. It has
 read-only repository permissions and uses no production credentials. Builds
 are verification only; deployment continues through the documented target-specific
 procedures. No workflow performs production migrations or Discord mutations.
