@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import shlex
@@ -143,7 +144,20 @@ class IsolationTests(unittest.IsolatedAsyncioTestCase):
         return ' && '.join(f'test ! -e {shlex.quote(str(path))}' for path in paths)
 
     async def test_creator_terminal_cannot_read_home_or_modify_source(self):
-        result=await diagnostics.read_terminal(self.private_stores_check()+" && echo private-stores-hidden; touch /workspace/code/flow.mjs")
+        # Exercise the real diagnostic snapshot and Bubblewrap sandbox with
+        # temporary state. Installed unit liveness and systemd resource controls
+        # belong to host verification, not this filesystem isolation regression.
+        launch = asyncio.create_subprocess_exec
+
+        async def portable_launch(*args, **kwargs):
+            if args[0] == 'systemctl':
+                return await launch('/bin/echo', 'inactive', **kwargs)
+            self.assertEqual(args[0], 'systemd-run')
+            return await launch(*args[args.index('/usr/bin/bwrap'):], **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(operations, 'STATE', Path(tmp)), \
+                patch.object(diagnostics.asyncio, 'create_subprocess_exec', side_effect=portable_launch):
+            result=await diagnostics.read_terminal(self.private_stores_check()+" && echo private-stores-hidden; touch /workspace/code/flow.mjs")
         self.assertIn('private-stores-hidden',result['output'])
         self.assertNotEqual(result['exit_code'],0)
         self.assertIn('Read-only file system',result['output'])
